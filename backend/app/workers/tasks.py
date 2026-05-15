@@ -1,0 +1,325 @@
+"""
+Celery task chain:
+
+  activate_purchase
+    ├─ route_proactive_income   (sync inside same task)
+    ├─ place_in_proportion      (sync inside same task)
+    └─ place_in_speculation     (sync inside same task)
+         └─ process_matrix_payout  (queued per triggered level)
+               └─ place_reentry    (queued per re-entry earned)
+"""
+import logging
+from datetime import datetime
+from decimal import Decimal
+
+from app.workers.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, name="tasks.activate_purchase")
+def activate_purchase(self, purchase_id: int) -> None:
+    """Entry point: called after payment confirmation. Runs the full revenue engine."""
+    from app.core.revenue_split import split_purchase
+    from app.core.proactive import route_proactive
+    from app.core.matrix_engine import place_in_matrix
+    from app.models.agent import AgentPurchase
+    from app.models.matrix import SystemType
+    from app.models.user import User
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        purchase = db.query(AgentPurchase).filter_by(id=purchase_id).with_for_update().first()
+        if not purchase or purchase.status != "pending":
+            logger.warning("activate_purchase: purchase %s not found or already active", purchase_id)
+            return
+
+        buyer = db.query(User).filter_by(id=purchase.user_id).first()
+        price = Decimal(str(purchase.price))
+
+        split = split_purchase(price)
+
+        route_proactive(db, buyer, purchase.agent_tier, split.proactive)
+
+        _, proportion_payouts = place_in_matrix(db, buyer.id, purchase.agent_tier, SystemType.PROPORTION)
+        _, speculation_payouts = place_in_matrix(db, buyer.id, purchase.agent_tier, SystemType.SPECULATION)
+
+        purchase.status = "active"
+        purchase.activated_at = datetime.utcnow()
+
+        db.commit()
+
+        # Notify user by email
+        try:
+            from app.services.email_service import send_agent_activated_email
+            from app.models.agent import AGENT_TIER_PRICES
+            send_agent_activated_email(
+                email=buyer.email,
+                username=buyer.username,
+                agent_tier=purchase.agent_tier,
+                price=float(AGENT_TIER_PRICES[purchase.agent_tier]),
+            )
+        except Exception:
+            logger.exception("activate_purchase: failed to send activation email for purchase_id=%s", purchase_id)
+
+        for payout in proportion_payouts + speculation_payouts:
+            process_matrix_payout.delay(
+                matrix_position_id=payout.matrix_position_id,
+                user_id=payout.user_id,
+                agent_tier=payout.agent_tier,
+                system_type=payout.system_type.value,
+                level=payout.level,
+                wallet_amount=str(payout.wallet_amount),
+                reentry_amount=str(payout.reentry_amount),
+                reentry_count=payout.reentry_count,
+            )
+
+        logger.info(
+            "activate_purchase: purchase %s activated. %d payouts queued.",
+            purchase_id,
+            len(proportion_payouts) + len(speculation_payouts),
+        )
+
+    except Exception as exc:
+        db.rollback()
+        logger.exception("activate_purchase failed for purchase_id=%s", purchase_id)
+        raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, name="tasks.process_matrix_payout")
+def process_matrix_payout(
+    self,
+    matrix_position_id: int,
+    user_id: int,
+    agent_tier: int,
+    system_type: str,
+    level: int,
+    wallet_amount: str,
+    reentry_amount: str,
+    reentry_count: int,
+) -> None:
+    """Credit wallet for a completed matrix level, then queue re-entries."""
+    from app.core.wallet_ops import credit_wallet
+    from app.models.matrix import SystemType
+    from app.models.transaction import TransactionType
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        sys_type = SystemType(system_type)
+        tx_type = (
+            TransactionType.PROPORTION_PAYOUT
+            if sys_type == SystemType.PROPORTION
+            else TransactionType.SPECULATION_PAYOUT
+        )
+
+        credit_wallet(
+            db=db,
+            user_id=user_id,
+            agent_tier=agent_tier,
+            gross_amount=Decimal(wallet_amount),
+            tx_type=tx_type,
+            reference_id=f"matrix_pos_{matrix_position_id}_L{level}",
+            notes=f"{sys_type.value} L{level} payout",
+        )
+        db.commit()
+
+        for i in range(reentry_count):
+            place_reentry.delay(
+                user_id=user_id,
+                agent_tier=agent_tier,
+                system_type=system_type,
+                reentry_index=i + 1,
+                source_position_id=matrix_position_id,
+            )
+
+        logger.info(
+            "process_matrix_payout: user=%s tier=%s %s L%s → $%s credited, %s re-entries queued",
+            user_id, agent_tier, system_type, level, wallet_amount, reentry_count,
+        )
+
+    except Exception as exc:
+        db.rollback()
+        logger.exception("process_matrix_payout failed: position=%s level=%s", matrix_position_id, level)
+        raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, name="tasks.place_reentry")
+def place_reentry(
+    self,
+    user_id: int,
+    agent_tier: int,
+    system_type: str,
+    reentry_index: int,
+    source_position_id: int,
+) -> None:
+    """Place a re-entry back into the matrix queue."""
+    from app.core.matrix_engine import place_in_matrix
+    from app.models.matrix import MatrixPosition, SystemType
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        sys_type = SystemType(system_type)
+        new_slot, triggered_payouts = place_in_matrix(db, user_id, agent_tier, sys_type)
+
+        source = db.query(MatrixPosition).filter_by(id=source_position_id).first()
+        if source:
+            source.reentry_count += 1
+
+        db.commit()
+
+        for payout in triggered_payouts:
+            process_matrix_payout.delay(
+                matrix_position_id=payout.matrix_position_id,
+                user_id=payout.user_id,
+                agent_tier=payout.agent_tier,
+                system_type=payout.system_type.value,
+                level=payout.level,
+                wallet_amount=str(payout.wallet_amount),
+                reentry_amount=str(payout.reentry_amount),
+                reentry_count=payout.reentry_count,
+            )
+
+        logger.info(
+            "place_reentry: user=%s tier=%s %s re-entry #%s at position %s",
+            user_id, agent_tier, system_type, reentry_index, new_slot.position_number,
+        )
+
+    except Exception as exc:
+        db.rollback()
+        logger.exception("place_reentry failed: user=%s tier=%s", user_id, agent_tier)
+        raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=300, name="tasks.process_withdrawal")
+def process_withdrawal(self, withdrawal_id: int) -> None:
+    """
+    Fires 24h after a withdrawal request.
+    Calls the NOWPayments Payouts API and marks the record sent or failed.
+    On failure the deducted amount is refunded back to the MAIN wallet.
+    """
+    import asyncio
+    from datetime import datetime
+    from decimal import Decimal
+
+    from app.core.wallet_ops import credit_wallet
+    from app.models.transaction import TransactionType
+    from app.models.withdrawal import WithdrawalRequest, WithdrawalStatus
+    from app.services.nowpayments import send_payout
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        withdrawal = (
+            db.query(WithdrawalRequest)
+            .filter_by(id=withdrawal_id)
+            .with_for_update()
+            .first()
+        )
+
+        if not withdrawal:
+            logger.error("process_withdrawal: withdrawal_id=%s not found", withdrawal_id)
+            return
+
+        if withdrawal.status != WithdrawalStatus.PENDING:
+            logger.info(
+                "process_withdrawal: withdrawal_id=%s already in status '%s', skipping",
+                withdrawal_id, withdrawal.status,
+            )
+            return
+
+        withdrawal.status = WithdrawalStatus.PROCESSING
+        db.commit()
+
+        amount_float = float(withdrawal.amount)
+
+        try:
+            result = asyncio.run(
+                send_payout(
+                    withdrawal_id=withdrawal.id,
+                    amount_usd=amount_float,
+                    wallet_address=withdrawal.wallet_address,
+                )
+            )
+            withdrawal.status = WithdrawalStatus.SENT
+            withdrawal.nowpayments_payout_id = str(result.get("id", ""))
+            withdrawal.processed_at = datetime.utcnow()
+            db.commit()
+
+            logger.info(
+                "process_withdrawal: withdrawal_id=%d SENT via NOWPayments payout_id=%s",
+                withdrawal_id, withdrawal.nowpayments_payout_id,
+            )
+
+            try:
+                from app.models.user import User
+                from app.services.email_service import send_withdrawal_sent_email
+                user = db.query(User).filter_by(id=withdrawal.user_id).first()
+                if user:
+                    send_withdrawal_sent_email(
+                        email=user.email,
+                        username=user.username,
+                        amount=float(withdrawal.amount),
+                        wallet_address=withdrawal.wallet_address,
+                        payout_id=withdrawal.nowpayments_payout_id,
+                    )
+            except Exception:
+                logger.exception("process_withdrawal: failed to send sent-email for withdrawal_id=%d", withdrawal_id)
+
+        except Exception as payout_exc:
+            logger.error(
+                "process_withdrawal: payout failed for withdrawal_id=%d — refunding. Error: %s",
+                withdrawal_id, payout_exc,
+            )
+            withdrawal.status = WithdrawalStatus.FAILED
+            withdrawal.failure_reason = str(payout_exc)[:500]
+            withdrawal.processed_at = datetime.utcnow()
+
+            # Refund the deducted amount back to the main wallet
+            credit_wallet(
+                db=db,
+                user_id=withdrawal.user_id,
+                agent_tier=withdrawal.agent_tier,
+                gross_amount=Decimal(str(withdrawal.amount)),
+                tx_type=TransactionType.WITHDRAWAL,
+                reference_id=f"withdrawal_{withdrawal_id}_refund",
+                notes=f"Refund: withdrawal #{withdrawal_id} failed",
+            )
+            db.commit()
+
+            try:
+                from app.models.user import User
+                from app.services.email_service import send_withdrawal_failed_email
+                user = db.query(User).filter_by(id=withdrawal.user_id).first()
+                if user:
+                    send_withdrawal_failed_email(
+                        email=user.email,
+                        username=user.username,
+                        amount=float(withdrawal.amount),
+                        reason=withdrawal.failure_reason or "Unknown error",
+                    )
+            except Exception:
+                logger.exception("process_withdrawal: failed to send failure-email for withdrawal_id=%d", withdrawal_id)
+
+            raise self.retry(exc=payout_exc)
+
+    except Exception as exc:
+        db.rollback()
+        logger.exception("process_withdrawal task error for withdrawal_id=%s", withdrawal_id)
+        raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="tasks.confirm_payment_placeholder")
+def confirm_payment_placeholder(purchase_id: int) -> None:
+    """Dev-only: simulate payment confirmation without NOWPayments."""
+    activate_purchase.delay(purchase_id)

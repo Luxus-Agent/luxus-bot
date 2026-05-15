@@ -1,0 +1,24 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import auth, agents, wallet, payments
+from app.workers.celery_app import celery_app  # noqa: F401
+
+app = FastAPI(
+    title="Agent Revenue Sharing Platform",
+    description="Multi-tier AI agent revenue sharing with ProActive, Proportion, and Speculation systems",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # restrict to your frontend domain in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router)
+app.include_router(agents.router)
+app.include_router(wallet.router)
+app.include_router(payments.router)

@@ -1,0 +1,43 @@
+import uuid
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    username: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+
+    referral_code: Mapped[str] = mapped_column(
+        String, unique=True, nullable=False, default=lambda: uuid.uuid4().hex[:8].upper()
+    )
+    sponsor_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    # Position in sponsor's direct downline (1-based) — used by ProActive odd/even routing
+    sponsor_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Email verification OTP
+    email_verification_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    email_verification_expires: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Password reset OTP
+    password_reset_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    password_reset_expires: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    sponsor: Mapped["User | None"] = relationship("User", remote_side=[id], backref="downline")
+    purchases = relationship("AgentPurchase", back_populates="user")
+    wallets = relationship("Wallet", back_populates="user")
+    transactions = relationship("Transaction", back_populates="user")
+    matrix_positions = relationship("MatrixPosition", back_populates="user")
+    withdrawals = relationship("WithdrawalRequest", back_populates="user")
