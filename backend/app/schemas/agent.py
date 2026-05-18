@@ -133,3 +133,57 @@ class WithdrawalOut(BaseModel):
     nowpayments_payout_id: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class DepositRefundIn(BaseModel):
+    wallet_address: str
+
+    @field_validator("wallet_address")
+    @classmethod
+    def address_must_be_bep20(cls, v: str) -> str:
+        v = v.strip()
+        if not v.startswith("0x") or len(v) != 42:
+            raise ValueError("wallet_address must be a valid BEP-20 address (0x + 40 hex chars)")
+        return v
+
+
+# ── Admin schemas ─────────────────────────────────────────────────────────────
+
+class AdminUserOut(BaseModel):
+    id: int
+    username: str
+    email: str
+    is_active: bool
+    is_admin: bool
+    sponsor_id: int | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AdminWalletCreditIn(BaseModel):
+    user_id: int
+    agent_tier: int
+    amount: Decimal
+    notes: str | None = None
+
+    @field_validator("amount")
+    @classmethod
+    def amount_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("amount must be positive")
+        return v
+
+
+class AdminWalletDebitIn(BaseModel):
+    user_id: int
+    agent_tier: int
+    amount: Decimal
+    notes: str | None = None
+
+    @field_validator("amount")
+    @classmethod
+    def amount_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("amount must be positive")
+        return v

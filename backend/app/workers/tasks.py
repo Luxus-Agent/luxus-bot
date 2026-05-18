@@ -272,9 +272,9 @@ def place_reentry(
 
     db = SessionLocal()
     try:
-        # Always re-enter into SPECULATION
+        # Re-entries always go into SPECULATION at Tier 1 ($10) regardless of source tier
         new_slot, triggered_payouts, sponsor_payouts = place_in_matrix(
-            db, user_id, agent_tier, SystemType.SPECULATION
+            db, user_id, 1, SystemType.SPECULATION
         )
 
         source = db.query(MatrixPosition).filter_by(id=source_position_id).first()
@@ -439,6 +439,45 @@ def process_withdrawal(self, withdrawal_id: int) -> None:
     except Exception as exc:
         db.rollback()
         logger.exception("process_withdrawal task error for withdrawal_id=%s", withdrawal_id)
+        raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, name="tasks.auto_repurchase")
+def auto_repurchase(self, user_id: int, agent_tier: int) -> None:
+    """
+    Triggered automatically when a user's repurchase wallet reaches the tier price.
+    Creates a new AgentPurchase funded by the repurchase wallet (already deducted)
+    and runs the full revenue engine via activate_purchase.
+    """
+    from app.models.agent import AgentPurchase, AGENT_TIER_PRICES
+    from app.database import SessionLocal
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        purchase = AgentPurchase(
+            user_id=user_id,
+            agent_tier=agent_tier,
+            price=AGENT_TIER_PRICES[agent_tier],
+            status="pending",
+            payment_id="auto_repurchase",
+        )
+        db.add(purchase)
+        db.commit()
+        db.refresh(purchase)
+
+        activate_purchase.delay(purchase.id)
+
+        logger.info(
+            "auto_repurchase: queued purchase_id=%s for user=%s tier=%s",
+            purchase.id, user_id, agent_tier,
+        )
+
+    except Exception as exc:
+        db.rollback()
+        logger.exception("auto_repurchase failed: user=%s tier=%s", user_id, agent_tier)
         raise self.retry(exc=exc)
     finally:
         db.close()

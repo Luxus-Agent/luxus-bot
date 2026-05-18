@@ -41,9 +41,10 @@ agent-revenue-sharing-platform/
 │   │   │   └── agent.py         # Purchase, Deposit, Transfer, Wallet, Withdrawal schemas
 │   │   └── api/
 │   │       ├── auth.py          # register / verify-email / resend / login / forgot & reset
-│   │       ├── agents.py        # purchase (from balance) / matrix view
-│   │       ├── wallet.py        # balances / transactions / withdraw / withdrawals list
-│   │       ├── deposit.py       # account balance / create deposit / transfer
+│   │       ├── agents.py        # purchase (from balance, multiple per tier allowed) / matrix view
+│   │       ├── wallet.py        # balances / transactions / withdraw (instant) / withdrawals list
+│   │       ├── deposit.py       # account balance / create deposit / transfer / refund
+│   │       ├── admin.py         # admin-only: users, wallets, transactions, freeze/unfreeze, credit/debit
 │   │       └── payments.py      # NOWPayments IPN webhook
 │   ├── create_tables.py         # One-time DB table creation (run once after setup)
 │   └── migrate_v2.py            # Schema migration (new enums + deposits table)
@@ -226,6 +227,13 @@ cd backend
 python migrate_v3.py
 ```
 
+### Applying v4 schema changes (is_admin column on users)
+
+```bash
+cd backend
+python migrate_v4.py
+```
+
 ### Running
 
 ```bash
@@ -270,6 +278,12 @@ API docs: http://localhost:8000/docs
 - `APP_ENV=development` always hits the NOWPayments sandbox — no real funds used.
 - Login requires email verification — unverified users get HTTP 403.
 - **Sponsor is mandatory at registration.** Create the platform root/admin user directly in the DB.
-- **Withdrawal minimum is $10.** Minimum transfer is $1.
+- **Withdrawal minimum is $10.** Minimum transfer is $1. No maximum on withdrawals.
+- **Withdrawals are instant** — no 24h hold. Payout dispatched immediately via NOWPayments.
+- **Multiple agents per tier allowed** — users can purchase the same tier multiple times.
+- **Inactive sponsors are skipped** in ProActive routing — income passes to supreme sponsor or buyer.
+- **Re-entries always use Tier 1 ($10)** regardless of the source position's tier.
+- **Auto-repurchase:** when a user's REPURCHASE wallet for a given tier accumulates >= tier price, a new agent purchase is automatically created and activated via Celery (`auto_repurchase` task).
+- **Admin access:** set `is_admin=true` in DB for the root user. Admin endpoints are at `/admin/*`. Run `migrate_v4.py` first.
 - Order ID prefixes: `presz_deposit_*` = account top-up, `presz_agent_*` = legacy direct purchase.
 - `ACCOUNT_TIER = 0` is the sentinel agent_tier used for the account balance wallet.

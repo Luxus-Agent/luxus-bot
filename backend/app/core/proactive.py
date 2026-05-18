@@ -46,8 +46,12 @@ def _route_half(
 
     Odd income  → primary_recipient's wallet
     Even income → primary_recipient's sponsor's wallet
-    No recipient → falls back to buyer's wallet
+    No recipient or inactive recipient → falls back to buyer's wallet
     """
+    # Treat inactive users the same as missing — skip them
+    if primary_recipient is not None and not primary_recipient.is_active:
+        primary_recipient = None
+
     if primary_recipient is None:
         # No sponsor chain — credit stays with the buyer
         credit_wallet(
@@ -69,14 +73,21 @@ def _route_half(
         beneficiary_id = primary_recipient.id
         notes = f"ProActive {label} — odd income #{next_count}"
     else:
-        # Even → pass to primary recipient's sponsor (if any)
-        if primary_recipient.sponsor_id:
-            beneficiary_id = primary_recipient.sponsor_id
+        # Even → pass to primary recipient's sponsor (if active)
+        upline: User | None = (
+            db.query(User).filter_by(id=primary_recipient.sponsor_id).first()
+            if primary_recipient.sponsor_id else None
+        )
+        if upline is not None and not upline.is_active:
+            upline = None
+
+        if upline is not None:
+            beneficiary_id = upline.id
             notes = f"ProActive {label} — even income #{next_count}, passed to upline"
         else:
-            # No upline to pass to — recipient keeps it
+            # No active upline to pass to — recipient keeps it
             beneficiary_id = primary_recipient.id
-            notes = f"ProActive {label} — even income #{next_count}, no upline, kept"
+            notes = f"ProActive {label} — even income #{next_count}, no active upline, kept"
 
     # Record outgoing side on buyer
     db.add(Transaction(
@@ -119,15 +130,21 @@ def route_proactive(
     first_half  = (amount / 2).quantize(four_places, rounding=ROUND_HALF_UP)
     second_half = amount - first_half  # Ensures exact sum
 
-    # Load sponsor and supreme sponsor
+    # Load sponsor — skip if inactive or missing
     sponsor: User | None = (
         db.query(User).filter_by(id=buyer.sponsor_id).first()
         if buyer.sponsor_id else None
     )
+    if sponsor is not None and not sponsor.is_active:
+        sponsor = None
+
+    # Load supreme sponsor — use sponsor's sponsor (or skip if inactive)
     supreme: User | None = (
         db.query(User).filter_by(id=sponsor.sponsor_id).first()
         if (sponsor and sponsor.sponsor_id) else None
     )
+    if supreme is not None and not supreme.is_active:
+        supreme = None
 
     _route_half(db, buyer, sponsor,  agent_tier, first_half,  "sponsor")
     _route_half(db, buyer, supreme, agent_tier, second_half, "supreme")

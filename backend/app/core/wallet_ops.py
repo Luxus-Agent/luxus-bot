@@ -9,6 +9,9 @@ from app.models.transaction import Transaction, TransactionType
 REPURCHASE_RATE = Decimal("0.10")
 ACCOUNT_TIER = 0  # Sentinel agent_tier for the platform account balance wallet
 
+# Tier prices used to determine auto-repurchase threshold
+_TIER_PRICES = {1: Decimal("10"), 2: Decimal("20"), 3: Decimal("50"), 4: Decimal("100")}
+
 
 def get_or_create_wallet(db: Session, user_id: int, agent_tier: int, wallet_type: WalletType) -> Wallet:
     wallet = (
@@ -64,6 +67,39 @@ def credit_wallet(
         reference_id=reference_id,
         notes="10% auto-hold",
     ))
+
+    # Auto-repurchase: if repurchase wallet has enough for this tier, trigger a new purchase
+    _maybe_auto_repurchase(db, user_id, agent_tier, repurchase_wallet)
+
+
+def _maybe_auto_repurchase(db: Session, user_id: int, agent_tier: int, repurchase_wallet: Wallet) -> None:
+    """
+    Check if the repurchase wallet balance has reached the tier price.
+    If so, deduct the tier price and queue an auto-repurchase Celery task.
+    The wallet is already locked (SELECT FOR UPDATE) by get_or_create_wallet above.
+    """
+    tier_price = _TIER_PRICES.get(agent_tier)
+    if tier_price is None:
+        return
+
+    current = Decimal(str(repurchase_wallet.balance))
+    if current < tier_price:
+        return
+
+    # Deduct tier price from repurchase wallet
+    repurchase_wallet.balance = current - tier_price
+    db.add(Transaction(
+        user_id=user_id,
+        agent_tier=agent_tier,
+        transaction_type=TransactionType.REPURCHASE_HOLD,
+        amount=-tier_price,
+        notes=f"Auto-repurchase deduction for Tier {agent_tier}",
+    ))
+    db.flush()
+
+    # Queue Celery task (lazy import to avoid circular dependency)
+    from app.workers.tasks import auto_repurchase  # noqa: PLC0415
+    auto_repurchase.delay(user_id, agent_tier)
 
 
 def credit_main_wallet_direct(

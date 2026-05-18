@@ -39,7 +39,7 @@ def purchase_agent(
 
     Requirements:
       - Account balance must be >= agent price
-      - You cannot buy the same tier twice (must not already have it active)
+      - Multiple purchases of the same tier are allowed
 
     On success the purchase is queued for immediate activation via Celery.
     """
@@ -47,15 +47,6 @@ def purchase_agent(
         raise HTTPException(
             status_code=400,
             detail=f"Invalid agent tier. Choose from: {sorted(VALID_TIERS)}",
-        )
-
-    existing = db.query(AgentPurchase).filter_by(
-        user_id=current_user.id, agent_tier=payload.agent_tier, status="active"
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Agent {payload.agent_tier} is already active for your account.",
         )
 
     price = Decimal(str(AGENT_TIER_PRICES[payload.agent_tier]))

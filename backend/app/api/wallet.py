@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -14,8 +14,6 @@ from app.models.withdrawal import WithdrawalRequest, WithdrawalStatus
 from app.schemas.agent import TransactionOut, WalletOut, WithdrawalIn, WithdrawalOut
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
-
-WITHDRAWAL_HOLD_HOURS = 24
 
 
 @router.get("/balances", response_model=list[WalletOut])
@@ -49,7 +47,7 @@ async def request_withdrawal(
 ):
     """
     Request a USDT (BEP-20) withdrawal from the user's MAIN wallet.
-    Funds are deducted immediately and the payout is sent after 24 hours.
+    Funds are deducted immediately and the payout is dispatched instantly via NOWPayments.
     """
     from app.workers.tasks import process_withdrawal
 
@@ -72,7 +70,7 @@ async def request_withdrawal(
             detail=f"Insufficient balance. Available: ${current_balance:.4f}, Requested: ${amount:.4f}",
         )
 
-    scheduled_for = datetime.utcnow() + timedelta(hours=WITHDRAWAL_HOLD_HOURS)
+    scheduled_for = datetime.utcnow()
 
     withdrawal = WithdrawalRequest(
         user_id=current_user.id,
@@ -91,14 +89,14 @@ async def request_withdrawal(
         agent_tier=body.agent_tier,
         amount=amount,
         reference_id=f"withdrawal_{withdrawal.id}",
-        notes=f"Withdrawal to {body.wallet_address[:10]}… scheduled for {scheduled_for.strftime('%Y-%m-%d %H:%M')} UTC",
+        notes=f"Withdrawal to {body.wallet_address[:10]}… processing now",
     )
 
     db.commit()
     db.refresh(withdrawal)
 
-    # Queue the payout to fire after 24h
-    process_withdrawal.apply_async(args=[withdrawal.id], countdown=WITHDRAWAL_HOLD_HOURS * 3600)
+    # Dispatch payout immediately
+    process_withdrawal.delay(withdrawal.id)
 
     # Send confirmation email
     from app.services.email_service import send_withdrawal_requested_email
