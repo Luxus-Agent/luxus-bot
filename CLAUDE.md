@@ -11,6 +11,7 @@ A multi-tier passive income platform. Users make a one-time purchase of an AI ag
 ```
 agent-revenue-sharing-platform/
 ├── backend/
+│   ├── migrate_v3.py            # Schema migration (sponsor_milestone_income enum value)
 │   ├── app/
 │   │   ├── main.py              # FastAPI app + CORS
 │   │   ├── config.py            # Settings (reads ../.env)
@@ -216,6 +217,13 @@ python create_tables.py
 ```bash
 cd backend
 python migrate_v2.py
+```
+
+### Applying v3 schema changes (sponsor milestone transaction type fix)
+
+```bash
+cd backend
+python migrate_v3.py
 ```
 
 ### Running

@@ -233,7 +233,7 @@ def process_sponsor_payout(
             user_id=beneficiary_id,
             agent_tier=agent_tier,
             gross_amount=Decimal(amount),
-            tx_type=TransactionType.PROACTIVE_INCOME,  # Using PROACTIVE_INCOME for sponsor cuts
+            tx_type=TransactionType.SPONSOR_MILESTONE_INCOME,
             reference_id=f"sponsor_milestone_pos_{matrix_position_id}_L{level}",
             notes=notes,
         )
@@ -404,12 +404,14 @@ def process_withdrawal(self, withdrawal_id: int) -> None:
             withdrawal.failure_reason = str(payout_exc)[:500]
             withdrawal.processed_at = datetime.utcnow()
 
-            # Refund the deducted amount back to the main wallet
-            credit_wallet(
+            # Refund the deducted amount directly to MAIN wallet (no repurchase split —
+            # the 10% was already held at earn time, so the full withdrawn amount is restored).
+            from app.core.wallet_ops import credit_main_wallet_direct
+            credit_main_wallet_direct(
                 db=db,
                 user_id=withdrawal.user_id,
                 agent_tier=withdrawal.agent_tier,
-                gross_amount=Decimal(str(withdrawal.amount)),
+                amount=Decimal(str(withdrawal.amount)),
                 tx_type=TransactionType.WITHDRAWAL,
                 reference_id=f"withdrawal_{withdrawal_id}_refund",
                 notes=f"Refund: withdrawal #{withdrawal_id} failed",

@@ -66,6 +66,35 @@ def credit_wallet(
     ))
 
 
+def credit_main_wallet_direct(
+    db: Session,
+    user_id: int,
+    agent_tier: int,
+    amount: Decimal,
+    tx_type: TransactionType,
+    reference_id: str | None = None,
+    notes: str | None = None,
+) -> None:
+    """
+    Credit amount directly to MAIN wallet with no repurchase split.
+    Used for refunds where the 10% repurchase was already taken at earn time.
+    """
+    four_places = Decimal("0.0001")
+    amount = amount.quantize(four_places, rounding=ROUND_HALF_UP)
+
+    wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.MAIN)
+    wallet.balance = Decimal(str(wallet.balance)) + amount
+
+    db.add(Transaction(
+        user_id=user_id,
+        agent_tier=agent_tier,
+        transaction_type=tx_type,
+        amount=amount,
+        reference_id=reference_id,
+        notes=notes,
+    ))
+
+
 def debit_wallet(
     db: Session,
     user_id: int,

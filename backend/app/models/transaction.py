@@ -16,6 +16,7 @@ class TransactionType(str, enum.Enum):
     REENTRY = "reentry"
     REPURCHASE_HOLD = "repurchase_hold"
     WITHDRAWAL = "withdrawal"
+    SPONSOR_MILESTONE_INCOME = "sponsor_milestone_income"  # Matrix sponsor milestone payout
     DEPOSIT = "deposit"          # Account balance top-up via NOWPayments
     TRANSFER_IN = "transfer_in"  # Received from another user
     TRANSFER_OUT = "transfer_out"  # Sent to another user
