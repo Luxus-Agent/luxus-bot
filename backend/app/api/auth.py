@@ -47,14 +47,11 @@ async def register(
     if db.query(User).filter_by(username=payload.username).first():
         raise HTTPException(status_code=400, detail="Username already taken")
 
-    sponsor: User | None = None
-    sponsor_position: int | None = None
-
-    if payload.referral_code:
-        sponsor = db.query(User).filter_by(referral_code=payload.referral_code.upper()).first()
-        if not sponsor:
-            raise HTTPException(status_code=400, detail="Invalid referral code")
-        sponsor_position = len(sponsor.downline) + 1
+    # Sponsor referral code is required — every user must register under a sponsor
+    sponsor = db.query(User).filter_by(referral_code=payload.referral_code.upper()).first()
+    if not sponsor:
+        raise HTTPException(status_code=400, detail="Invalid referral code")
+    sponsor_position = len(sponsor.downline) + 1
 
     otp = _generate_otp()
 
@@ -63,7 +60,7 @@ async def register(
         username=payload.username,
         password_hash=hash_password(payload.password),
         referral_code=uuid.uuid4().hex[:8].upper(),
-        sponsor_id=sponsor.id if sponsor else None,
+        sponsor_id=sponsor.id,
         sponsor_position=sponsor_position,
         is_email_verified=False,
         email_verification_code=otp,

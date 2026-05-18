@@ -4,9 +4,17 @@ Celery task chain:
   activate_purchase
     ├─ route_proactive_income   (sync inside same task)
     ├─ place_in_proportion      (sync inside same task)
+    │    └─ process_matrix_payout  (queued per triggered level)
+    │         └─ place_reentry → SPECULATION  (queued per re-entry)
     └─ place_in_speculation     (sync inside same task)
          └─ process_matrix_payout  (queued per triggered level)
-               └─ place_reentry    (queued per re-entry earned)
+               └─ place_reentry → SPECULATION  (queued per re-entry)
+
+Sponsor milestone payouts (process_sponsor_payout) are queued separately
+whenever a specific fill-count position is hit inside the matrix.
+
+NOTE: Proportion re-entries go into SPECULATION (not back into Proportion).
+      Speculation re-entries also go back into SPECULATION.
 """
 import logging
 from datetime import datetime
@@ -40,10 +48,18 @@ def activate_purchase(self, purchase_id: int) -> None:
 
         split = split_purchase(price)
 
+        # ProActive: 30% to sponsor + 30% to supreme sponsor (odd/even routing)
         route_proactive(db, buyer, purchase.agent_tier, split.proactive)
 
-        _, proportion_payouts = place_in_matrix(db, buyer.id, purchase.agent_tier, SystemType.PROPORTION)
-        _, speculation_payouts = place_in_matrix(db, buyer.id, purchase.agent_tier, SystemType.SPECULATION)
+        # Proportion matrix placement
+        _, proportion_payouts, proportion_sponsor_payouts = place_in_matrix(
+            db, buyer.id, purchase.agent_tier, SystemType.PROPORTION
+        )
+
+        # Speculation matrix placement
+        _, speculation_payouts, speculation_sponsor_payouts = place_in_matrix(
+            db, buyer.id, purchase.agent_tier, SystemType.SPECULATION
+        )
 
         purchase.status = "active"
         purchase.activated_at = datetime.utcnow()
@@ -61,8 +77,11 @@ def activate_purchase(self, purchase_id: int) -> None:
                 price=float(AGENT_TIER_PRICES[purchase.agent_tier]),
             )
         except Exception:
-            logger.exception("activate_purchase: failed to send activation email for purchase_id=%s", purchase_id)
+            logger.exception(
+                "activate_purchase: failed to send activation email for purchase_id=%s", purchase_id
+            )
 
+        # Queue level-completion payouts
         for payout in proportion_payouts + speculation_payouts:
             process_matrix_payout.delay(
                 matrix_position_id=payout.matrix_position_id,
@@ -75,10 +94,25 @@ def activate_purchase(self, purchase_id: int) -> None:
                 reentry_count=payout.reentry_count,
             )
 
+        # Queue sponsor milestone payouts
+        for sp in proportion_sponsor_payouts + speculation_sponsor_payouts:
+            process_sponsor_payout.delay(
+                matrix_position_id=sp.matrix_position_id,
+                owner_user_id=sp.owner_user_id,
+                agent_tier=sp.agent_tier,
+                system_type=sp.system_type.value,
+                level=sp.level,
+                amount=str(sp.amount),
+            )
+
+        total_payouts = (
+            len(proportion_payouts) + len(speculation_payouts) +
+            len(proportion_sponsor_payouts) + len(speculation_sponsor_payouts)
+        )
         logger.info(
             "activate_purchase: purchase %s activated. %d payouts queued.",
             purchase_id,
-            len(proportion_payouts) + len(speculation_payouts),
+            total_payouts,
         )
 
     except Exception as exc:
@@ -101,7 +135,13 @@ def process_matrix_payout(
     reentry_amount: str,
     reentry_count: int,
 ) -> None:
-    """Credit wallet for a completed matrix level, then queue re-entries."""
+    """
+    Credit wallet for a completed matrix level, then queue re-entries.
+
+    Re-entry destination:
+      Proportion  → re-enters SPECULATION
+      Speculation → re-enters SPECULATION
+    """
     from app.core.wallet_ops import credit_wallet
     from app.models.matrix import SystemType
     from app.models.transaction import TransactionType
@@ -127,17 +167,17 @@ def process_matrix_payout(
         )
         db.commit()
 
+        # Re-entries always go into SPECULATION (per Luxus.docx spec)
         for i in range(reentry_count):
             place_reentry.delay(
                 user_id=user_id,
                 agent_tier=agent_tier,
-                system_type=system_type,
                 reentry_index=i + 1,
                 source_position_id=matrix_position_id,
             )
 
         logger.info(
-            "process_matrix_payout: user=%s tier=%s %s L%s → $%s credited, %s re-entries queued",
+            "process_matrix_payout: user=%s tier=%s %s L%s → $%s credited, %s re-entries queued (→ SPECULATION)",
             user_id, agent_tier, system_type, level, wallet_amount, reentry_count,
         )
 
@@ -149,24 +189,93 @@ def process_matrix_payout(
         db.close()
 
 
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=60, name="tasks.process_sponsor_payout")
+def process_sponsor_payout(
+    self,
+    matrix_position_id: int,
+    owner_user_id: int,
+    agent_tier: int,
+    system_type: str,
+    level: int,
+    amount: str,
+) -> None:
+    """
+    Credit the sponsor of matrix_position's owner when a sponsor milestone fill
+    count is reached (e.g. 5th member in L2, 20th member in L3).
+
+    If the owner has no sponsor, the amount is credited to the owner themselves
+    so no funds are lost.
+    """
+    from app.core.wallet_ops import credit_wallet
+    from app.models.user import User
+    from app.models.transaction import TransactionType
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        owner = db.query(User).filter_by(id=owner_user_id).first()
+        if not owner:
+            logger.error("process_sponsor_payout: owner user_id=%s not found", owner_user_id)
+            return
+
+        if owner.sponsor_id:
+            beneficiary_id = owner.sponsor_id
+            notes = f"{system_type} L{level} sponsor milestone from pos #{matrix_position_id}"
+        else:
+            beneficiary_id = owner.id
+            notes = f"{system_type} L{level} sponsor milestone — no sponsor, credited to owner"
+            logger.info(
+                "process_sponsor_payout: owner=%s has no sponsor, self-crediting", owner_user_id
+            )
+
+        credit_wallet(
+            db=db,
+            user_id=beneficiary_id,
+            agent_tier=agent_tier,
+            gross_amount=Decimal(amount),
+            tx_type=TransactionType.PROACTIVE_INCOME,  # Using PROACTIVE_INCOME for sponsor cuts
+            reference_id=f"sponsor_milestone_pos_{matrix_position_id}_L{level}",
+            notes=notes,
+        )
+        db.commit()
+
+        logger.info(
+            "process_sponsor_payout: matrix_pos=%s owner=%s tier=%s %s L%s → $%s to user=%s",
+            matrix_position_id, owner_user_id, agent_tier, system_type, level, amount, beneficiary_id,
+        )
+
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "process_sponsor_payout failed: matrix_pos=%s owner=%s", matrix_position_id, owner_user_id
+        )
+        raise self.retry(exc=exc)
+    finally:
+        db.close()
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60, name="tasks.place_reentry")
 def place_reentry(
     self,
     user_id: int,
     agent_tier: int,
-    system_type: str,
     reentry_index: int,
     source_position_id: int,
 ) -> None:
-    """Place a re-entry back into the matrix queue."""
+    """
+    Place a re-entry into the SPECULATION matrix.
+    All re-entries (from both Proportion and Speculation) go into Speculation.
+    """
     from app.core.matrix_engine import place_in_matrix
     from app.models.matrix import MatrixPosition, SystemType
     from app.database import SessionLocal
 
     db = SessionLocal()
     try:
-        sys_type = SystemType(system_type)
-        new_slot, triggered_payouts = place_in_matrix(db, user_id, agent_tier, sys_type)
+        # Always re-enter into SPECULATION
+        new_slot, triggered_payouts, sponsor_payouts = place_in_matrix(
+            db, user_id, agent_tier, SystemType.SPECULATION
+        )
 
         source = db.query(MatrixPosition).filter_by(id=source_position_id).first()
         if source:
@@ -186,9 +295,19 @@ def place_reentry(
                 reentry_count=payout.reentry_count,
             )
 
+        for sp in sponsor_payouts:
+            process_sponsor_payout.delay(
+                matrix_position_id=sp.matrix_position_id,
+                owner_user_id=sp.owner_user_id,
+                agent_tier=sp.agent_tier,
+                system_type=sp.system_type.value,
+                level=sp.level,
+                amount=str(sp.amount),
+            )
+
         logger.info(
-            "place_reentry: user=%s tier=%s %s re-entry #%s at position %s",
-            user_id, agent_tier, system_type, reentry_index, new_slot.position_number,
+            "place_reentry: user=%s tier=%s → SPECULATION re-entry #%s at position %s",
+            user_id, agent_tier, reentry_index, new_slot.position_number,
         )
 
     except Exception as exc:
@@ -272,7 +391,9 @@ def process_withdrawal(self, withdrawal_id: int) -> None:
                         payout_id=withdrawal.nowpayments_payout_id,
                     )
             except Exception:
-                logger.exception("process_withdrawal: failed to send sent-email for withdrawal_id=%d", withdrawal_id)
+                logger.exception(
+                    "process_withdrawal: failed to send sent-email for withdrawal_id=%d", withdrawal_id
+                )
 
         except Exception as payout_exc:
             logger.error(
@@ -307,7 +428,9 @@ def process_withdrawal(self, withdrawal_id: int) -> None:
                         reason=withdrawal.failure_reason or "Unknown error",
                     )
             except Exception:
-                logger.exception("process_withdrawal: failed to send failure-email for withdrawal_id=%d", withdrawal_id)
+                logger.exception(
+                    "process_withdrawal: failed to send failure-email for withdrawal_id=%d", withdrawal_id
+                )
 
             raise self.retry(exc=payout_exc)
 

@@ -64,6 +64,8 @@ class WithdrawalIn(BaseModel):
     def amount_must_be_positive(cls, v: Decimal) -> Decimal:
         if v <= 0:
             raise ValueError("amount must be greater than zero")
+        if v < Decimal("10"):
+            raise ValueError("minimum withdrawal amount is $10")
         return v
 
     @field_validator("wallet_address")
@@ -77,8 +79,45 @@ class WithdrawalIn(BaseModel):
     @field_validator("agent_tier")
     @classmethod
     def tier_must_be_valid(cls, v: int) -> int:
-        if v not in (10, 20, 50, 100):
-            raise ValueError("agent_tier must be 10, 20, 50, or 100")
+        if v not in (1, 2, 3, 4):
+            raise ValueError("agent_tier must be 1, 2, 3, or 4")
+        return v
+
+
+class DepositIn(BaseModel):
+    amount_usd: Decimal
+
+    @field_validator("amount_usd")
+    @classmethod
+    def amount_must_be_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("deposit amount must be greater than zero")
+        if v < Decimal("10"):
+            raise ValueError("minimum deposit amount is $10")
+        return v
+
+
+class DepositOut(BaseModel):
+    id: int
+    amount_usd: Decimal
+    status: str
+    created_at: datetime
+    completed_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class TransferIn(BaseModel):
+    to_username: str
+    amount: Decimal
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("amount must be greater than zero")
+        if v < Decimal("1"):
+            raise ValueError("minimum transfer amount is $1")
         return v
 
 

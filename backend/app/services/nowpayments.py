@@ -1,9 +1,9 @@
 # backend/app/services/nowpayments.py
 """
-NOWPayments service — PresZ agent tier purchases.
+NOWPayments service — PresZ deposits and agent tier purchases.
 
 Adapted from the CEX Arbitrage project's nowpayments.py.
-Supports all four agent tiers ($10 / $20 / $50 / $100) paid in USDT on BEP-20.
+Payments are in USDT on BEP-20.
 
 Environment:
   APP_ENV=development  → sandbox API  (api-sandbox.nowpayments.io)
@@ -13,7 +13,10 @@ IPN flow:
   NOWPayments POSTs to   POST /webhooks/nowpayments/ipn
   Signature header:      x-nowpayments-sig  (HMAC-SHA512 of raw body)
   Success status:        "finished"
-  Order ID format:       presz_agent_{purchase_id}_{unix_ts}
+
+Order ID formats:
+  presz_deposit_{deposit_id}_{unix_ts}   — account balance top-up
+  presz_agent_{purchase_id}_{unix_ts}    — legacy direct agent purchase (kept for IPN compat)
 """
 
 import hmac
@@ -67,10 +70,23 @@ def _order_id(purchase_id: int) -> str:
     return f"presz_agent_{purchase_id}_{int(datetime.utcnow().timestamp())}"
 
 
+def _deposit_order_id(deposit_id: int) -> str:
+    return f"presz_deposit_{deposit_id}_{int(datetime.utcnow().timestamp())}"
+
+
 def _parse_purchase_id(order_id: str) -> int | None:
-    """Extract purchase_id from order_id string."""
+    """Extract purchase_id from agent order_id string."""
     try:
         parts = order_id.split("_")  # ['presz', 'agent', '{purchase_id}', '{ts}']
+        return int(parts[2])
+    except (IndexError, ValueError):
+        return None
+
+
+def _parse_deposit_id(order_id: str) -> int | None:
+    """Extract deposit_id from deposit order_id string."""
+    try:
+        parts = order_id.split("_")  # ['presz', 'deposit', '{deposit_id}', '{ts}']
         return int(parts[2])
     except (IndexError, ValueError):
         return None
@@ -184,6 +200,49 @@ async def create_agent_invoice(
     }
 
 
+async def create_deposit_invoice(
+    db:         Session,
+    deposit_id: int,
+    amount_usd: float,
+) -> dict[str, Any]:
+    """
+    Create a NOWPayments invoice for an account balance deposit.
+    Stores the generated order_id in Deposit.order_id.
+    """
+    from app.models.deposit import Deposit
+
+    deposit = db.query(Deposit).filter_by(id=deposit_id).with_for_update().first()
+    if not deposit:
+        raise HTTPException(status_code=404, detail="Deposit not found.")
+    if deposit.status != "pending":
+        raise HTTPException(status_code=400, detail="Deposit already processed.")
+
+    oid = _deposit_order_id(deposit_id)
+
+    invoice_data = await _create_invoice(
+        amount_usd=amount_usd,
+        order_id=oid,
+        description=f"PresZ Account Deposit — ${amount_usd:.2f} USDT",
+        usdt_network="usdtbsc",
+    )
+
+    deposit.order_id = oid
+    db.commit()
+
+    logger.info(
+        "Deposit invoice created — deposit_id=%d amount=$%.2f order_id=%s",
+        deposit_id, amount_usd, oid,
+    )
+
+    return {
+        "invoice_url":  invoice_data.get("invoice_url"),
+        "order_id":     oid,
+        "amount_usd":   amount_usd,
+        "network_label": USDT_NETWORKS["usdtbsc"]["label"],
+        "provider":     "nowpayments",
+    }
+
+
 # ── IPN signature verification ────────────────────────────────────────────────
 
 def verify_ipn_signature(raw_body: bytes, received_sig: str) -> bool:
@@ -235,11 +294,56 @@ def process_ipn_event(
         _handle_failed_payment(db, order_id, payment_id, payment_status)
         return {"action": "failed", "status": payment_status}
 
+    if order_id.startswith("presz_deposit_"):
+        return _complete_deposit(db, order_id, payment_id)
+
     if order_id.startswith("presz_agent_"):
         return _activate_agent_purchase(db, order_id, payment_id)
 
     logger.warning("[IPN] Unknown order_id prefix: %s", order_id)
     return {"action": "unknown_order_type", "order_id": order_id}
+
+
+def _complete_deposit(
+    db:         Session,
+    order_id:   str,
+    payment_id: str,
+) -> dict[str, Any]:
+    """Find the Deposit by order_id, credit the user's account balance."""
+    from app.models.deposit import Deposit
+    from app.core.wallet_ops import credit_account
+    from app.models.transaction import TransactionType
+    from datetime import datetime
+    from decimal import Decimal
+
+    deposit = db.query(Deposit).filter_by(order_id=order_id).first()
+
+    if not deposit:
+        logger.error("[IPN] Deposit not found for order_id=%s", order_id)
+        return {"action": "error", "message": "Deposit order not found"}
+
+    if deposit.status == "completed":
+        logger.info("[IPN] Deposit already completed: %s", order_id)
+        return {"action": "already_processed"}
+
+    credit_account(
+        db=db,
+        user_id=deposit.user_id,
+        amount=Decimal(str(deposit.amount_usd)),
+        tx_type=TransactionType.DEPOSIT,
+        reference_id=f"deposit_{deposit.id}",
+        notes=f"Account deposit via NOWPayments — order {order_id}",
+    )
+
+    deposit.status = "completed"
+    deposit.completed_at = datetime.utcnow()
+    db.commit()
+
+    logger.info(
+        "[IPN] Deposit completed — deposit_id=%d user_id=%d amount=$%.2f",
+        deposit.id, deposit.user_id, deposit.amount_usd,
+    )
+    return {"action": "deposit_completed", "deposit_id": deposit.id}
 
 
 def _activate_agent_purchase(
@@ -278,8 +382,16 @@ def _handle_failed_payment(
     payment_id: str,
     status_str: str,
 ) -> None:
-    from app.models.agent import AgentPurchase
+    if order_id.startswith("presz_deposit_"):
+        from app.models.deposit import Deposit
+        deposit = db.query(Deposit).filter_by(order_id=order_id).first()
+        if deposit and deposit.status == "pending":
+            deposit.status = "failed"
+            db.commit()
+            logger.warning("[IPN] Deposit %s → %s", order_id, status_str)
+        return
 
+    from app.models.agent import AgentPurchase
     purchase = db.query(AgentPurchase).filter_by(payment_id=order_id).first()
     if purchase and purchase.status == "pending":
         purchase.status = "failed"

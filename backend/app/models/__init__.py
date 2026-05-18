@@ -4,6 +4,7 @@ from app.models.matrix import MatrixPosition, MatrixCounter, SystemType
 from app.models.wallet import Wallet, WalletType
 from app.models.transaction import Transaction, TransactionType
 from app.models.withdrawal import WithdrawalRequest, WithdrawalStatus
+from app.models.deposit import Deposit
 
 __all__ = [
     "User",
@@ -17,4 +18,5 @@ __all__ = [
     "TransactionType",
     "WithdrawalRequest",
     "WithdrawalStatus",
+    "Deposit",
 ]

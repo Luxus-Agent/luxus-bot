@@ -1,4 +1,21 @@
-from decimal import Decimal
+"""
+ProActive income routing — updated per Luxus.docx spec.
+
+Split: 60% of purchase price → two equal halves
+  • First  30%  → Sponsor         (direct upline)
+  • Second 30%  → Supreme Sponsor (sponsor's sponsor)
+
+Odd / Even rule — applied independently at each recipient:
+  • Count how many PROACTIVE_INCOME credits the recipient has already received.
+  • Next incoming credit will be count + 1.
+    – Odd  → credit goes to recipient's wallet
+    – Even → credit passes to recipient's sponsor's wallet instead
+  • If the recipient has no upline when the pass-up fires, the amount stays
+    with the recipient.
+  • If a target (sponsor / supreme) does not exist, the amount is credited
+    back to the buyer so no money is lost.
+"""
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.orm import Session
 
@@ -7,44 +24,110 @@ from app.models.transaction import Transaction, TransactionType
 from app.core.wallet_ops import credit_wallet
 
 
-def route_proactive(
+def _proactive_income_count(db: Session, user_id: int) -> int:
+    """Return the number of PROACTIVE_INCOME credits this user has received so far."""
+    return (
+        db.query(Transaction)
+        .filter_by(user_id=user_id, transaction_type=TransactionType.PROACTIVE_INCOME)
+        .count()
+    )
+
+
+def _route_half(
     db: Session,
     buyer: User,
+    primary_recipient: User | None,
     agent_tier: int,
     amount: Decimal,
+    label: str,
 ) -> None:
     """
-    Route the ProActive portion of a purchase.
+    Route one half (30%) of the proactive amount.
 
-    Odd position  → income goes to the sponsor's wallet
-    Even position → income stays in the buyer's wallet
-    No sponsor    → income stays in the buyer's wallet
-
-    All credits go through credit_wallet() so the 10% repurchase hold is applied.
+    Odd income  → primary_recipient's wallet
+    Even income → primary_recipient's sponsor's wallet
+    No recipient → falls back to buyer's wallet
     """
-    position = buyer.sponsor_position or 1
-
-    if buyer.sponsor_id and position % 2 == 1:
-        beneficiary_id = buyer.sponsor_id
-        beneficiary_tx_type = TransactionType.PROACTIVE_INCOME
-        # Record the outgoing side on the buyer
-        db.add(Transaction(
+    if primary_recipient is None:
+        # No sponsor chain — credit stays with the buyer
+        credit_wallet(
+            db=db,
             user_id=buyer.id,
             agent_tier=agent_tier,
-            transaction_type=TransactionType.PROACTIVE_SENT,
-            amount=amount,
-            reference_id=f"proactive_{buyer.id}",
-            notes=f"Routed to sponsor (position {position})",
-        ))
+            gross_amount=amount,
+            tx_type=TransactionType.PROACTIVE_INCOME,
+            reference_id=f"proactive_{buyer.id}_{label}",
+            notes=f"ProActive {label} — no sponsor, credited to buyer",
+        )
+        return
+
+    # Determine odd/even: next income number = current_count + 1
+    next_count = _proactive_income_count(db, primary_recipient.id) + 1
+
+    if next_count % 2 == 1:
+        # Odd → primary recipient keeps it
+        beneficiary_id = primary_recipient.id
+        notes = f"ProActive {label} — odd income #{next_count}"
     else:
-        beneficiary_id = buyer.id
-        beneficiary_tx_type = TransactionType.PROACTIVE_INCOME
+        # Even → pass to primary recipient's sponsor (if any)
+        if primary_recipient.sponsor_id:
+            beneficiary_id = primary_recipient.sponsor_id
+            notes = f"ProActive {label} — even income #{next_count}, passed to upline"
+        else:
+            # No upline to pass to — recipient keeps it
+            beneficiary_id = primary_recipient.id
+            notes = f"ProActive {label} — even income #{next_count}, no upline, kept"
+
+    # Record outgoing side on buyer
+    db.add(Transaction(
+        user_id=buyer.id,
+        agent_tier=agent_tier,
+        transaction_type=TransactionType.PROACTIVE_SENT,
+        amount=amount,
+        reference_id=f"proactive_{buyer.id}_{label}",
+        notes=f"ProActive {label} sent (buyer position in sponsor downline: {buyer.sponsor_position})",
+    ))
 
     credit_wallet(
         db=db,
         user_id=beneficiary_id,
         agent_tier=agent_tier,
         gross_amount=amount,
-        tx_type=beneficiary_tx_type,
-        reference_id=f"proactive_{buyer.id}",
+        tx_type=TransactionType.PROACTIVE_INCOME,
+        reference_id=f"proactive_{buyer.id}_{label}",
+        notes=notes,
     )
+
+
+def route_proactive(
+    db: Session,
+    buyer: User,
+    agent_tier: int,
+    amount: Decimal,  # This is 60% of the purchase price
+) -> None:
+    """
+    Route the ProActive portion of a purchase.
+
+    amount (60% of purchase) is split into two equal halves:
+      • First  half → buyer's direct Sponsor
+      • Second half → buyer's Supreme Sponsor (sponsor's sponsor)
+
+    Each recipient's odd/even income count determines whether they wallet
+    the amount or pass it up one more level.
+    """
+    four_places = Decimal("0.0001")
+    first_half  = (amount / 2).quantize(four_places, rounding=ROUND_HALF_UP)
+    second_half = amount - first_half  # Ensures exact sum
+
+    # Load sponsor and supreme sponsor
+    sponsor: User | None = (
+        db.query(User).filter_by(id=buyer.sponsor_id).first()
+        if buyer.sponsor_id else None
+    )
+    supreme: User | None = (
+        db.query(User).filter_by(id=sponsor.sponsor_id).first()
+        if (sponsor and sponsor.sponsor_id) else None
+    )
+
+    _route_half(db, buyer, sponsor,  agent_tier, first_half,  "sponsor")
+    _route_half(db, buyer, supreme, agent_tier, second_half, "supreme")

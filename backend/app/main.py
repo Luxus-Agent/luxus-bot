@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, agents, wallet, payments
+from app.api import auth, agents, wallet, payments, deposit
 from app.workers.celery_app import celery_app  # noqa: F401
 
 app = FastAPI(
@@ -22,3 +22,4 @@ app.include_router(auth.router)
 app.include_router(agents.router)
 app.include_router(wallet.router)
 app.include_router(payments.router)
+app.include_router(deposit.router)

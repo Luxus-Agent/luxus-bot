@@ -7,8 +7,9 @@ from app.database import Base
 
 
 class WalletType(str, enum.Enum):
-    MAIN = "main"            # Withdrawable balance
+    MAIN = "main"              # Withdrawable per-tier balance
     REPURCHASE = "repurchase"  # 10% auto-hold per agent tier
+    ACCOUNT = "account"        # Platform account balance (used for purchasing agents)
 
 
 class Wallet(Base):

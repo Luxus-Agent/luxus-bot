@@ -5,7 +5,7 @@ class UserRegister(BaseModel):
     email: EmailStr
     username: str
     password: str
-    referral_code: str | None = None
+    referral_code: str  # Sponsor's referral code — required for all registrations
 
 
 class UserLogin(BaseModel):
