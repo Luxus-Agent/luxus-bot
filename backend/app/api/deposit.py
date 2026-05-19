@@ -7,9 +7,12 @@ Deposit flow:
   GET  /deposit/balance  → current account balance
 
 Transfer flow:
-  POST /transfer         → send account balance to another user by username
+  POST /deposit/transfer        → initiate transfer; sends OTP email on first use per recipient
+  POST /deposit/transfer/verify → confirm OTP (first-time only) and execute transfer
 """
-from decimal import Decimal
+import random
+from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -18,12 +21,22 @@ from app.api.deps import get_current_user
 from app.core.wallet_ops import credit_account, debit_account, get_account_balance, ACCOUNT_TIER
 from app.database import get_db
 from app.models.deposit import Deposit
+from app.models.transfer_verification import TransferVerification
 from app.models.transaction import TransactionType
 from app.models.user import User
-from app.schemas.agent import DepositIn, DepositOut, DepositRefundIn, TransferIn
+from app.schemas.agent import DepositIn, DepositOut, DepositRefundIn, TransferIn, TransferVerifyIn
 
 router = APIRouter(prefix="/deposit", tags=["deposit"])
 
+TRANSFER_FEE_RATE = Decimal("0.01")   # 1% platform fee
+TRANSFER_OTP_EXPIRE_MINUTES = 30
+
+
+def _generate_otp() -> str:
+    return str(random.randint(100000, 999999))
+
+
+# ── Balance ───────────────────────────────────────────────────────────────────
 
 @router.get("/balance")
 def account_balance(
@@ -34,6 +47,8 @@ def account_balance(
     balance = get_account_balance(db, current_user.id)
     return {"account_balance": float(balance)}
 
+
+# ── Deposit ───────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=dict)
 async def create_deposit(
@@ -78,6 +93,8 @@ def list_deposits(
     )
 
 
+# ── Refund ────────────────────────────────────────────────────────────────────
+
 @router.post("/refund")
 async def refund_deposit(
     body: DepositRefundIn,
@@ -94,7 +111,6 @@ async def refund_deposit(
     if balance <= 0:
         raise HTTPException(status_code=400, detail="No account balance to refund.")
 
-    # Deduct balance first (raises 400 if somehow insufficient)
     debit_account(
         db=db,
         user_id=current_user.id,
@@ -112,8 +128,6 @@ async def refund_deposit(
             wallet_address=body.wallet_address,
         )
     except Exception as exc:
-        # Refund failed — restore the balance
-        from app.core.wallet_ops import credit_account
         credit_account(
             db=db,
             user_id=current_user.id,
@@ -132,15 +146,66 @@ async def refund_deposit(
     }
 
 
+# ── Transfer helpers ──────────────────────────────────────────────────────────
+
+def _execute_transfer(
+    db: Session,
+    sender: User,
+    recipient: User,
+    amount: Decimal,
+) -> dict:
+    """
+    Debit sender and credit recipient with 1% platform fee applied.
+    sender is debited the full amount; recipient receives 99%.
+    """
+    four = Decimal("0.0001")
+    fee = (amount * TRANSFER_FEE_RATE).quantize(four, rounding=ROUND_HALF_UP)
+    recipient_credit = amount - fee
+
+    ref = f"transfer_{sender.id}_to_{recipient.id}_{int(datetime.utcnow().timestamp())}"
+
+    debit_account(
+        db=db,
+        user_id=sender.id,
+        amount=amount,
+        tx_type=TransactionType.TRANSFER_OUT,
+        reference_id=ref,
+        notes=f"Transfer to @{recipient.username} (1% fee: ${float(fee):.4f})",
+    )
+    credit_account(
+        db=db,
+        user_id=recipient.id,
+        amount=recipient_credit,
+        tx_type=TransactionType.TRANSFER_IN,
+        reference_id=ref,
+        notes=f"Transfer from @{sender.username}",
+    )
+    db.commit()
+
+    return {
+        "message": f"${float(amount):.2f} transferred to @{recipient.username} (fee: ${float(fee):.4f})",
+        "amount_sent": float(amount),
+        "fee": float(fee),
+        "recipient_received": float(recipient_credit),
+        "new_balance": float(get_account_balance(db, sender.id)),
+    }
+
+
+# ── Transfer ──────────────────────────────────────────────────────────────────
+
 @router.post("/transfer")
 def transfer_balance(
     body: TransferIn,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Transfer account balance from the current user to another user by username.
-    Both debit and credit happen atomically.
+    Transfer account balance to another user.
+
+    First transfer to a given recipient triggers an email OTP verification.
+    Subsequent transfers to the same recipient execute immediately.
+    A 1% platform fee is deducted from the sent amount; recipient receives 99%.
     """
     if body.to_username.lower() == current_user.username.lower():
         raise HTTPException(status_code=400, detail="Cannot transfer to yourself.")
@@ -150,31 +215,82 @@ def transfer_balance(
         raise HTTPException(status_code=404, detail="Recipient user not found.")
 
     amount = Decimal(str(body.amount))
-    ref = f"transfer_{current_user.id}_to_{recipient.id}"
 
-    # Debit sender — raises 400 if insufficient
-    debit_account(
-        db=db,
-        user_id=current_user.id,
-        amount=amount,
-        tx_type=TransactionType.TRANSFER_OUT,
-        reference_id=ref,
-        notes=f"Transfer to @{recipient.username}",
+    tv = (
+        db.query(TransferVerification)
+        .filter_by(sender_id=current_user.id, recipient_id=recipient.id)
+        .first()
     )
 
-    # Credit recipient
-    credit_account(
-        db=db,
-        user_id=recipient.id,
-        amount=amount,
-        tx_type=TransactionType.TRANSFER_IN,
-        reference_id=ref,
-        notes=f"Transfer from @{current_user.username}",
-    )
+    if tv and tv.is_verified:
+        # Trusted pair — execute immediately
+        return _execute_transfer(db, current_user, recipient, amount)
 
+    # First time to this recipient — send OTP
+    otp = _generate_otp()
+    if not tv:
+        tv = TransferVerification(sender_id=current_user.id, recipient_id=recipient.id)
+        db.add(tv)
+    tv.pending_otp = otp
+    tv.otp_expires_at = datetime.utcnow() + timedelta(minutes=TRANSFER_OTP_EXPIRE_MINUTES)
     db.commit()
 
+    from app.services.email_service import send_transfer_verification_email
+    background_tasks.add_task(
+        send_transfer_verification_email,
+        current_user.email,
+        otp,
+        recipient.username,
+        float(amount),
+    )
+
     return {
-        "message": f"${float(amount):.2f} transferred to @{recipient.username}",
-        "new_balance": float(get_account_balance(db, current_user.id)),
+        "requires_verification": True,
+        "message": (
+            f"First transfer to @{recipient.username} requires email verification. "
+            f"A code has been sent to your email — use POST /deposit/transfer/verify to confirm."
+        ),
     }
+
+
+@router.post("/transfer/verify")
+def verify_transfer(
+    body: TransferVerifyIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Confirm the OTP for a first-time transfer and execute it.
+    After success the (sender, recipient) pair is permanently trusted.
+    """
+    if body.to_username.lower() == current_user.username.lower():
+        raise HTTPException(status_code=400, detail="Cannot transfer to yourself.")
+
+    recipient = db.query(User).filter_by(username=body.to_username).first()
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Recipient user not found.")
+
+    tv = (
+        db.query(TransferVerification)
+        .filter_by(sender_id=current_user.id, recipient_id=recipient.id)
+        .first()
+    )
+
+    if not tv or not tv.pending_otp:
+        raise HTTPException(
+            status_code=400,
+            detail="No pending verification for this recipient. Initiate a transfer first.",
+        )
+    if tv.pending_otp != body.otp:
+        raise HTTPException(status_code=400, detail="Invalid verification code.")
+    if not tv.otp_expires_at or datetime.utcnow() > tv.otp_expires_at:
+        raise HTTPException(status_code=400, detail="Verification code has expired.")
+
+    # Mark pair as permanently trusted
+    tv.is_verified = True
+    tv.pending_otp = None
+    tv.otp_expires_at = None
+    db.commit()
+
+    amount = Decimal(str(body.amount))
+    return _execute_transfer(db, current_user, recipient, amount)

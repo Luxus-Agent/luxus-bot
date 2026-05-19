@@ -109,11 +109,18 @@ Purchase (spend account balance):
 6. Celery: activate_purchase → revenue split → matrix placement → payouts → email
 
 Transfer (user-to-user):
-   POST /deposit/transfer         → moves ACCOUNT balance from sender to recipient (by username)
+   POST /deposit/transfer         → 1% fee deducted; first transfer to a new recipient requires email OTP
+   POST /deposit/transfer/verify  → confirm OTP for first-time recipient; executes the transfer
 
 Balance query:
    GET  /deposit/balance          → current spendable account balance
    GET  /deposit                  → deposit history
+
+Withdrawal address management (required before withdrawing):
+   POST /wallet/address           → register a BEP-20 address; sends email OTP
+   POST /wallet/address/verify    → confirm OTP; marks address as verified
+   GET  /wallet/addresses         → list user's verified addresses
+   DELETE /wallet/address/{id}    → remove a registered address
 ```
 
 ## Revenue Mechanics
@@ -234,6 +241,13 @@ cd backend
 python migrate_v4.py
 ```
 
+### Applying v5 schema changes (dummy re-entries, transfer verifications, wallet addresses)
+
+```bash
+cd backend
+python migrate_v5.py
+```
+
 ### Running
 
 ```bash
@@ -280,9 +294,13 @@ API docs: http://localhost:8000/docs
 - **Sponsor is mandatory at registration.** Create the platform root/admin user directly in the DB.
 - **Withdrawal minimum is $10.** Minimum transfer is $1. No maximum on withdrawals.
 - **Withdrawals are instant** — no 24h hold. Payout dispatched immediately via NOWPayments.
+- **Withdrawal addresses must be pre-verified** — register via `POST /wallet/address`, confirm OTP via `POST /wallet/address/verify`. Withdrawal fails if address is not in the verified list.
+- **Transfer fee is 1%** — sender is debited the full amount; recipient receives 99%. The 1% is a platform fee.
+- **First-time transfer to a new recipient requires email OTP** — `POST /deposit/transfer` sends the code; `POST /deposit/transfer/verify` confirms and executes. Subsequent transfers to the same recipient are instant.
 - **Multiple agents per tier allowed** — users can purchase the same tier multiple times.
 - **Inactive sponsors are skipped** in ProActive routing — income passes to supreme sponsor or buyer.
 - **Re-entries always use Tier 1 ($10)** regardless of the source position's tier.
+- **Re-entries are dummy** — they fill matrix slots for others but do not receive wallet payouts when their own L1/L2/L3 fills. `MatrixPosition.is_dummy=True` signals this; `matrix_engine.py` skips payout generation for dummy ancestors.
 - **Auto-repurchase:** when a user's REPURCHASE wallet for a given tier accumulates >= tier price, a new agent purchase is automatically created and activated via Celery (`auto_repurchase` task).
 - **Admin access:** set `is_admin=true` in DB for the root user. Admin endpoints are at `/admin/*`. Run `migrate_v4.py` first.
 - Order ID prefixes: `presz_deposit_*` = account top-up, `presz_agent_*` = legacy direct purchase.

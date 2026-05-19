@@ -121,6 +121,57 @@ class TransferIn(BaseModel):
         return v
 
 
+class TransferVerifyIn(BaseModel):
+    to_username: str
+    amount: Decimal
+    otp: str
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_be_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("amount must be greater than zero")
+        if v < Decimal("1"):
+            raise ValueError("minimum transfer amount is $1")
+        return v
+
+
+class WalletAddressIn(BaseModel):
+    address: str
+    label: str | None = None
+
+    @field_validator("address")
+    @classmethod
+    def address_must_be_bep20(cls, v: str) -> str:
+        v = v.strip()
+        if not v.startswith("0x") or len(v) != 42:
+            raise ValueError("address must be a valid BEP-20 address (0x + 40 hex chars)")
+        return v
+
+
+class WalletAddressVerifyIn(BaseModel):
+    address: str
+    otp: str
+
+    @field_validator("address")
+    @classmethod
+    def address_must_be_bep20(cls, v: str) -> str:
+        v = v.strip()
+        if not v.startswith("0x") or len(v) != 42:
+            raise ValueError("address must be a valid BEP-20 address (0x + 40 hex chars)")
+        return v
+
+
+class WalletAddressOut(BaseModel):
+    id: int
+    address: str
+    label: str | None
+    is_verified: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class WithdrawalOut(BaseModel):
     id: int
     agent_tier: int

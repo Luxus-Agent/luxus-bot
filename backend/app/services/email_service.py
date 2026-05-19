@@ -146,6 +146,70 @@ def send_agent_activated_email(email: str, username: str, agent_tier: int, price
     return _send_sync(email, subject, body)
 
 
+# ── Transfer verification OTP ─────────────────────────────────────────────────
+
+async def send_transfer_verification_email(
+    email: str, otp: str, recipient_username: str, amount: float
+) -> bool:
+    subject = "Confirm Your Transfer — PresZ"
+    body = _card(f"""
+        <h2 style="color: #1a1a2e; margin-top: 0;">Transfer Verification</h2>
+        <p>You are about to transfer funds to <strong>@{recipient_username}</strong>
+           for the first time.</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+            <tr>
+                <td style="padding: 10px; background: #f9fafb; border-radius: 4px;
+                            color: #6b7280; font-size: 13px; width: 40%;">Recipient</td>
+                <td style="padding: 10px; font-weight: bold;">@{recipient_username}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px; color: #6b7280; font-size: 13px;">Amount</td>
+                <td style="padding: 10px; font-weight: bold;">${amount:.2f}</td>
+            </tr>
+        </table>
+        <p>Your one-time verification code is:</p>
+        <p style="font-size: 36px; font-weight: bold; color: {_ACCENT};
+                   letter-spacing: 10px; text-align: center; margin: 24px 0;">{otp}</p>
+        <p>Use <code>POST /deposit/transfer/verify</code> with this code to confirm.
+           It expires in <strong>30 minutes</strong>.</p>
+        <p>After this, transfers to @{recipient_username} will not require verification.</p>
+        <p style="color: #6b7280; font-size: 13px;">
+            If you did not initiate this transfer, please contact support immediately.
+        </p>
+    """)
+    return await send_email(email, subject, body)
+
+
+# ── Withdrawal address verification OTP ──────────────────────────────────────
+
+async def send_address_verification_email(
+    email: str, otp: str, wallet_address: str
+) -> bool:
+    subject = "Verify Withdrawal Address — PresZ"
+    short_address = f"{wallet_address[:6]}…{wallet_address[-4:]}"
+    body = _card(f"""
+        <h2 style="color: #1a1a2e; margin-top: 0;">Withdrawal Address Verification</h2>
+        <p>You are registering a new BEP-20 withdrawal address:</p>
+        <p style="font-family: monospace; background: #f9fafb; padding: 12px;
+                   border-radius: 6px; word-break: break-all; margin: 16px 0;">
+            {wallet_address}
+        </p>
+        <p>Your verification code is:</p>
+        <p style="font-size: 36px; font-weight: bold; color: {_ACCENT};
+                   letter-spacing: 10px; text-align: center; margin: 24px 0;">{otp}</p>
+        <p>Use <code>POST /wallet/address/verify</code> with this code to confirm.
+           It expires in <strong>30 minutes</strong>.</p>
+        <p style="color: #ef4444; font-size: 13px; font-weight: bold;">
+            ⚠ Only verify an address that belongs to you. Withdrawals sent to a wrong address
+            cannot be reversed.
+        </p>
+        <p style="color: #6b7280; font-size: 13px;">
+            If you did not request this, please ignore this email.
+        </p>
+    """)
+    return await send_email(email, subject, body)
+
+
 # ── Withdrawal requested ──────────────────────────────────────────────────────
 
 async def send_withdrawal_requested_email(
@@ -178,7 +242,7 @@ async def send_withdrawal_requested_email(
             </tr>
         </table>
         <p style="color: #6b7280; font-size: 13px;">
-            The payout will be sent automatically after the 24-hour security hold.
+            Your payout is being processed now and will be dispatched automatically to your BEP-20 address.
         </p>
     """)
     return await send_email(email, subject, body)

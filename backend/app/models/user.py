@@ -43,3 +43,4 @@ class User(Base):
     matrix_positions = relationship("MatrixPosition", back_populates="user")
     withdrawals = relationship("WithdrawalRequest", back_populates="user")
     deposits = relationship("Deposit", back_populates="user")
+    wallet_addresses = relationship("WalletAddress", back_populates="user")

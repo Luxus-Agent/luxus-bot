@@ -272,9 +272,10 @@ def place_reentry(
 
     db = SessionLocal()
     try:
-        # Re-entries always go into SPECULATION at Tier 1 ($10) regardless of source tier
+        # Re-entries go into SPECULATION at Tier 1 as dummy positions — they fill
+        # slots for others but don't earn wallet payouts themselves.
         new_slot, triggered_payouts, sponsor_payouts = place_in_matrix(
-            db, user_id, 1, SystemType.SPECULATION
+            db, user_id, 1, SystemType.SPECULATION, is_dummy=True
         )
 
         source = db.query(MatrixPosition).filter_by(id=source_position_id).first()
@@ -412,9 +413,9 @@ def process_withdrawal(self, withdrawal_id: int) -> None:
                 user_id=withdrawal.user_id,
                 agent_tier=withdrawal.agent_tier,
                 amount=Decimal(str(withdrawal.amount)),
-                tx_type=TransactionType.WITHDRAWAL,
+                tx_type=TransactionType.TRANSFER_IN,
                 reference_id=f"withdrawal_{withdrawal_id}_refund",
-                notes=f"Refund: withdrawal #{withdrawal_id} failed",
+                notes=f"Refund: withdrawal #{withdrawal_id} failed — balance restored",
             )
             db.commit()
 
@@ -437,6 +438,11 @@ def process_withdrawal(self, withdrawal_id: int) -> None:
             raise self.retry(exc=payout_exc)
 
     except Exception as exc:
+        # Don't re-catch a Retry that was already raised by the inner payout handler —
+        # doing so would double-schedule the task and waste the retry counter.
+        from celery.exceptions import Retry as CeleryRetry
+        if isinstance(exc, CeleryRetry):
+            raise
         db.rollback()
         logger.exception("process_withdrawal task error for withdrawal_id=%s", withdrawal_id)
         raise self.retry(exc=exc)

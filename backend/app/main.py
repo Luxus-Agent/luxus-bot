@@ -9,7 +9,7 @@ app = FastAPI(
     description="Multi-tier AI agent revenue sharing with ProActive, Proportion, and Speculation systems",
     version="1.0.0",
 )
-
+#uvicorn app.main:app --reload
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # restrict to your frontend domain in production

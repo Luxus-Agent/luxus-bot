@@ -44,6 +44,7 @@ class MatrixPosition(Base):
 
     completed: Mapped[bool] = mapped_column(Boolean, default=False)
     reentry_count: Mapped[int] = mapped_column(Integer, default=0)
+    is_dummy: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

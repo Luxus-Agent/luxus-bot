@@ -163,6 +163,7 @@ def place_in_matrix(
     user_id: int,
     agent_tier: int,
     system_type: SystemType,
+    is_dummy: bool = False,
 ) -> tuple[MatrixPosition, list[PendingPayout], list[PendingSponsorPayout]]:
     """
     Assign the next available matrix slot to user_id and update ancestor fill counts.
@@ -196,6 +197,7 @@ def place_in_matrix(
         agent_tier=agent_tier,
         system_type=system_type,
         position_number=new_pos_num,
+        is_dummy=is_dummy,
     )
     db.add(new_slot)
     db.flush()
@@ -254,15 +256,18 @@ def place_in_matrix(
                 ancestor.l3_paid = True
                 ancestor.completed = True
 
-            pending_payouts.append(PendingPayout(
-                matrix_position_id=ancestor.id,
-                user_id=ancestor.user_id,
-                agent_tier=agent_tier,
-                system_type=system_type,
-                level=level,
-                wallet_amount=cfg.wallet_amount * multiplier,
-                reentry_amount=cfg.reentry_amount * multiplier,
-                reentry_count=cfg.reentry_count,
-            ))
+            # Dummy positions (re-entries) fill slots for others but don't
+            # earn wallet payouts or spawn further re-entries themselves.
+            if not ancestor.is_dummy:
+                pending_payouts.append(PendingPayout(
+                    matrix_position_id=ancestor.id,
+                    user_id=ancestor.user_id,
+                    agent_tier=agent_tier,
+                    system_type=system_type,
+                    level=level,
+                    wallet_amount=cfg.wallet_amount * multiplier,
+                    reentry_amount=cfg.reentry_amount * multiplier,
+                    reentry_count=cfg.reentry_count,
+                ))
 
     return new_slot, pending_payouts, sponsor_payouts

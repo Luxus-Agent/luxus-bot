@@ -8,7 +8,7 @@ celery_app = Celery(
     backend=settings.REDIS_URL,
     include=["app.workers.tasks"],
 )
-
+#celery -A app.workers.celery_app worker --loglevel=info
 celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
