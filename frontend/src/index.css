@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #080B10;
+  color: #FFFFFF;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #0E1117;
+}
+::-webkit-scrollbar-thumb {
+  background: #1E2A38;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #00D4B4;
+}
+
+.glow-text {
+  text-shadow: 0 0 20px rgba(0, 212, 180, 0.5);
+}
+
+.glow-border {
+  box-shadow: 0 0 20px rgba(0, 212, 180, 0.15);
+}
+
+.card-glass {
+  background: rgba(20, 25, 34, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid #1E2A38;
+  border-radius: 12px;
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #00D4B4, #00FFD4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 180, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(0, 212, 180, 0); }
+}
+
+.pulse-green {
+  animation: pulse-green 2s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px #141922 inset;
+  -webkit-text-fill-color: #ffffff;
+  transition: background-color 5000s ease-in-out 0s;
+}

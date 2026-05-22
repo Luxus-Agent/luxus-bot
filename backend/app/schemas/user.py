@@ -25,6 +25,8 @@ class UserOut(BaseModel):
     referral_code: str
     sponsor_id: int | None
     is_email_verified: bool
+    is_admin: bool = False
+    is_active: bool = True
 
     model_config = {"from_attributes": True}
 

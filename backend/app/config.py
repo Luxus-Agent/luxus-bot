@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SENDER_EMAIL: str = ""
 
+    # Admin seed
+    ADMIN_EMAIL: str = "admin@luxus.io"
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "changeme"
+    ADMIN_REFERRAL_CODE: str = "ADMIN001"
+
     model_config = {
         # Looks for .env one level up (project root) when running from backend/
         "env_file": ("../.env", ".env"),

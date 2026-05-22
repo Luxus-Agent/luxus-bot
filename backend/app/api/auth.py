@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.core.security import create_access_token, hash_password, verify_password
 from app.database import get_db
 from app.models.user import User
@@ -121,6 +122,13 @@ async def resend_verification(
     background_tasks.add_task(send_resend_verification_email, user.email, otp)
 
     return {"message": "Verification code sent"}
+
+
+# ── Me (profile) ──────────────────────────────────────────────────────────────
+
+@router.get("/me", response_model=UserOut)
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────

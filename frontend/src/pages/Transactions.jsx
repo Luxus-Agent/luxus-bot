@@ -1,0 +1,179 @@
+import { useEffect, useState } from 'react'
+import { UserLayout as Layout } from '../components/Layout'
+import api from '../api/client'
+import toast from 'react-hot-toast'
+import { Activity, TrendingUp, TrendingDown } from 'lucide-react'
+
+const TX_COLOR = {
+  DEPOSIT: '#00D4B4', PROACTIVE_INCOME: '#00D4B4', PROPORTION_PAYOUT: '#00D4B4',
+  SPECULATION_PAYOUT: '#00D4B4', SPONSOR_MILESTONE_INCOME: '#00D4B4',
+  TRANSFER_IN: '#00D4B4', WITHDRAWAL: '#FF4D6A', TRANSFER_OUT: '#FF4D6A',
+  REPURCHASE_HOLD: '#FFB547', REENTRY: '#8899AA', PURCHASE: '#FF4D6A', AGENT_PURCHASE: '#FF4D6A',
+}
+const NEGATIVE = ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE', 'REPURCHASE_HOLD']
+
+const TX_GROUPS = {
+  Income: ['PROACTIVE_INCOME', 'PROPORTION_PAYOUT', 'SPECULATION_PAYOUT', 'SPONSOR_MILESTONE_INCOME', 'TRANSFER_IN', 'DEPOSIT'],
+  Expenses: ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE'],
+  System: ['REPURCHASE_HOLD', 'REENTRY'],
+}
+
+export default function Transactions() {
+  const [transactions, setTransactions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filterType, setFilterType] = useState('all')
+  const [filterGroup, setFilterGroup] = useState('all')
+
+  useEffect(() => {
+    api.get('/wallet/transactions')
+      .then(r => setTransactions(r.data))
+      .catch(() => toast.error('Failed to load transactions'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const txTypes = [...new Set(transactions.map(t => t.transaction_type))]
+
+  const totalIn = transactions
+    .filter(t => !NEGATIVE.includes(t.transaction_type))
+    .reduce((s, t) => s + parseFloat(t.amount), 0)
+
+  const totalOut = transactions
+    .filter(t => NEGATIVE.includes(t.transaction_type))
+    .reduce((s, t) => s + parseFloat(t.amount), 0)
+
+  const filtered = transactions.filter(t => {
+    if (filterType !== 'all' && t.transaction_type !== filterType) return false
+    if (filterGroup !== 'all') {
+      const groupTypes = TX_GROUPS[filterGroup] || []
+      if (!groupTypes.includes(t.transaction_type)) return false
+    }
+    return true
+  })
+
+  if (loading) return (
+    <Layout>
+      <div className="flex items-center justify-center h-64">
+        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: '#00D4B4' }} />
+      </div>
+    </Layout>
+  )
+
+  return (
+    <Layout>
+      <div className="space-y-6 fade-in">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Transactions</h1>
+          <p className="text-sm mt-1" style={{ color: '#8899AA' }}>Complete ledger of all account activity</p>
+        </div>
+
+        {/* Totals */}
+        <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+            <div className="flex items-center gap-2 mb-1">
+              <Activity size={16} style={{ color: '#8899AA' }} />
+              <p className="text-xs" style={{ color: '#8899AA' }}>Total Records</p>
+            </div>
+            <p className="text-2xl font-bold text-white">{transactions.length}</p>
+          </div>
+          <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+            <div className="flex items-center gap-2 mb-1">
+              <TrendingUp size={16} style={{ color: '#00D4B4' }} />
+              <p className="text-xs" style={{ color: '#8899AA' }}>Total In</p>
+            </div>
+            <p className="text-2xl font-bold" style={{ color: '#00D4B4' }}>${totalIn.toFixed(2)}</p>
+          </div>
+          <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+            <div className="flex items-center gap-2 mb-1">
+              <TrendingDown size={16} style={{ color: '#FF4D6A' }} />
+              <p className="text-xs" style={{ color: '#8899AA' }}>Total Out</p>
+            </div>
+            <p className="text-2xl font-bold" style={{ color: '#FF4D6A' }}>${totalOut.toFixed(2)}</p>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="flex gap-2 flex-wrap">
+          <select
+            value={filterGroup}
+            onChange={e => { setFilterGroup(e.target.value); setFilterType('all') }}
+            className="px-3 py-1.5 rounded-lg text-xs outline-none"
+            style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
+          >
+            <option value="all">All Groups</option>
+            {Object.keys(TX_GROUPS).map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+          <select
+            value={filterType}
+            onChange={e => setFilterType(e.target.value)}
+            className="px-3 py-1.5 rounded-lg text-xs outline-none"
+            style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
+          >
+            <option value="all">All Types</option>
+            {txTypes.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+          </select>
+          <span className="px-3 py-1.5 text-xs" style={{ color: '#4A5568' }}>
+            {filtered.length} record{filtered.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {/* Table */}
+        <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+          {/* Header */}
+          <div
+            className="hidden sm:grid grid-cols-5 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider"
+            style={{ background: '#0E1117', color: '#4A5568', borderBottom: '1px solid #1E2A38' }}
+          >
+            <span className="col-span-2">Type</span>
+            <span>Tier</span>
+            <span>Date</span>
+            <span className="text-right">Amount</span>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="p-8 text-center" style={{ color: '#8899AA' }}>
+              <Activity size={32} className="mx-auto mb-2 opacity-30" />
+              <p className="text-sm">No transactions found</p>
+            </div>
+          ) : (
+            <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+              {filtered.map(tx => {
+                const isNeg = NEGATIVE.includes(tx.transaction_type)
+                const color = TX_COLOR[tx.transaction_type] || '#8899AA'
+                return (
+                  <div key={tx.id} className="flex sm:grid sm:grid-cols-5 items-center gap-3 px-4 py-3">
+                    <div className="col-span-2 flex items-center gap-2 min-w-0">
+                      <div
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0"
+                        style={{ background: `${color}18`, color }}
+                      >
+                        {isNeg ? '−' : '+'}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-white truncate">
+                          {tx.transaction_type.replace(/_/g, ' ')}
+                        </p>
+                        {tx.notes && <p className="text-xs truncate" style={{ color: '#4A5568' }}>{tx.notes}</p>}
+                      </div>
+                    </div>
+                    <span className="hidden sm:block text-xs" style={{ color: '#8899AA' }}>
+                      {tx.agent_tier === 0 ? 'Account' : `Agent ${tx.agent_tier}`}
+                    </span>
+                    <span className="hidden sm:block text-xs" style={{ color: '#4A5568' }}>
+                      {new Date(tx.created_at).toLocaleDateString()}
+                    </span>
+                    <p
+                      className="text-sm font-semibold text-right ml-auto sm:ml-0"
+                      style={{ color: isNeg ? '#FF4D6A' : '#00D4B4' }}
+                    >
+                      {isNeg ? '−' : '+'}${Math.abs(parseFloat(tx.amount)).toFixed(2)}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </Layout>
+  )
+}

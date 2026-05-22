@@ -10,7 +10,26 @@ A multi-tier passive income platform. Users make a one-time purchase of an AI ag
 
 ```
 agent-revenue-sharing-platform/
+├── frontend/                    # Vite + React SPA (user + admin dashboards)
+│   ├── src/
+│   │   ├── api/client.js        # Axios instance with JWT interceptor + auto-logout
+│   │   ├── context/AuthContext.jsx  # Auth state, login (token + /auth/me), logout
+│   │   ├── components/
+│   │   │   ├── Layout.jsx       # UserLayout + AdminLayout (separate nav, profile dropdown)
+│   │   │   ├── ProtectedRoute.jsx   # Requires auth; allows both user and admin
+│   │   │   └── AdminRoute.jsx   # Requires is_admin=true
+│   │   ├── pages/
+│   │   │   ├── Login.jsx / Register.jsx / VerifyEmail.jsx
+│   │   │   ├── ForgotPassword.jsx / ResetPassword.jsx
+│   │   │   ├── Dashboard.jsx / AgentPurchase.jsx / Matrix.jsx
+│   │   │   ├── Wallet.jsx / Deposit.jsx / Transfer.jsx / Withdraw.jsx / Transactions.jsx
+│   │   │   └── admin/
+│   │   │       ├── AdminDashboard.jsx / AdminUsers.jsx
+│   │   │       └── AdminTransactions.jsx / AdminWithdrawals.jsx
+│   └── vite.config.js           # Tailwind, port 3000, /api proxy → localhost:8000
 ├── backend/
+│   ├── seed_admin.py            # One-time admin user creation from .env credentials
+│   ├── migrate_v6.py            # Fix enum case mismatch (ACCOUNT, DEPOSIT, etc.)
 │   ├── migrate_v3.py            # Schema migration (sponsor_milestone_income enum value)
 │   ├── app/
 │   │   ├── main.py              # FastAPI app + CORS
@@ -60,10 +79,11 @@ agent-revenue-sharing-platform/
 
 | Layer | Technology |
 |-------|-----------|
+| Frontend | Vite + React + Tailwind CSS |
 | Backend | FastAPI (Python) |
 | Database | PostgreSQL 18 |
 | Task Queue | Celery + Redis |
-| Auth | JWT (python-jose + passlib/bcrypt) |
+| Auth | JWT (python-jose + passlib/bcrypt==4.0.1) |
 | Payments | NOWPayments (USDT on BEP-20) |
 | Email | SMTP (Gmail / any provider) |
 
@@ -248,6 +268,31 @@ cd backend
 python migrate_v5.py
 ```
 
+### Applying v6 schema changes (fix enum case mismatch — ACCOUNT, DEPOSIT, TRANSFER_IN, etc.)
+
+```bash
+cd backend
+python migrate_v6.py
+```
+
+### Seeding the admin user (run once after first DB setup)
+
+```bash
+cd backend
+python seed_admin.py
+```
+
+Admin credentials are read from `.env` (`ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_REFERRAL_CODE`).
+Safe to re-run — exits early if an admin already exists.
+
+### Running the frontend
+
+```bash
+cd frontend
+npm install      # first time only
+npm run dev      # starts on port 3000
+```
+
 ### Running
 
 ```bash
@@ -302,6 +347,8 @@ API docs: http://localhost:8000/docs
 - **Re-entries always use Tier 1 ($10)** regardless of the source position's tier.
 - **Re-entries are dummy** — they fill matrix slots for others but do not receive wallet payouts when their own L1/L2/L3 fills. `MatrixPosition.is_dummy=True` signals this; `matrix_engine.py` skips payout generation for dummy ancestors.
 - **Auto-repurchase:** when a user's REPURCHASE wallet for a given tier accumulates >= tier price, a new agent purchase is automatically created and activated via Celery (`auto_repurchase` task).
-- **Admin access:** set `is_admin=true` in DB for the root user. Admin endpoints are at `/admin/*`. Run `migrate_v4.py` first.
+- **Admin access:** created via `seed_admin.py` (reads from `.env`). Admin endpoints at `/admin/*`. Run `migrate_v4.py` first. Admin logs in through the same `/login` page and is routed to `/admin` automatically.
+- **Frontend auth:** two-step login — POST `/auth/login` for JWT, then GET `/auth/me` for full profile (includes `is_admin`). Admin and user dashboards are fully separate; `AdminRoute` blocks non-admins, `ProtectedRoute` blocks unauthenticated users.
+- **bcrypt pinned to 4.0.1** — bcrypt 5.x breaks passlib's 72-byte wrap detection; do not upgrade.
 - Order ID prefixes: `presz_deposit_*` = account top-up, `presz_agent_*` = legacy direct purchase.
 - `ACCOUNT_TIER = 0` is the sentinel agent_tier used for the account balance wallet.

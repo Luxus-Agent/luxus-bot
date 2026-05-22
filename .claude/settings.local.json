@@ -8,7 +8,8 @@
       "PowerShell($env:PGPASSWORD = 'dhanush'; $result = & psql -U postgres -h localhost -c \"GRANT ALL PRIVILEGES ON DATABASE presz_db TO luxus;\" 2>&1; $result)",
       "Read(//c/Users/Shamlatech/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/17e3c3e0-8811-4b35-aae4-c76b9b24c5c9/79227e8f-7243-450e-8121-e90bb7b52a25/skills/docx/**)",
       "Bash(pandoc \"C:\\\\Users\\\\Shamlatech\\\\Downloads\\\\Luxus \\(2\\).docx\" -t markdown)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "mcp__Claude_Preview__preview_start"
     ]
   }
 }
