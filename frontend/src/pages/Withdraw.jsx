@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { UserLayout as Layout } from '../components/Layout'
+import { UserLayout, AdminLayout } from '../components/Layout'
+import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import {
@@ -15,6 +16,8 @@ const STATUS_COLOR = { PENDING: '#FFB547', PROCESSING: '#3498DB', SENT: '#00D4B4
 const STATUS_ICON = { PENDING: Clock, PROCESSING: Clock, SENT: CheckCircle, FAILED: XCircle }
 
 export default function Withdraw() {
+  const { isAdmin } = useAuth()
+  const Layout = isAdmin ? AdminLayout : UserLayout
   const [wallets, setWallets] = useState([])
   const [addresses, setAddresses] = useState([])
   const [withdrawals, setWithdrawals] = useState([])

@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
+import Pagination from '../../components/Pagination'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { ArrowUpFromLine, Search, RefreshCw, Clock, CheckCircle, XCircle, Loader } from 'lucide-react'
+
+const PAGE_SIZE = 10
 
 const STATUS_COLOR = { PENDING: '#FFB547', PROCESSING: '#3498DB', SENT: '#00D4B4', FAILED: '#FF4D6A' }
 const STATUS_ICON = { PENDING: Clock, PROCESSING: Loader, SENT: CheckCircle, FAILED: XCircle }
@@ -12,6 +15,7 @@ export default function AdminWithdrawals() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [page, setPage] = useState(1)
 
   const load = () =>
     api.get('/admin/withdrawals')
@@ -26,6 +30,8 @@ export default function AdminWithdrawals() {
     if (search && !String(w.user_id).includes(search) && !w.wallet_address.includes(search)) return false
     return true
   })
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const pending = withdrawals.filter(w => w.status === 'PENDING').length
   const sent = withdrawals.filter(w => w.status === 'SENT').length
@@ -58,14 +64,14 @@ export default function AdminWithdrawals() {
                 type="text"
                 placeholder="Search..."
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={e => { setSearch(e.target.value); setPage(1) }}
                 className="pl-8 pr-4 py-2 rounded-xl text-sm outline-none w-44"
                 style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
               />
             </div>
             <select
               value={filterStatus}
-              onChange={e => setFilterStatus(e.target.value)}
+              onChange={e => { setFilterStatus(e.target.value); setPage(1) }}
               className="px-3 py-2 rounded-xl text-sm outline-none"
               style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
             >
@@ -111,7 +117,7 @@ export default function AdminWithdrawals() {
                 <ArrowUpFromLine size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No withdrawals found</p>
               </div>
-            ) : filtered.map(w => {
+            ) : paginated.map(w => {
               const color = STATUS_COLOR[w.status] || '#8899AA'
               const Icon = STATUS_ICON[w.status] || Clock
               return (
@@ -152,6 +158,9 @@ export default function AdminWithdrawals() {
               )
             })}
           </div>
+        </div>
+        <div className="mt-4">
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </div>
       </div>
     </Layout>

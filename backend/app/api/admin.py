@@ -48,13 +48,26 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
-@router.get("/users", response_model=list[AdminUserOut])
+@router.get("/users")
 def list_users(
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ):
-    """Return all registered users."""
-    return db.query(User).order_by(User.created_at.desc()).all()
+    """Return all registered users with sponsor username resolved."""
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "is_active": u.is_active,
+            "is_admin": u.is_admin,
+            "sponsor_id": u.sponsor_id,
+            "sponsor_username": u.sponsor.username if u.sponsor else None,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        }
+        for u in users
+    ]
 
 
 @router.get("/users/{user_id}/wallets", response_model=list[WalletOut])

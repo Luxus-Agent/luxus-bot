@@ -25,10 +25,8 @@ const adminNav = [
   { path: '/admin/transactions', label: 'Transactions', icon: BarChart3 },
   { path: '/admin/withdrawals',  label: 'Withdrawals',  icon: ArrowUpFromLine },
   { divider: 'My Account' },
-  { path: '/dashboard',      label: 'Dashboard',    icon: LayoutDashboard },
-  { path: '/wallet',         label: 'Wallet',       icon: Wallet },
-  { path: '/matrix',         label: 'Matrix',       icon: Network },
-  { path: '/transactions',   label: 'Transactions', icon: History },
+  { path: '/wallet',   label: 'Wallet',   icon: Wallet },
+  { path: '/withdraw', label: 'Withdraw', icon: ArrowUpFromLine },
 ]
 
 function SidebarNav({ nav, onClose }) {
@@ -153,7 +151,7 @@ function ProfileDropdown({ user, isAdmin, logout, navigate }) {
               style={{ color: '#8899AA' }}
               onMouseEnter={e => e.currentTarget.style.background = '#1E2A38'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              onClick={() => setOpen(false)}
+              onClick={() => { setOpen(false); navigate('/profile') }}
             >
               <User size={15} />
               Profile

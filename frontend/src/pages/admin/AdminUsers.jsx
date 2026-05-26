@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
+import { useAuth } from '../../context/AuthContext'
+import Pagination from '../../components/Pagination'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import {
   Users, Search, UserX, UserCheck, CreditCard, MinusCircle,
-  ChevronDown, ChevronUp, Eye, ShieldCheck
+  ChevronDown, ChevronUp, ShieldCheck
 } from 'lucide-react'
 
+const PAGE_SIZE = 10
+
 export default function AdminUsers() {
+  const { user: currentUser } = useAuth()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [expanded, setExpanded] = useState(null)
   const [userWallets, setUserWallets] = useState({})
 
@@ -28,6 +34,7 @@ export default function AdminUsers() {
   useEffect(() => { load() }, [])
 
   const loadWallets = async (userId) => {
+    if (!userId) return
     if (userWallets[userId]) return
     try {
       const { data } = await api.get(`/admin/users/${userId}/wallets`)
@@ -86,6 +93,8 @@ export default function AdminUsers() {
     u.email?.toLowerCase().includes(search.toLowerCase()) ||
     String(u.id).includes(search)
   )
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   if (loading) return (
     <Layout>
@@ -111,7 +120,7 @@ export default function AdminUsers() {
               type="text"
               placeholder="Search users..."
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={e => { setSearch(e.target.value); setPage(1) }}
               className="pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none w-64"
               style={inputStyle}
               onFocus={e => e.target.style.borderColor = '#00D4B4'}
@@ -133,7 +142,7 @@ export default function AdminUsers() {
           </div>
 
           <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
-            {filtered.map(user => (
+            {paginated.map(user => (
               <div key={user.id}>
                 {/* User Row */}
                 <div className="flex sm:grid sm:grid-cols-5 items-center gap-3 px-5 py-3">
@@ -166,7 +175,7 @@ export default function AdminUsers() {
                   </div>
 
                   <div className="hidden sm:block text-xs" style={{ color: '#8899AA' }}>
-                    #{user.sponsor_id || '—'}
+                    {user.sponsor_username ? `@${user.sponsor_username}` : '—'}
                   </div>
 
                   <div className="flex items-center gap-1.5 ml-auto sm:ml-0 sm:justify-end flex-wrap">
@@ -196,12 +205,15 @@ export default function AdminUsers() {
                     </button>
                     <button
                       onClick={() => handleFreeze(user.id, user.is_active)}
+                      disabled={user.id === currentUser?.id}
                       className="p-1.5 rounded-lg"
-                      style={user.is_active
-                        ? { color: '#FF4D6A', background: 'rgba(255,77,106,0.1)' }
-                        : { color: '#00D4B4', background: 'rgba(0,212,180,0.1)' }
+                      style={user.id === currentUser?.id
+                        ? { color: '#2A3A4A', background: '#0E1117', cursor: 'not-allowed' }
+                        : user.is_active
+                          ? { color: '#FF4D6A', background: 'rgba(255,77,106,0.1)' }
+                          : { color: '#00D4B4', background: 'rgba(0,212,180,0.1)' }
                       }
-                      title={user.is_active ? 'Freeze user' : 'Unfreeze user'}
+                      title={user.id === currentUser?.id ? 'Cannot freeze your own account' : user.is_active ? 'Freeze user' : 'Unfreeze user'}
                     >
                       {user.is_active ? <UserX size={15} /> : <UserCheck size={15} />}
                     </button>
@@ -232,6 +244,9 @@ export default function AdminUsers() {
               </div>
             ))}
           </div>
+        </div>
+        <div className="mt-4">
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </div>
       </div>
 

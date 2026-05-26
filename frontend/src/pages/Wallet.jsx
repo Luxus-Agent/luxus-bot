@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { UserLayout as Layout } from '../components/Layout'
+import { UserLayout, AdminLayout } from '../components/Layout'
+import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Wallet as WalletIcon, TrendingUp, Lock, Activity } from 'lucide-react'
@@ -19,6 +20,8 @@ const TX_COLOR = {
 const NEGATIVE = ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE', 'REPURCHASE_HOLD']
 
 export default function Wallet() {
+  const { isAdmin } = useAuth()
+  const Layout = isAdmin ? AdminLayout : UserLayout
   const [wallets, setWallets] = useState([])
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)

@@ -65,8 +65,16 @@ async def nowpayments_ipn(
         logger.error("[IPN] Invalid JSON body")
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
+    payment_id = payload.get("payment_id", "?")
+    status_val = payload.get("payment_status", "?")
+    order_id   = payload.get("order_id", "?")
+    amount     = payload.get("price_amount", "?")
+    logger.info(
+        "[IPN] received: payment_id=%s status=%s order_id=%s amount=%s",
+        payment_id, status_val, order_id, amount,
+    )
     result = process_ipn_event(db=db, payload=payload)
-    logger.info("[IPN] Processed: %s", result)
+    logger.info("[IPN] result: payment_id=%s action=%s", payment_id, result.get("action", "?"))
     return result
 
 
@@ -101,6 +109,13 @@ async def nowpayments_payout_ipn(
         logger.error("[PayoutIPN] Invalid JSON body")
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
+    payout_id  = payload.get("id", "?")
+    status_val = payload.get("status", "?")
+    amount     = payload.get("amount", "?")
+    logger.info(
+        "[PayoutIPN] received: payout_id=%s status=%s amount=%s",
+        payout_id, status_val, amount,
+    )
     result = process_payout_ipn_event(db=db, payload=payload)
-    logger.info("[PayoutIPN] Processed: %s", result)
+    logger.info("[PayoutIPN] result: payout_id=%s action=%s", payout_id, result.get("action", "?"))
     return result

@@ -17,6 +17,7 @@ import Deposit from './pages/Deposit'
 import Transfer from './pages/Transfer'
 import Withdraw from './pages/Withdraw'
 import Transactions from './pages/Transactions'
+import Profile from './pages/Profile'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminUsers from './pages/admin/AdminUsers'
 import AdminTransactions from './pages/admin/AdminTransactions'
@@ -61,6 +62,7 @@ export default function App() {
           <Route path="/transfer" element={<ProtectedRoute><Transfer /></ProtectedRoute>} />
           <Route path="/withdraw" element={<ProtectedRoute><Withdraw /></ProtectedRoute>} />
           <Route path="/transactions" element={<ProtectedRoute><Transactions /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
           {/* Admin routes */}
           <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />

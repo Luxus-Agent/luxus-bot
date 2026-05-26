@@ -9,10 +9,13 @@ Purchase flow (deposit-first model):
 
 The old checkout / NOWPayments-per-purchase flow is no longer used for new purchases.
 """
+import logging
 from decimal import Decimal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user
 from app.core.wallet_ops import debit_account, get_account_balance
@@ -54,6 +57,10 @@ def purchase_agent(
     # Verify balance (informational — debit_account will also enforce)
     balance = get_account_balance(db, current_user.id)
     if balance < price:
+        logger.warning(
+            "AGENT purchase_failed: insufficient balance user_id=%d username=%s tier=%d required=$%.2f available=$%.2f",
+            current_user.id, current_user.username, payload.agent_tier, price, balance,
+        )
         raise HTTPException(
             status_code=400,
             detail=(
@@ -90,6 +97,10 @@ def purchase_agent(
     from app.workers.tasks import activate_purchase
     activate_purchase.delay(purchase.id)
 
+    logger.info(
+        "AGENT purchase_queued: purchase_id=%d user_id=%d username=%s tier=%d price=$%.2f",
+        purchase.id, current_user.id, current_user.username, payload.agent_tier, float(price),
+    )
     return purchase
 
 

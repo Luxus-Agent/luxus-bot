@@ -1,9 +1,12 @@
+import logging
 import random
 import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user
 from app.core.security import create_access_token, hash_password, verify_password
@@ -82,6 +85,12 @@ async def register(
 
     background_tasks.add_task(send_verification_email, user.email, otp)
 
+    logger.info(
+        "AUTH register: user_id=%d username=%s email=%s sponsor=%s joined=%s",
+        user.id, user.username, user.email, payload.sponsor_username,
+        user.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+    )
+    logger.info("AUTH otp_sent: type=email_verification user_id=%d email=%s", user.id, user.email)
     return user
 
 
@@ -99,6 +108,7 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
         or not user.email_verification_expires
         or datetime.utcnow() > user.email_verification_expires
     ):
+        logger.warning("AUTH verify_email failed: invalid/expired OTP email=%s", payload.email)
         raise HTTPException(status_code=400, detail="Invalid or expired verification code")
 
     user.is_email_verified = True
@@ -106,6 +116,7 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
     user.email_verification_expires = None
     db.commit()
 
+    logger.info("AUTH email_verified: user_id=%d email=%s", user.id, user.email)
     return {"message": "Email verified successfully"}
 
 
@@ -130,14 +141,29 @@ async def resend_verification(
 
     background_tasks.add_task(send_resend_verification_email, user.email, otp)
 
+    logger.info("AUTH otp_sent: type=email_verification_resend user_id=%d email=%s", user.id, user.email)
     return {"message": "Verification code sent"}
 
 
 # ── Me (profile) ──────────────────────────────────────────────────────────────
 
-@router.get("/me", response_model=UserOut)
-def get_me(current_user: User = Depends(get_current_user)):
-    return current_user
+@router.get("/me")
+def get_me(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "username": current_user.username,
+        "referral_code": current_user.referral_code,
+        "sponsor_id": current_user.sponsor_id,
+        "sponsor_username": current_user.sponsor.username if current_user.sponsor else None,
+        "is_email_verified": current_user.is_email_verified,
+        "is_admin": current_user.is_admin,
+        "is_active": current_user.is_active,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+    }
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -146,9 +172,12 @@ def get_me(current_user: User = Depends(get_current_user)):
 def login(payload: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter_by(email=payload.email).first()
     if not user or not verify_password(payload.password, user.password_hash):
+        logger.warning("AUTH login_failed: invalid credentials email=%s", payload.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_email_verified:
+        logger.warning("AUTH login_failed: email not verified user_id=%d email=%s", user.id, user.email)
         raise HTTPException(status_code=403, detail="Please verify your email before logging in")
+    logger.info("AUTH login: user_id=%d username=%s", user.id, user.username)
     return {"access_token": create_access_token(user.id)}
 
 
@@ -168,6 +197,7 @@ async def forgot_password(
         user.password_reset_expires = datetime.utcnow() + timedelta(hours=OTP_RESET_EXPIRE_HOURS)
         db.commit()
         background_tasks.add_task(send_password_reset_email, user.email, otp)
+        logger.info("AUTH otp_sent: type=password_reset user_id=%d email=%s", user.id, user.email)
 
     return {"message": "If that email is registered, a reset code has been sent"}
 
@@ -184,6 +214,7 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
         or not user.password_reset_expires
         or datetime.utcnow() > user.password_reset_expires
     ):
+        logger.warning("AUTH reset_password failed: invalid/expired OTP email=%s", payload.email)
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
 
     user.password_hash = hash_password(payload.new_password)
@@ -191,4 +222,5 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     user.password_reset_expires = None
     db.commit()
 
+    logger.info("AUTH password_reset: user_id=%d email=%s", user.id, user.email)
     return {"message": "Password reset successfully"}

@@ -10,9 +10,12 @@ Transfer flow:
   POST /deposit/transfer        → initiate transfer; sends OTP email on first use per recipient
   POST /deposit/transfer/verify → confirm OTP (first-time only) and execute transfer
 """
+import logging
 import random
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -71,6 +74,10 @@ async def create_deposit(
     db.commit()
     db.refresh(deposit)
 
+    logger.info(
+        "DEPOSIT invoice_requested: deposit_id=%d user_id=%d username=%s amount=$%.2f",
+        deposit.id, current_user.id, current_user.username, float(body.amount_usd),
+    )
     return await create_deposit_invoice(
         db=db,
         deposit_id=deposit.id,
@@ -135,6 +142,10 @@ async def refund_deposit(
     if balance <= 0:
         raise HTTPException(status_code=400, detail="No account balance to refund.")
 
+    logger.info(
+        "DEPOSIT refund_requested: user_id=%d username=%s amount=$%.2f address=%s",
+        current_user.id, current_user.username, float(balance), body.wallet_address[:10] + "…",
+    )
     debit_account(
         db=db,
         user_id=current_user.id,
@@ -248,6 +259,10 @@ def transfer_balance(
 
     if tv and tv.is_verified:
         # Trusted pair — execute immediately
+        logger.info(
+            "TRANSFER execute: sender_id=%d sender=%s -> recipient=%s amount=$%.2f",
+            current_user.id, current_user.username, recipient.username, float(amount),
+        )
         return _execute_transfer(db, current_user, recipient, amount)
 
     # First time to this recipient — send OTP
@@ -268,6 +283,10 @@ def transfer_balance(
         float(amount),
     )
 
+    logger.info(
+        "TRANSFER otp_sent: sender_id=%d sender=%s -> recipient=%s amount=$%.2f",
+        current_user.id, current_user.username, recipient.username, float(amount),
+    )
     return {
         "requires_verification": True,
         "message": (
@@ -317,4 +336,8 @@ def verify_transfer(
     db.commit()
 
     amount = Decimal(str(body.amount))
+    logger.info(
+        "TRANSFER verified_and_executed: sender_id=%d sender=%s -> recipient=%s amount=$%.2f",
+        current_user.id, current_user.username, recipient.username, float(amount),
+    )
     return _execute_transfer(db, current_user, recipient, amount)

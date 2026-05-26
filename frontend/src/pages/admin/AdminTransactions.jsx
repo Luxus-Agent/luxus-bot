@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
+import Pagination from '../../components/Pagination'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { Activity, Search } from 'lucide-react'
+
+const PAGE_SIZE = 10
 
 const TX_COLOR = {
   DEPOSIT: '#00D4B4', CORE_INCOME: '#00D4B4', STREAM_PAYOUT: '#3498DB',
@@ -17,6 +20,7 @@ export default function AdminTransactions() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('all')
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     api.get('/admin/transactions')
@@ -32,6 +36,8 @@ export default function AdminTransactions() {
     if (search && !String(t.user_id).includes(search) && !t.transaction_type.toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const totalVolume = transactions
     .filter(t => !NEGATIVE.includes(t.transaction_type))
@@ -62,14 +68,14 @@ export default function AdminTransactions() {
                 type="text"
                 placeholder="Search..."
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={e => { setSearch(e.target.value); setPage(1) }}
                 className="pl-8 pr-4 py-2 rounded-xl text-sm outline-none w-48"
                 style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
               />
             </div>
             <select
               value={filterType}
-              onChange={e => setFilterType(e.target.value)}
+              onChange={e => { setFilterType(e.target.value); setPage(1) }}
               className="px-3 py-2 rounded-xl text-sm outline-none"
               style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
             >
@@ -97,7 +103,7 @@ export default function AdminTransactions() {
                 <Activity size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No transactions found</p>
               </div>
-            ) : filtered.map(tx => {
+            ) : paginated.map(tx => {
               const isNeg = NEGATIVE.includes(tx.transaction_type)
               const color = TX_COLOR[tx.transaction_type] || '#8899AA'
               return (
@@ -125,6 +131,9 @@ export default function AdminTransactions() {
               )
             })}
           </div>
+        </div>
+        <div className="mt-4">
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} />
         </div>
       </div>
     </Layout>

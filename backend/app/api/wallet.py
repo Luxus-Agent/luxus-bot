@@ -1,6 +1,9 @@
+import logging
 import random
 from datetime import datetime, timedelta
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -115,6 +118,10 @@ async def register_address(
         body.address,
     )
 
+    logger.info(
+        "WALLET otp_sent: type=address_verification user_id=%d username=%s address=%s",
+        current_user.id, current_user.username, body.address[:10] + "…",
+    )
     return {
         "message": "Verification code sent to your email. Use POST /wallet/address/verify to confirm.",
         "address": body.address,
@@ -139,8 +146,16 @@ def verify_address(
             detail="No pending verification for this address. Register it first via POST /wallet/address.",
         )
     if wa.pending_otp != body.otp:
+        logger.warning(
+            "WALLET address_verify failed: invalid OTP user_id=%d address=%s",
+            current_user.id, body.address[:10] + "…",
+        )
         raise HTTPException(status_code=400, detail="Invalid verification code.")
     if not wa.otp_expires_at or datetime.utcnow() > wa.otp_expires_at:
+        logger.warning(
+            "WALLET address_verify failed: expired OTP user_id=%d address=%s",
+            current_user.id, body.address[:10] + "…",
+        )
         raise HTTPException(status_code=400, detail="Verification code has expired.")
 
     wa.is_verified = True
@@ -149,6 +164,10 @@ def verify_address(
     db.commit()
     db.refresh(wa)
 
+    logger.info(
+        "WALLET address_verified: user_id=%d username=%s address=%s",
+        current_user.id, current_user.username, body.address[:10] + "…",
+    )
     return wa
 
 
@@ -162,6 +181,10 @@ def delete_address(
     wa = db.query(WalletAddress).filter_by(id=address_id, user_id=current_user.id).first()
     if not wa:
         raise HTTPException(status_code=404, detail="Address not found.")
+    logger.info(
+        "WALLET address_deleted: user_id=%d username=%s address_id=%d address=%s",
+        current_user.id, current_user.username, address_id, wa.address[:10] + "…",
+    )
     db.delete(wa)
     db.commit()
     return {"message": "Address removed."}
@@ -241,6 +264,11 @@ async def request_withdrawal(
     db.commit()
     db.refresh(withdrawal)
 
+    logger.info(
+        "WITHDRAWAL requested: withdrawal_id=%d user_id=%d username=%s tier=%d amount=$%.2f address=%s",
+        withdrawal.id, current_user.id, current_user.username,
+        body.agent_tier, float(amount), body.wallet_address[:10] + "…",
+    )
     process_withdrawal.delay(withdrawal.id)
 
     from app.services.email_service import send_withdrawal_requested_email
