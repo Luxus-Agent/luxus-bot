@@ -39,7 +39,7 @@ export default function AgentPurchase() {
       api.get('/deposit/balance'),
     ]).then(([p, b]) => {
       setPurchases(p.data)
-      setAccountBalance(parseFloat(b.data.balance))
+      setAccountBalance(parseFloat(b.data.account_balance) || 0)
     }).catch(() => toast.error('Failed to load')).finally(() => setLoading(false))
   }, [])
 
@@ -55,7 +55,7 @@ export default function AgentPurchase() {
       toast.success(`Agent ${tierId} purchased and activating!`)
       const [p, b] = await Promise.all([api.get('/agents/purchases'), api.get('/deposit/balance')])
       setPurchases(p.data)
-      setAccountBalance(parseFloat(b.data.balance))
+      setAccountBalance(parseFloat(b.data.account_balance) || 0)
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Purchase failed')
     } finally {

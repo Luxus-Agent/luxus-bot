@@ -35,6 +35,15 @@ def _generate_otp() -> str:
     return str(random.randint(100000, 999999))
 
 
+# ── Username availability check ───────────────────────────────────────────────
+
+@router.get("/check-username")
+def check_username(username: str, db: Session = Depends(get_db)):
+    """Return whether a username is available. Used for live registration feedback."""
+    taken = db.query(User).filter_by(username=username).first() is not None
+    return {"available": not taken}
+
+
 # ── Register ──────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -48,10 +57,10 @@ async def register(
     if db.query(User).filter_by(username=payload.username).first():
         raise HTTPException(status_code=400, detail="Username already taken")
 
-    # Sponsor referral code is required — every user must register under a sponsor
-    sponsor = db.query(User).filter_by(referral_code=payload.referral_code.upper()).first()
+    # Sponsor username is required — every user must register under a sponsor (Q7)
+    sponsor = db.query(User).filter_by(username=payload.sponsor_username).first()
     if not sponsor:
-        raise HTTPException(status_code=400, detail="Invalid referral code")
+        raise HTTPException(status_code=400, detail="Sponsor username not found")
     sponsor_position = len(sponsor.downline) + 1
 
     otp = _generate_otp()

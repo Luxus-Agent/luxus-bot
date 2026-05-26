@@ -5,7 +5,7 @@ class UserRegister(BaseModel):
     email: EmailStr
     username: str
     password: str
-    referral_code: str  # Sponsor's referral code — required for all registrations
+    sponsor_username: str  # Sponsor's username — required for all registrations (Q7)
 
 
 class UserLogin(BaseModel):

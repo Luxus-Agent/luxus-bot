@@ -12,8 +12,8 @@ Odd / Even rule — applied independently at each recipient:
     – Even → credit passes to recipient's sponsor's wallet instead
   • If the recipient has no upline when the pass-up fires, the amount stays
     with the recipient.
-  • If a target (sponsor / supreme) does not exist, the amount is credited
-    back to the buyer so no money is lost.
+  • If a target (sponsor / supreme) does not exist, the amount goes to the
+    COMPANY (platform profit) — it is NOT credited back to the buyer.
 """
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -46,23 +46,24 @@ def _route_half(
 
     Odd income  → primary_recipient's wallet
     Even income → primary_recipient's sponsor's wallet
-    No recipient or inactive recipient → falls back to buyer's wallet
+    No recipient or inactive recipient → amount retained by platform (company profit)
     """
     # Treat inactive users the same as missing — skip them
     if primary_recipient is not None and not primary_recipient.is_active:
         primary_recipient = None
 
     if primary_recipient is None:
-        # No sponsor chain — credit stays with the buyer
-        credit_wallet(
-            db=db,
+        # Q10: No sponsor/supreme sponsor → amount goes to company (platform profit).
+        # Record the outgoing transaction on the buyer for accounting, but do NOT
+        # credit any user wallet — money stays with the platform.
+        db.add(Transaction(
             user_id=buyer.id,
             agent_tier=agent_tier,
-            gross_amount=amount,
-            tx_type=TransactionType.PROACTIVE_INCOME,
+            transaction_type=TransactionType.PROACTIVE_SENT,
+            amount=amount,
             reference_id=f"proactive_{buyer.id}_{label}",
-            notes=f"ProActive {label} — no sponsor, credited to buyer",
-        )
+            notes=f"ProActive {label} — no sponsor, amount retained by platform",
+        ))
         return
 
     # Determine odd/even: next income number = current_count + 1

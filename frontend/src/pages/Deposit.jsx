@@ -15,7 +15,7 @@ export default function Deposit() {
 
   const load = () =>
     Promise.all([api.get('/deposit/balance'), api.get('/deposit')])
-      .then(([b, d]) => { setBalance(parseFloat(b.data.balance)); setDeposits(d.data) })
+      .then(([b, d]) => { setBalance(parseFloat(b.data.account_balance) || 0); setDeposits(d.data) })
       .catch(() => toast.error('Failed to load'))
       .finally(() => setLoading(false))
 

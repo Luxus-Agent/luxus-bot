@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../api/client'
 import Logo from '../components/Logo'
 import toast from 'react-hot-toast'
-import { Eye, EyeOff, UserPlus } from 'lucide-react'
+import { Eye, EyeOff, UserPlus, CheckCircle, XCircle, Loader } from 'lucide-react'
 
 const Required = () => <span style={{ color: '#FF4D6A' }}> *</span>
 
@@ -15,14 +15,36 @@ export default function Register() {
     username: '',
     password: '',
     confirm_password: '',
-    referral_code: params.get('ref') || '',
+    sponsor_username: params.get('ref') || '',
   })
   const [showPw, setShowPw] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [usernameStatus, setUsernameStatus] = useState(null) // null | 'checking' | 'available' | 'taken'
+  const debounceRef = useRef(null)
+
+  useEffect(() => {
+    const name = form.username.trim()
+    if (!name) { setUsernameStatus(null); return }
+    setUsernameStatus('checking')
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const { data } = await api.get(`/auth/check-username?username=${encodeURIComponent(name)}`)
+        setUsernameStatus(data.available ? 'available' : 'taken')
+      } catch {
+        setUsernameStatus(null)
+      }
+    }, 500)
+    return () => clearTimeout(debounceRef.current)
+  }, [form.username])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (usernameStatus === 'taken') {
+      toast.error('Username already taken — please choose another')
+      return
+    }
     if (form.password !== form.confirm_password) {
       toast.error('Passwords do not match')
       return
@@ -33,7 +55,7 @@ export default function Register() {
     }
     setLoading(true)
     try {
-      const { confirm_password, ...payload } = form
+      const { confirm_password, ...payload } = form  // sponsor_username sent as-is
       await api.post('/auth/register', payload)
       toast.success('Account created! Check your email for OTP.')
       navigate(`/verify-email?email=${encodeURIComponent(form.email)}`)
@@ -76,24 +98,24 @@ export default function Register() {
 
         <div className="rounded-2xl p-8" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
           <h1 className="text-2xl font-bold text-white mb-1">Create Account</h1>
-          <p className="text-sm mb-1" style={{ color: '#8899AA' }}>Join Luxus — a sponsor code is required</p>
+          <p className="text-sm mb-1" style={{ color: '#8899AA' }}>Join Luxus — your sponsor's username is required</p>
           <p className="text-xs mb-6" style={{ color: '#4A5568' }}>
             Fields marked <span style={{ color: '#FF4D6A' }}>*</span> are required
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
 
-            {/* Sponsor Referral Code */}
+            {/* Sponsor Username */}
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
-                Sponsor Referral Code<Required />
+                Sponsor Username<Required />
               </label>
               <input
                 type="text"
                 required
-                value={form.referral_code}
-                onChange={e => setForm(f => ({ ...f, referral_code: e.target.value }))}
-                placeholder="Enter sponsor's referral code"
+                value={form.sponsor_username}
+                onChange={e => setForm(f => ({ ...f, sponsor_username: e.target.value }))}
+                placeholder="Enter your sponsor's username"
                 className={inputClass}
                 style={inputBase}
                 onFocus={e => e.target.style.borderColor = '#00D4B4'}
@@ -124,17 +146,46 @@ export default function Register() {
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
                 Username<Required />
               </label>
-              <input
-                type="text"
-                required
-                value={form.username}
-                onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                placeholder="Choose a username"
-                className={inputClass}
-                style={inputBase}
-                onFocus={e => e.target.style.borderColor = '#00D4B4'}
-                onBlur={e => e.target.style.borderColor = '#1E2A38'}
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={form.username}
+                  onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+                  placeholder="Choose a username"
+                  className={inputClass}
+                  style={{
+                    ...inputBase,
+                    paddingRight: '2.75rem',
+                    borderColor: usernameStatus === 'taken' ? '#FF4D6A' : usernameStatus === 'available' ? '#00D4B4' : '#1E2A38',
+                  }}
+                  onFocus={e => { if (!usernameStatus || usernameStatus === 'checking') e.target.style.borderColor = '#00D4B4' }}
+                  onBlur={e => { e.target.style.borderColor = usernameStatus === 'taken' ? '#FF4D6A' : usernameStatus === 'available' ? '#00D4B4' : '#1E2A38' }}
+                />
+                {usernameStatus === 'checking' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <Loader size={16} style={{ color: '#8899AA' }} className="animate-spin" />
+                  </div>
+                )}
+                {usernameStatus === 'available' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <CheckCircle size={16} style={{ color: '#00D4B4' }} />
+                  </div>
+                )}
+                {usernameStatus === 'taken' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <XCircle size={16} style={{ color: '#FF4D6A' }} />
+                  </div>
+                )}
+              </div>
+              {usernameStatus === 'taken' && (
+                <p className="text-xs mt-1" style={{ color: '#FF4D6A' }}>
+                  Username already taken — please try another
+                </p>
+              )}
+              {usernameStatus === 'available' && (
+                <p className="text-xs mt-1" style={{ color: '#00D4B4' }}>Username is available</p>
+              )}
             </div>
 
             {/* Password */}
@@ -202,12 +253,12 @@ export default function Register() {
 
             <button
               type="submit"
-              disabled={loading || !!passwordMismatch}
+              disabled={loading || !!passwordMismatch || usernameStatus === 'taken'}
               className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all mt-2"
               style={{
-                background: (loading || passwordMismatch) ? 'rgba(0,212,180,0.3)' : '#00D4B4',
-                color: (loading || passwordMismatch) ? '#8899AA' : '#000',
-                cursor: (loading || passwordMismatch) ? 'not-allowed' : 'pointer',
+                background: (loading || passwordMismatch || usernameStatus === 'taken') ? 'rgba(0,212,180,0.3)' : '#00D4B4',
+                color: (loading || passwordMismatch || usernameStatus === 'taken') ? '#8899AA' : '#000',
+                cursor: (loading || passwordMismatch || usernameStatus === 'taken') ? 'not-allowed' : 'pointer',
               }}
             >
               {loading ? (

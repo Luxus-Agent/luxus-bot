@@ -22,17 +22,21 @@ Payout amounts (Agent 1 / $10 base — higher tiers scale proportionally):
 
   Proportion  L1: $2.00 wallet + $1.00 re-entry ×1
                   sponsor milestones: none
-              L2: $7.00 wallet + $2.00 re-entries ×2
+              L2: $5.00 wallet + $2.00 re-entries ×2
                   sponsor milestones: {5: $1.00}
-              L3: $26.00 wallet + $3.00 re-entries ×3
+              L3: $13.00 wallet + $3.00 re-entries ×3
                   sponsor milestones: {20: $1.00}
+              (remaining pool amount → platform profit, not distributed)
 
   Speculation L1: $0.60 wallet + $0.30 re-entry ×1
                   sponsor milestones: none
-              L2: $2.10 wallet + $0.60 re-entries ×2
+              L2: $1.50 wallet + $0.60 re-entries ×2
                   sponsor milestones: {5: $0.30}
-              L3: $7.20 wallet + $0.90 re-entries ×3
+              L3: $4.90 wallet + $0.90 re-entries ×3
                   sponsor milestones: {4: $0.30, 20: $0.30}
+              (remaining pool amount → platform profit, not distributed)
+  Note: Speculation uses a SINGLE global queue (agent_tier=1 for all tiers).
+        All re-entries also enter this same single Speculation queue.
 
 Re-entry destination:
   Proportion re-entries → placed into SPECULATION (not back into Proportion)
@@ -74,14 +78,14 @@ PAYOUT_CONFIG: dict[SystemType, dict[int, LevelConfig]] = {
         ),
         2: LevelConfig(
             threshold=9,
-            wallet_amount=Decimal("7.00"),
+            wallet_amount=Decimal("5.00"),   # Q1: confirmed $5 (was $7)
             reentry_amount=Decimal("2.00"),
             reentry_count=2,
             sponsor_milestones={5: Decimal("1.00")},
         ),
         3: LevelConfig(
             threshold=27,
-            wallet_amount=Decimal("26.00"),
+            wallet_amount=Decimal("13.00"),  # Q2: confirmed $13 (was $26); $10 = platform profit
             reentry_amount=Decimal("3.00"),
             reentry_count=3,
             sponsor_milestones={20: Decimal("1.00")},
@@ -96,14 +100,14 @@ PAYOUT_CONFIG: dict[SystemType, dict[int, LevelConfig]] = {
         ),
         2: LevelConfig(
             threshold=9,
-            wallet_amount=Decimal("2.10"),
+            wallet_amount=Decimal("1.50"),   # Q3: confirmed $1.50 (was $2.10); $0.30 = platform profit
             reentry_amount=Decimal("0.60"),
             reentry_count=2,
             sponsor_milestones={5: Decimal("0.30")},
         ),
         3: LevelConfig(
             threshold=27,
-            wallet_amount=Decimal("7.20"),
+            wallet_amount=Decimal("4.90"),   # Q3: confirmed $4.90 (was $7.20); $1.70 = platform profit
             reentry_amount=Decimal("0.90"),
             reentry_count=3,
             sponsor_milestones={4: Decimal("0.30"), 20: Decimal("0.30")},

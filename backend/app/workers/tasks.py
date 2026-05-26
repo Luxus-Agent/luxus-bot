@@ -56,9 +56,10 @@ def activate_purchase(self, purchase_id: int) -> None:
             db, buyer.id, purchase.agent_tier, SystemType.PROPORTION
         )
 
-        # Speculation matrix placement
+        # Speculation matrix placement — Q8: single global queue, always agent_tier=1
+        # regardless of which tier was purchased. All tiers share one Speculation queue.
         _, speculation_payouts, speculation_sponsor_payouts = place_in_matrix(
-            db, buyer.id, purchase.agent_tier, SystemType.SPECULATION
+            db, buyer.id, 1, SystemType.SPECULATION
         )
 
         purchase.status = "active"
@@ -203,8 +204,8 @@ def process_sponsor_payout(
     Credit the sponsor of matrix_position's owner when a sponsor milestone fill
     count is reached (e.g. 5th member in L2, 20th member in L3).
 
-    If the owner has no sponsor, the amount is credited to the owner themselves
-    so no funds are lost.
+    If the owner has no sponsor, the amount goes to the company (platform profit)
+    and is NOT credited to any user.
     """
     from app.core.wallet_ops import credit_wallet
     from app.models.user import User
@@ -221,27 +222,27 @@ def process_sponsor_payout(
         if owner.sponsor_id:
             beneficiary_id = owner.sponsor_id
             notes = f"{system_type} L{level} sponsor milestone from pos #{matrix_position_id}"
+            credit_wallet(
+                db=db,
+                user_id=beneficiary_id,
+                agent_tier=agent_tier,
+                gross_amount=Decimal(amount),
+                tx_type=TransactionType.SPONSOR_MILESTONE_INCOME,
+                reference_id=f"sponsor_milestone_pos_{matrix_position_id}_L{level}",
+                notes=notes,
+            )
         else:
-            beneficiary_id = owner.id
-            notes = f"{system_type} L{level} sponsor milestone — no sponsor, credited to owner"
+            # Q10 principle: no sponsor → amount retained by platform, not credited to owner
             logger.info(
-                "process_sponsor_payout: owner=%s has no sponsor, self-crediting", owner_user_id
+                "process_sponsor_payout: owner=%s has no sponsor — milestone amount retained by platform",
+                owner_user_id,
             )
 
-        credit_wallet(
-            db=db,
-            user_id=beneficiary_id,
-            agent_tier=agent_tier,
-            gross_amount=Decimal(amount),
-            tx_type=TransactionType.SPONSOR_MILESTONE_INCOME,
-            reference_id=f"sponsor_milestone_pos_{matrix_position_id}_L{level}",
-            notes=notes,
-        )
         db.commit()
 
         logger.info(
-            "process_sponsor_payout: matrix_pos=%s owner=%s tier=%s %s L%s → $%s to user=%s",
-            matrix_position_id, owner_user_id, agent_tier, system_type, level, amount, beneficiary_id,
+            "process_sponsor_payout: matrix_pos=%s owner=%s tier=%s %s L%s → $%s processed",
+            matrix_position_id, owner_user_id, agent_tier, system_type, level, amount,
         )
 
     except Exception as exc:

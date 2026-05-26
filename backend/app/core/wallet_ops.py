@@ -7,6 +7,7 @@ from app.models.wallet import Wallet, WalletType
 from app.models.transaction import Transaction, TransactionType
 
 REPURCHASE_RATE = Decimal("0.10")
+SOFTWARE_FEE_RATE = Decimal("0.10")   # Platform fee — deducted before repurchase split
 ACCOUNT_TIER = 0  # Sentinel agent_tier for the platform account balance wallet
 
 # Tier prices used to determine auto-repurchase threshold
@@ -38,12 +39,28 @@ def credit_wallet(
 ) -> None:
     """
     Credit gross_amount to a user's wallet for the given agent tier.
-    10% is automatically held in the repurchase reserve; 90% goes to the main wallet.
-    Both movements are recorded in the transaction ledger.
+
+    Two separate 10% deductions apply (per client spec):
+      1. Software fee (10%)  → platform profit, not distributed
+      2. Repurchase reserve (10% of net) → held in repurchase wallet
+
+    Net math on gross_amount:
+      software_fee = gross × 10%          (goes to platform)
+      net          = gross × 90%
+      repurchase   = net  × 10%  = gross × 9%
+      main_credit  = net  × 90%  = gross × 81%
+
+    All three movements are recorded in the transaction ledger.
     """
     four_places = Decimal("0.0001")
-    repurchase = (gross_amount * REPURCHASE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
-    main_credit = gross_amount - repurchase
+
+    # 1. Deduct 10% platform software fee (not credited to any user wallet)
+    software_fee = (gross_amount * SOFTWARE_FEE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
+    net_after_fee = gross_amount - software_fee
+
+    # 2. Split net: 10% repurchase reserve, 90% main wallet
+    repurchase = (net_after_fee * REPURCHASE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
+    main_credit = net_after_fee - repurchase
 
     main_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.MAIN)
     main_wallet.balance = Decimal(str(main_wallet.balance)) + main_credit
@@ -51,6 +68,16 @@ def credit_wallet(
     repurchase_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.REPURCHASE)
     repurchase_wallet.balance = Decimal(str(repurchase_wallet.balance)) + repurchase
 
+    # Record software fee deduction
+    db.add(Transaction(
+        user_id=user_id,
+        agent_tier=agent_tier,
+        transaction_type=TransactionType.SOFTWARE_FEE,
+        amount=software_fee,
+        reference_id=reference_id,
+        notes="10% platform software fee",
+    ))
+    # Record main wallet credit
     db.add(Transaction(
         user_id=user_id,
         agent_tier=agent_tier,
@@ -59,13 +86,14 @@ def credit_wallet(
         reference_id=reference_id,
         notes=notes,
     ))
+    # Record repurchase hold
     db.add(Transaction(
         user_id=user_id,
         agent_tier=agent_tier,
         transaction_type=TransactionType.REPURCHASE_HOLD,
         amount=repurchase,
         reference_id=reference_id,
-        notes="10% auto-hold",
+        notes="10% repurchase reserve",
     ))
 
     # Auto-repurchase: if repurchase wallet has enough for this tier, trigger a new purchase

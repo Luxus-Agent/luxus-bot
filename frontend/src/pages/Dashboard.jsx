@@ -61,11 +61,11 @@ export default function Dashboard() {
   const activePurchases = purchases.filter(p => p.status === 'active')
 
   const copyRef = () => {
-    const code = user?.referral_code
-    if (!code) return
-    navigator.clipboard.writeText(code)
+    const name = user?.username
+    if (!name) return
+    navigator.clipboard.writeText(name)
     setCopied(true)
-    toast.success('Referral code copied!')
+    toast.success('Username copied!')
     setTimeout(() => setCopied(false), 2000)
   }
 
@@ -108,8 +108,8 @@ export default function Dashboard() {
             style={{ background: '#141922', border: '1px solid #1E2A38' }}
           >
             <div>
-              <p className="text-xs" style={{ color: '#8899AA' }}>Your Referral Code</p>
-              <p className="text-sm font-bold tracking-widest text-white">{user?.referral_code}</p>
+              <p className="text-xs" style={{ color: '#8899AA' }}>Your Username (share to invite)</p>
+              <p className="text-sm font-bold tracking-widest text-white">{user?.username}</p>
             </div>
             <button
               onClick={copyRef}
