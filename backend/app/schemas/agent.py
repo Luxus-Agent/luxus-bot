@@ -100,6 +100,7 @@ class DepositIn(BaseModel):
 class DepositOut(BaseModel):
     id: int
     amount_usd: Decimal
+    order_id: str | None = None
     status: str
     created_at: datetime
     completed_at: datetime | None = None

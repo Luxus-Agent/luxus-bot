@@ -2,19 +2,20 @@
 Celery task chain:
 
   activate_purchase
-    ├─ route_proactive_income   (sync inside same task)
-    ├─ place_in_proportion      (sync inside same task)
+    ├─ route_core_income        (sync inside same task)
+    ├─ place_in_stream          (sync inside same task)
     │    └─ process_matrix_payout  (queued per triggered level)
-    │         └─ place_reentry → SPECULATION  (queued per re-entry)
-    └─ place_in_speculation     (sync inside same task)
+    │         └─ place_reentry → BOOST  (queued per re-entry, NOT dummy)
+    └─ place_in_boost           (sync inside same task)
          └─ process_matrix_payout  (queued per triggered level)
-               └─ place_reentry → SPECULATION  (queued per re-entry)
+               └─ place_reentry → BOOST  (queued per re-entry, NOT dummy)
 
 Sponsor milestone payouts (process_sponsor_payout) are queued separately
 whenever a specific fill-count position is hit inside the matrix.
 
-NOTE: Proportion re-entries go into SPECULATION (not back into Proportion).
-      Speculation re-entries also go back into SPECULATION.
+NOTE: Stream re-entries go into BOOST (not back into Stream).
+      Boost re-entries also go back into BOOST.
+      ALL Boost positions (including re-entries) are real — no dummy entries.
 """
 import logging
 from datetime import datetime
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 def activate_purchase(self, purchase_id: int) -> None:
     """Entry point: called after payment confirmation. Runs the full revenue engine."""
     from app.core.revenue_split import split_purchase
-    from app.core.proactive import route_proactive
+    from app.core.proactive import route_core
     from app.core.matrix_engine import place_in_matrix
     from app.models.agent import AgentPurchase
     from app.models.matrix import SystemType
@@ -48,18 +49,17 @@ def activate_purchase(self, purchase_id: int) -> None:
 
         split = split_purchase(price)
 
-        # ProActive: 30% to sponsor + 30% to supreme sponsor (odd/even routing)
-        route_proactive(db, buyer, purchase.agent_tier, split.proactive)
+        # Core Agent: 30% to sponsor + 30% to supreme sponsor (odd/even routing)
+        route_core(db, buyer, purchase.agent_tier, split.core)
 
-        # Proportion matrix placement
-        _, proportion_payouts, proportion_sponsor_payouts = place_in_matrix(
-            db, buyer.id, purchase.agent_tier, SystemType.PROPORTION
+        # Stream Agent: separate queue per tier
+        _, stream_payouts, stream_sponsor_payouts = place_in_matrix(
+            db, buyer.id, purchase.agent_tier, SystemType.STREAM
         )
 
-        # Speculation matrix placement — Q8: single global queue, always agent_tier=1
-        # regardless of which tier was purchased. All tiers share one Speculation queue.
-        _, speculation_payouts, speculation_sponsor_payouts = place_in_matrix(
-            db, buyer.id, 1, SystemType.SPECULATION
+        # Boost Agent: single global queue, always agent_tier=1
+        _, boost_payouts, boost_sponsor_payouts = place_in_matrix(
+            db, buyer.id, 1, SystemType.BOOST
         )
 
         purchase.status = "active"
@@ -83,7 +83,7 @@ def activate_purchase(self, purchase_id: int) -> None:
             )
 
         # Queue level-completion payouts
-        for payout in proportion_payouts + speculation_payouts:
+        for payout in stream_payouts + boost_payouts:
             process_matrix_payout.delay(
                 matrix_position_id=payout.matrix_position_id,
                 user_id=payout.user_id,
@@ -96,7 +96,7 @@ def activate_purchase(self, purchase_id: int) -> None:
             )
 
         # Queue sponsor milestone payouts
-        for sp in proportion_sponsor_payouts + speculation_sponsor_payouts:
+        for sp in stream_sponsor_payouts + boost_sponsor_payouts:
             process_sponsor_payout.delay(
                 matrix_position_id=sp.matrix_position_id,
                 owner_user_id=sp.owner_user_id,
@@ -140,8 +140,8 @@ def process_matrix_payout(
     Credit wallet for a completed matrix level, then queue re-entries.
 
     Re-entry destination:
-      Proportion  → re-enters SPECULATION
-      Speculation → re-enters SPECULATION
+      Stream → re-enters BOOST (not back into Stream)
+      Boost  → re-enters BOOST
     """
     from app.core.wallet_ops import credit_wallet
     from app.models.matrix import SystemType
@@ -152,9 +152,9 @@ def process_matrix_payout(
     try:
         sys_type = SystemType(system_type)
         tx_type = (
-            TransactionType.PROPORTION_PAYOUT
-            if sys_type == SystemType.PROPORTION
-            else TransactionType.SPECULATION_PAYOUT
+            TransactionType.STREAM_PAYOUT
+            if sys_type == SystemType.STREAM
+            else TransactionType.BOOST_PAYOUT
         )
 
         credit_wallet(
@@ -178,7 +178,7 @@ def process_matrix_payout(
             )
 
         logger.info(
-            "process_matrix_payout: user=%s tier=%s %s L%s → $%s credited, %s re-entries queued (→ SPECULATION)",
+            "process_matrix_payout: user=%s tier=%s %s L%s → $%s credited, %s re-entries queued (→ BOOST)",
             user_id, agent_tier, system_type, level, wallet_amount, reentry_count,
         )
 
@@ -264,8 +264,9 @@ def place_reentry(
     source_position_id: int,
 ) -> None:
     """
-    Place a re-entry into the SPECULATION matrix.
-    All re-entries (from both Proportion and Speculation) go into Speculation.
+    Place a re-entry into the BOOST matrix.
+    All re-entries (from both Stream and Boost) go into the single Boost queue.
+    Boost re-entries are NOT dummy — they receive full payouts when their level fills.
     """
     from app.core.matrix_engine import place_in_matrix
     from app.models.matrix import MatrixPosition, SystemType
@@ -273,10 +274,10 @@ def place_reentry(
 
     db = SessionLocal()
     try:
-        # Re-entries go into SPECULATION at Tier 1 as dummy positions — they fill
-        # slots for others but don't earn wallet payouts themselves.
+        # Re-entries go into BOOST at Tier 1 as real (non-dummy) positions —
+        # they earn wallet payouts when their L1/L2/L3 fills.
         new_slot, triggered_payouts, sponsor_payouts = place_in_matrix(
-            db, user_id, 1, SystemType.SPECULATION, is_dummy=True
+            db, user_id, 1, SystemType.BOOST, is_dummy=False
         )
 
         source = db.query(MatrixPosition).filter_by(id=source_position_id).first()
@@ -308,7 +309,7 @@ def place_reentry(
             )
 
         logger.info(
-            "place_reentry: user=%s tier=%s → SPECULATION re-entry #%s at position %s",
+            "place_reentry: user=%s tier=%s → BOOST re-entry #%s at position %s",
             user_id, agent_tier, reentry_index, new_slot.position_number,
         )
 

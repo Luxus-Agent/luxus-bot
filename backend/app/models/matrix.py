@@ -8,8 +8,8 @@ from app.database import Base
 
 
 class SystemType(str, enum.Enum):
-    PROPORTION = "proportion"
-    SPECULATION = "speculation"
+    STREAM = "stream"
+    BOOST  = "boost"
 
 
 class MatrixPosition(Base):

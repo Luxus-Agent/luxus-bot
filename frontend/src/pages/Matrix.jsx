@@ -4,12 +4,13 @@ import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Network, CheckCircle, Clock, Users } from 'lucide-react'
 
-const SYSTEM_TYPES = ['PROPORTION', 'SPECULATION']
-const SYSTEM_COLOR = { PROPORTION: '#3498DB', SPECULATION: '#9B59B6' }
+const SYSTEM_TYPES = ['stream', 'boost']
+const SYSTEM_COLOR = { stream: '#3498DB', boost: '#9B59B6' }
+const SYSTEM_LABEL = { stream: 'Stream', boost: 'Boost' }
 const TIER_PRICES = { 1: 10, 2: 20, 3: 50, 4: 100 }
 
 function MatrixCard({ position, systemType }) {
-  const color = SYSTEM_COLOR[systemType]
+  const color = SYSTEM_COLOR[systemType] || '#8899AA'
   const l1Pct = Math.min(100, (position.l1_filled / 3) * 100)
   const l2Pct = Math.min(100, (position.l2_filled / 9) * 100)
   const l3Pct = Math.min(100, (position.l3_filled / 27) * 100)
@@ -20,7 +21,6 @@ function MatrixCard({ position, systemType }) {
       style={{
         background: '#141922',
         border: `1px solid ${position.completed ? color + '40' : '#1E2A38'}`,
-        opacity: position.is_dummy ? 0.6 : 1,
       }}
     >
       <div className="flex items-center justify-between mb-3">
@@ -33,7 +33,7 @@ function MatrixCard({ position, systemType }) {
           </div>
           <div>
             <p className="text-sm font-semibold text-white">
-              {systemType} · Agent {position.agent_tier}
+              {SYSTEM_LABEL[systemType] || systemType} Agent · Agent {position.agent_tier}
             </p>
             <p className="text-xs" style={{ color: '#4A5568' }}>
               {position.is_dummy ? 'Re-entry (dummy)' : 'Active position'}
@@ -101,9 +101,9 @@ export default function Matrix() {
     return true
   })
 
-  const propPositions = positions.filter(p => p.system_type === 'PROPORTION')
-  const specPositions = positions.filter(p => p.system_type === 'SPECULATION')
-  const completedCount = positions.filter(p => p.completed).length
+  const streamPositions = positions.filter(p => p.system_type === 'stream')
+  const boostPositions  = positions.filter(p => p.system_type === 'boost')
+  const completedCount  = positions.filter(p => p.completed).length
 
   if (loading) return (
     <Layout>
@@ -119,7 +119,7 @@ export default function Matrix() {
         <div>
           <h1 className="text-2xl font-bold text-white">Matrix Positions</h1>
           <p className="text-sm mt-1" style={{ color: '#8899AA' }}>
-            Track your 3×3 Proportion and Speculation matrix placements
+            Track your 3×3 Stream and Boost Agent matrix placements
           </p>
         </div>
 
@@ -128,8 +128,8 @@ export default function Matrix() {
           {[
             { label: 'Total Positions', val: positions.length, color: '#00D4B4' },
             { label: 'Completed', val: completedCount, color: '#00FFD4' },
-            { label: 'Proportion', val: propPositions.length, color: '#3498DB' },
-            { label: 'Speculation', val: specPositions.length, color: '#9B59B6' },
+            { label: 'Stream Agent', val: streamPositions.length, color: '#3498DB' },
+            { label: 'Boost Agent', val: boostPositions.length, color: '#9B59B6' },
           ].map(({ label, val, color }) => (
             <div key={label} className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
               <p className="text-xs" style={{ color: '#8899AA' }}>{label}</p>
@@ -143,24 +143,24 @@ export default function Matrix() {
           <p className="text-sm font-semibold text-white mb-3">Payout Schedule (Agent 1 — $10 tier)</p>
           <div className="grid md:grid-cols-2 gap-4 text-xs">
             <div>
-              <p className="font-semibold mb-2" style={{ color: '#3498DB' }}>Proportion Matrix (30%)</p>
+              <p className="font-semibold mb-2" style={{ color: '#3498DB' }}>Stream Agent Matrix (30%)</p>
               <div className="space-y-1" style={{ color: '#8899AA' }}>
                 <div className="flex justify-between"><span>L1 (3 members)</span><span className="text-white">$2.00 + 1 re-entry</span></div>
-                <div className="flex justify-between"><span>L2 (9 members)</span><span className="text-white">$7.00 + 2 re-entries</span></div>
-                <div className="flex justify-between"><span>L3 (27 members)</span><span className="text-white">$26.00 + 3 re-entries</span></div>
+                <div className="flex justify-between"><span>L2 (9 members)</span><span className="text-white">$5.00 + 2 re-entries</span></div>
+                <div className="flex justify-between"><span>L3 (27 members)</span><span className="text-white">$13.00 + 3 re-entries</span></div>
               </div>
             </div>
             <div>
-              <p className="font-semibold mb-2" style={{ color: '#9B59B6' }}>Speculation Matrix (10%)</p>
+              <p className="font-semibold mb-2" style={{ color: '#9B59B6' }}>Boost Agent Matrix (10%)</p>
               <div className="space-y-1" style={{ color: '#8899AA' }}>
                 <div className="flex justify-between"><span>L1 (3 members)</span><span className="text-white">$0.60 + 1 re-entry</span></div>
-                <div className="flex justify-between"><span>L2 (9 members)</span><span className="text-white">$2.10 + 2 re-entries</span></div>
-                <div className="flex justify-between"><span>L3 (27 members)</span><span className="text-white">$7.20 + 3 re-entries</span></div>
+                <div className="flex justify-between"><span>L2 (9 members)</span><span className="text-white">$1.50 + 2 re-entries</span></div>
+                <div className="flex justify-between"><span>L3 (27 members)</span><span className="text-white">$4.90 + 3 re-entries</span></div>
               </div>
             </div>
           </div>
           <p className="text-xs mt-3" style={{ color: '#4A5568' }}>
-            Higher tiers scale proportionally. All re-entries go into Speculation as dummy positions.
+            Stream re-entries go into the Boost Agent queue. Boost Agent positions earn full payouts — no dummy entries.
             10% of every payout is held in repurchase reserve.
           </p>
         </div>
@@ -174,8 +174,8 @@ export default function Matrix() {
             style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
           >
             <option value="all">All Systems</option>
-            <option value="PROPORTION">Proportion</option>
-            <option value="SPECULATION">Speculation</option>
+            <option value="stream">Stream Agent</option>
+            <option value="boost">Boost Agent</option>
           </select>
           <select
             value={filterTier}

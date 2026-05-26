@@ -7,22 +7,22 @@ import { Bot, Zap, TrendingUp, Activity, CheckCircle, Clock, ShoppingCart } from
 const TIERS = [
   {
     id: 1, price: 10, name: 'Agent 1',
-    proactive: '$3.00', proportion: '$35.00', speculation: '$10.80',
+    core: '$6.00', stream: '$20.00', boost: '$7.00',
     color: '#00D4B4', desc: 'Entry level AI agent with full revenue mechanics',
   },
   {
     id: 2, price: 20, name: 'Agent 2',
-    proactive: '$6.00', proportion: '$70.00', speculation: '$21.60',
+    core: '$12.00', stream: '$40.00', boost: '$7.00',
     color: '#3498DB', desc: '2× multiplier — doubles all payouts',
   },
   {
     id: 3, price: 50, name: 'Agent 3',
-    proactive: '$15.00', proportion: '$175.00', speculation: '$54.00',
+    core: '$30.00', stream: '$100.00', boost: '$7.00',
     color: '#9B59B6', desc: '5× multiplier — high-yield tier',
   },
   {
     id: 4, price: 100, name: 'Agent 4',
-    proactive: '$30.00', proportion: '$350.00', speculation: '$108.00',
+    core: '$60.00', stream: '$200.00', boost: '$7.00',
     color: '#FFB547', desc: '10× multiplier — maximum earning potential',
   },
 ]
@@ -97,9 +97,9 @@ export default function AgentPurchase() {
           <p className="text-sm font-semibold text-white mb-3">Revenue Split on Every Purchase</p>
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: 'ProActive', pct: '60%', desc: '30% sponsor + 30% supreme', icon: Zap, color: '#00D4B4' },
-              { label: 'Proportion', pct: '30%', desc: '3×3 matrix queue', icon: TrendingUp, color: '#3498DB' },
-              { label: 'Speculation', pct: '10%', desc: '3×3 matrix queue', icon: Activity, color: '#9B59B6' },
+              { label: 'Core Agent', pct: '60%', desc: '30% sponsor + 30% supreme', icon: Zap, color: '#00D4B4' },
+              { label: 'Stream Agent', pct: '30%', desc: '3×3 matrix queue', icon: TrendingUp, color: '#3498DB' },
+              { label: 'Boost Agent', pct: '10%', desc: '3×3 matrix queue', icon: Activity, color: '#9B59B6' },
             ].map(({ label, pct, desc, icon: Icon, color }) => (
               <div key={label} className="rounded-lg p-3 text-center" style={{ background: '#0E1117' }}>
                 <Icon size={18} className="mx-auto mb-1" style={{ color }} />
@@ -150,9 +150,9 @@ export default function AgentPurchase() {
                 <div className="px-4 py-3 space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: '#4A5568' }}>Max Payouts</p>
                   {[
-                    { label: 'ProActive Total', val: tier.proactive },
-                    { label: 'Proportion Total', val: tier.proportion },
-                    { label: 'Speculation Total', val: tier.speculation },
+                    { label: 'Core Agent Total', val: tier.core },
+                    { label: 'Stream Agent Total', val: tier.stream },
+                    { label: 'Boost Agent Total', val: tier.boost },
                   ].map(({ label, val }) => (
                     <div key={label} className="flex justify-between text-xs">
                       <span style={{ color: '#8899AA' }}>{label}</span>

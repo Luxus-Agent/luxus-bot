@@ -107,7 +107,7 @@ def my_matrix_positions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Return all matrix positions (Proportion + Speculation) for the current user."""
+    """Return all matrix positions (Stream + Boost) for the current user."""
     return db.query(MatrixPosition).filter_by(user_id=current_user.id).all()
 
 

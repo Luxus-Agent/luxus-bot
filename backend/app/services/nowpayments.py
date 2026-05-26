@@ -125,14 +125,14 @@ async def _create_invoice(
     callback_base = settings.NOWPAYMENTS_CALLBACK_BASE.rstrip("/")
     payload: dict[str, Any] = {
         "price_amount":        amount_usd,
-        "price_currency":      "usd",
+        "price_currency":      "usdt",   # USDT is 1:1 — no conversion, user pays exactly what they entered
         "order_id":            order_id,
         "order_description":   description,
         "ipn_callback_url":    f"{callback_base}/webhooks/nowpayments/ipn",
-        "success_url":         f"{settings.FRONTEND_URL}/dashboard?payment=success&order_id={order_id}",
-        "cancel_url":          f"{settings.FRONTEND_URL}/dashboard?payment=cancelled",
+        "success_url":         f"{settings.FRONTEND_URL}/deposit?payment=success&order_id={order_id}",
+        "cancel_url":          f"{settings.FRONTEND_URL}/deposit?payment=cancelled",
         "is_fixed_rate":       True,
-        "is_fee_paid_by_user": False,
+        "is_fee_paid_by_user": True,    # user pays the small network fee on top; amount received = exactly price_amount
     }
 
     if usdt_network:

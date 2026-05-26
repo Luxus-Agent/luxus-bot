@@ -9,19 +9,19 @@ from app.database import Base
 
 class TransactionType(str, enum.Enum):
     PURCHASE = "purchase"
-    PROACTIVE_INCOME = "proactive_income"
-    PROACTIVE_SENT = "proactive_sent"
-    PROPORTION_PAYOUT = "proportion_payout"
-    SPECULATION_PAYOUT = "speculation_payout"
+    CORE_INCOME = "core_income"          # Core Agent (60%) — income received
+    CORE_SENT = "core_sent"              # Core Agent (60%) — outgoing record on buyer
+    STREAM_PAYOUT = "stream_payout"      # Stream Agent (30%) — matrix level payout
+    BOOST_PAYOUT = "boost_payout"        # Boost Agent (10%) — matrix level payout
     REENTRY = "reentry"
     REPURCHASE_HOLD = "repurchase_hold"
-    SOFTWARE_FEE = "software_fee"    # 10% platform fee deducted from every wallet credit
+    SOFTWARE_FEE = "software_fee"        # 10% platform fee deducted from every wallet credit
     WITHDRAWAL = "withdrawal"
     SPONSOR_MILESTONE_INCOME = "sponsor_milestone_income"  # Matrix sponsor milestone payout
-    DEPOSIT = "deposit"          # Account balance top-up via NOWPayments
-    TRANSFER_IN = "transfer_in"  # Received from another user
-    TRANSFER_OUT = "transfer_out"  # Sent to another user
-    AGENT_PURCHASE = "agent_purchase"  # Deducted from account balance for agent buy
+    DEPOSIT = "deposit"                  # Account balance top-up via NOWPayments
+    TRANSFER_IN = "transfer_in"          # Received from another user
+    TRANSFER_OUT = "transfer_out"        # Sent to another user
+    AGENT_PURCHASE = "agent_purchase"    # Deducted from account balance for agent buy
 
 
 class Transaction(Base):

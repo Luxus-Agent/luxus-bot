@@ -71,9 +71,9 @@ export default function Dashboard() {
 
   const txTypeColor = {
     DEPOSIT: '#00D4B4',
-    PROACTIVE_INCOME: '#00D4B4',
-    PROPORTION_PAYOUT: '#00D4B4',
-    SPECULATION_PAYOUT: '#00D4B4',
+    CORE_INCOME: '#00D4B4',
+    STREAM_PAYOUT: '#00D4B4',
+    BOOST_PAYOUT: '#00D4B4',
     SPONSOR_MILESTONE_INCOME: '#00D4B4',
     TRANSFER_IN: '#00D4B4',
     WITHDRAWAL: '#FF4D6A',

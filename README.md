@@ -1,13 +1,13 @@
-# Luxus — AI Agent Revenue Sharing Platform
+# PresZ — Agent Revenue Sharing Platform
 
-A multi-tier passive income platform where users purchase AI agent tiers and earn revenue through three parallel systems: ProActive income, Proportion matrix, and Speculation matrix.
+A multi-tier passive income platform where users purchase AI Agent tiers and earn revenue through three parallel mechanisms: **Core Agent**, **Stream Agent**, and **Boost Agent**.
 
 ---
 
 ## Table of Contents
 
 - [Architecture](#architecture)
-- [Revenue Flow](#revenue-flow)
+- [Revenue Mechanics](#revenue-mechanics)
 - [User Journey](#user-journey)
 - [Auth Flow](#auth-flow)
 - [Deposit & Purchase Flow](#deposit--purchase-flow)
@@ -23,265 +23,243 @@ A multi-tier passive income platform where users purchase AI agent tiers and ear
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph Frontend["Frontend (Vite + React)"]
-        UI[React SPA<br/>port 3000]
-    end
-
-    subgraph Backend["Backend (FastAPI)"]
-        API[FastAPI<br/>port 8000]
-        CELERY[Celery Worker]
-    end
-
-    subgraph Data["Data Layer"]
-        PG[(PostgreSQL 18)]
-        REDIS[(Redis)]
-    end
-
-    subgraph External["External Services"]
-        NOW[NOWPayments<br/>USDT BEP-20]
-        SMTP[SMTP Email]
-    end
-
-    UI -- "/api/* proxy" --> API
-    API --> PG
-    API --> REDIS
-    CELERY --> REDIS
-    CELERY --> PG
-    API --> NOW
-    CELERY --> NOW
-    CELERY --> SMTP
-    NOW -- "IPN webhook" --> API
+```
+┌─────────────────────────────────────────────────────────┐
+│  Frontend  (Vite + React, port 3000)                    │
+│  /api/* → proxy → localhost:8000                        │
+└────────────────────────┬────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────┐
+│  Backend   (FastAPI, port 8000)                         │
+│  ├── REST API (auth, agents, wallet, deposit, admin)    │
+│  └── Celery Worker  ←→  Redis                           │
+│           │                                             │
+│           ▼                                             │
+│      PostgreSQL 18                                      │
+└────────────────────────┬────────────────────────────────┘
+                         │
+          ┌──────────────┴──────────────┐
+          ▼                             ▼
+   NOWPayments (USDT BEP-20)       SMTP Email
+   Deposits + Payouts              Notifications
 ```
 
 ---
 
-## Revenue Flow
+## Revenue Mechanics
 
-Every confirmed agent purchase triggers a **60/30/10 split** that runs three parallel income systems.
+Every confirmed agent purchase triggers a **60 / 30 / 10 split** across three parallel engines.
 
-```mermaid
-flowchart TD
-    PURCHASE["Agent Purchase ($10 / $20 / $50 / $100)"]
-    PURCHASE --> SPLIT["Revenue Split Engine"]
+### Agent Tiers & Max Payouts
 
-    SPLIT -->|"60%"| PROACTIVE["ProActive System"]
-    SPLIT -->|"30%"| PROPORTION["Proportion Matrix (3x3)"]
-    SPLIT -->|"10%"| SPECULATION["Speculation Matrix (3x3)"]
+| Tier    | Price | Core Agent | Stream Agent | Boost Agent |
+|---------|-------|-----------|-------------|------------|
+| Agent 1 | $10   | $6.00     | $20.00      | $7.00      |
+| Agent 2 | $20   | $12.00    | $40.00      | $7.00      |
+| Agent 3 | $50   | $30.00    | $100.00     | $7.00      |
+| Agent 4 | $100  | $60.00    | $200.00     | $7.00      |
 
-    PROACTIVE -->|"30% → direct sponsor"| SP1["Sponsor Wallet<br/>(odd/even routing)"]
-    PROACTIVE -->|"30% → sponsor's sponsor"| SP2["Supreme Sponsor Wallet<br/>(odd/even routing)"]
+---
 
-    PROPORTION --> PM["BFS queue placement<br/>L1 (3) → L2 (9) → L3 (27)"]
-    PM -->|"L1 fills"| PL1["$2 wallet + 1 re-entry"]
-    PM -->|"L2 fills"| PL2["$7 wallet + 2 re-entries"]
-    PM -->|"L3 fills"| PL3["$26 wallet + 3 re-entries"]
+### 60% — Core Agent (Upline Routing)
 
-    SPECULATION --> SM["BFS queue placement<br/>L1 (3) → L2 (9) → L3 (27)"]
-    SM -->|"L1 fills"| SL1["$0.60 wallet + 1 re-entry"]
-    SM -->|"L2 fills"| SL2["$2.10 wallet + 2 re-entries"]
-    SM -->|"L3 fills"| SL3["$7.20 wallet + 3 re-entries"]
+The 60% is split equally between two upline recipients:
 
-    PL1 & PL2 & PL3 & SL1 & SL2 & SL3 -->|"all re-entries"| REENTRY["New SPECULATION position<br/>(dummy — fills for others)"]
+- **First 30%** → buyer's direct sponsor
+- **Second 30%** → buyer's supreme sponsor (sponsor's sponsor)
 
-    PL1 & PL2 & PL3 & SL1 & SL2 & SL3 --> WALLET_SPLIT["Wallet Credit"]
-    WALLET_SPLIT -->|"90%"| MAIN["Main Wallet<br/>(withdrawable)"]
-    WALLET_SPLIT -->|"10%"| REPURCHASE["Repurchase Reserve<br/>(auto-hold)"]
+**Odd/Even rule** at each recipient:
+- Count how many Core Agent income credits the recipient has already received.
+- If the next receipt would be **odd** → credited directly to their wallet.
+- If the next receipt would be **even** → amount passes up to *their* sponsor instead.
+- If no sponsor exists at a pass-up point → platform profit (not credited to any user wallet).
 
-    REPURCHASE -->|"balance >= tier price"| AUTO["Auto-repurchase<br/>new agent purchase"]
-```
+---
 
-### ProActive Odd/Even Rule
+### 30% — Stream Agent (3×3 Forced Matrix)
 
-```mermaid
-flowchart LR
-    BUYER["New Purchase"]
-    BUYER -->|"30%"| SPONSOR["Sponsor"]
-    BUYER -->|"30%"| SUPREME["Supreme Sponsor"]
+- **Separate queue per tier** — Agent 1, 2, 3, and 4 each have their own BFS queue.
+- Positions fill breadth-first in a ternary tree (3 children per node).
+- Payouts trigger when L1 (3 members), L2 (9 members), and L3 (27 members) fill.
+- Re-entries generated by Stream are **dummy** (they fill matrix slots for others but receive no payouts themselves).
+- All re-entries — from both Stream and Boost — enter the **Boost Agent** queue.
+- Re-entry counts scale with the tier multiplier (Agent 1=1×, 2=2×, 3=5×, 4=10×).
 
-    SPONSOR --> ODD_CHECK{"Proactive TX count<br/>for sponsor"}
-    ODD_CHECK -->|"next is ODD"| KEEP["Credit sponsor's wallet"]
-    ODD_CHECK -->|"next is EVEN"| PASSUP["Pass up to<br/>sponsor's sponsor"]
+**Payout schedule (Agent 1 / $10 base):**
 
-    SUPREME --> ODD_CHECK2{"Proactive TX count<br/>for supreme sponsor"}
-    ODD_CHECK2 -->|"next is ODD"| KEEP2["Credit supreme<br/>sponsor's wallet"]
-    ODD_CHECK2 -->|"next is EVEN"| PASSUP2["Pass up to<br/>their sponsor"]
-```
+| Level | Members | Wallet Payout | Re-entries |
+|-------|---------|--------------|-----------|
+| L1    | 3       | $2.00        | 1         |
+| L2    | 9       | $5.00        | 2         |
+| L3    | 27      | $13.00       | 3         |
+
+Higher tiers multiply wallet payouts and re-entry counts by their multiplier.
+
+**Sponsor milestone payouts (bonus, separate from matrix owner):**
+
+| Level | Fill position | Sponsor bonus |
+|-------|--------------|--------------|
+| L2    | 5th member   | $1.00        |
+| L3    | 20th member  | $1.00        |
+
+---
+
+### 10% — Boost Agent (3×3 Forced Matrix)
+
+- **Single global queue** — all positions use Agent 1 (tier 1).
+- **All positions are real** — including re-entries from Stream and Boost (no dummy entries).
+- Same 3×3 BFS structure as Stream.
+
+**Payout schedule:**
+
+| Level | Members | Wallet Payout | Re-entries |
+|-------|---------|--------------|-----------|
+| L1    | 3       | $0.60        | 1         |
+| L2    | 9       | $1.50        | 2         |
+| L3    | 27      | $4.90        | 3         |
+
+**Sponsor milestone payouts:**
+
+| Level | Fill position | Sponsor bonus |
+|-------|--------------|--------------|
+| L2    | 5th member   | $0.30        |
+| L3    | 4th member   | $0.30        |
+| L3    | 20th member  | $0.30        |
+
+---
+
+### Wallet Credit Split
+
+Every wallet income credit applies two deductions:
+
+1. **10% software fee** → platform profit (not credited to any wallet)
+2. **10% repurchase reserve** → auto-held per tier
+
+Effective split: **81% main wallet** (withdrawable) + **9% repurchase reserve** + **10% platform fee**.
+
+When the repurchase reserve for a tier accumulates ≥ tier price, a new agent purchase is automatically created and activated (auto-repurchase).
+
+> Account balance (deposits / transfers) is credited at 100% — no deductions.
 
 ---
 
 ## User Journey
 
-```mermaid
-journey
-    title User Journey on Luxus
-    section Onboarding
-      Register with sponsor code: 5: User
-      Verify email via OTP: 4: User
-      Login to dashboard: 5: User
-    section Funding
-      Deposit USDT via NOWPayments: 3: User
-      Account balance credited: 5: System
-    section Agent Purchase
-      Browse agent tiers: 5: User
-      Purchase agent from balance: 5: User
-      Revenue systems activated: 5: System
-    section Earning
-      Receive ProActive income: 5: System
-      Matrix positions fill up: 4: System
-      Auto-repurchase triggers: 4: System
-    section Withdrawal
-      Register BEP-20 address: 3: User
-      Request withdrawal (min $10): 4: User
-      USDT sent via NOWPayments: 5: System
+```
+1. Register (sponsor's username required)
+2. Verify email via OTP
+3. Login → Dashboard
+4. Deposit USDT via NOWPayments invoice
+5. Account balance credited on payment confirmation
+6. Purchase Agent tier(s) from account balance
+7. Three revenue engines activate automatically
+8. Earn through Core (upline) + Stream (matrix) + Boost (matrix)
+9. Auto-repurchase triggers when reserve fills
+10. Register BEP-20 withdrawal address (OTP verified)
+11. Withdraw from main wallet (min $10, instant payout)
 ```
 
 ---
 
 ## Auth Flow
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant FE as Frontend
-    participant API as FastAPI
-    participant DB as PostgreSQL
-    participant EMAIL as SMTP
-
-    U->>FE: Fill register form (email, username, password, sponsor code)
-    FE->>API: POST /auth/register
-    API->>DB: Create user (is_email_verified=false)
-    API->>EMAIL: Send 6-digit OTP
-    FE->>U: Redirect to verify-email page
-
-    U->>FE: Enter OTP
-    FE->>API: POST /auth/verify-email
-    API->>DB: Mark is_email_verified=true
-    FE->>U: Redirect to login
-
-    U->>FE: Enter email + password
-    FE->>API: POST /auth/login
-    API->>FE: JWT access token
-    FE->>API: GET /auth/me
-    API->>FE: Full profile (is_admin, username, referral_code...)
-    
-    alt is_admin = true
-        FE->>U: Redirect to /admin (Admin Dashboard)
-    else is_admin = false
-        FE->>U: Redirect to /dashboard (User Dashboard)
-    end
 ```
+POST /auth/register          → creates user (sponsor_username REQUIRED), sends OTP
+POST /auth/verify-email      → verify OTP, mark email verified
+POST /auth/login             → returns JWT (blocked until email verified)
+
+Password reset:
+POST /auth/forgot-password   → sends reset OTP (1h expiry)
+POST /auth/reset-password    → validates OTP, sets new password
+
+Resend OTP:
+POST /auth/resend-verification → sends a fresh OTP
+
+Username availability check:
+GET  /auth/check-username?username=<name> → { "available": true/false }
+```
+
+**Note:** Every user must register under a sponsor — the sponsor's **username** is required. The platform admin is the root sponsor and is created directly in the database.
 
 ---
 
 ## Deposit & Purchase Flow
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant FE as Frontend
-    participant API as FastAPI
-    participant NOW as NOWPayments
-    participant CELERY as Celery
-    participant DB as PostgreSQL
+```
+Deposit (top up account balance):
+POST /deposit                         → creates NOWPayments USDT invoice
+[User pays invoice URL]
+POST /webhooks/nowpayments/ipn        → HMAC-verified; credits ACCOUNT balance
 
-    Note over U,DB: Deposit Flow
-    U->>FE: Enter deposit amount
-    FE->>API: POST /deposit
-    API->>NOW: Create invoice (USDT BEP-20)
-    NOW->>FE: invoice_url
-    FE->>U: Show payment link
-    U->>NOW: Send USDT
-    NOW->>API: POST /webhooks/nowpayments/ipn (HMAC verified)
-    API->>DB: Credit ACCOUNT wallet balance
+Purchase (spend account balance):
+POST /agents/purchase                 → deducts ACCOUNT balance, queues Celery
+Celery: activate_purchase             → revenue split → Core routing → matrix placement → payouts → email
 
-    Note over U,DB: Purchase Flow
-    U->>FE: Select agent tier ($10/$20/$50/$100)
-    FE->>API: POST /agents/purchase
-    API->>DB: Deduct from ACCOUNT balance
-    API->>CELERY: Queue activate_purchase task
-    CELERY->>DB: Revenue split (60/30/10)
-    CELERY->>DB: ProActive payouts (odd/even routing)
-    CELERY->>DB: Matrix placement (BFS)
-    CELERY->>DB: Matrix payouts + re-entries
+Transfer (user-to-user):
+POST /deposit/transfer                → 1% fee; first transfer to new recipient requires OTP
+POST /deposit/transfer/verify         → confirm OTP; executes transfer
+
+GET  /deposit/balance                 → { "account_balance": <float> }
+GET  /deposit                         → deposit history
 ```
 
 ---
 
 ## Matrix System
 
-```mermaid
-graph TD
-    subgraph "3x3 Forced Matrix (BFS)"
-        P1["Position #1 (you)"]
-        P1 --> P2["Slot 1"]
-        P1 --> P3["Slot 2"]
-        P1 --> P4["Slot 3"]
-        P2 --> P5["Slot 4"] & P6["Slot 5"] & P7["Slot 6"]
-        P3 --> P8["Slot 7"] & P9["Slot 8"] & P10["Slot 9"]
-        P4 --> P11["Slot 10"] & P12["Slot 11"] & P13["Slot 12"]
-    end
+Both Stream and Boost use a 3×3 breadth-first forced matrix:
 
-    P2 & P3 & P4 -->|"L1 = 3 filled"| L1PAY["L1 Payout"]
-    P5 & P6 & P7 & P8 & P9 & P10 & P11 & P12 & P13 -->|"L2 = 9 filled"| L2PAY["L2 Payout"]
-
-    subgraph "Payout (Agent 1 / $10)"
-        L1PAY --> L1A["Proportion: $2.00 + 1 re-entry"]
-        L1PAY --> L1B["Speculation: $0.60 + 1 re-entry"]
-        L2PAY --> L2A["Proportion: $7.00 + 2 re-entries"]
-        L2PAY --> L2B["Speculation: $2.10 + 2 re-entries"]
-    end
 ```
+Position (you)
+├── Slot 1  ──┬── Slot 4
+│             ├── Slot 5
+│             └── Slot 6
+├── Slot 2  ──┬── Slot 7
+│             ├── Slot 8
+│             └── Slot 9
+└── Slot 3  ──┬── Slot 10
+              ├── Slot 11
+              └── Slot 12
+
+L1 = 3 filled  (Slots 1–3)
+L2 = 9 filled  (Slots 4–12)
+L3 = 27 filled (next ring)
+```
+
+Concurrency is protected via PostgreSQL `SELECT FOR UPDATE` on `MatrixCounter` rows, preventing race conditions under parallel activations.
 
 ---
 
 ## Withdrawal Flow
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant API as FastAPI
-    participant DB as PostgreSQL
-    participant CELERY as Celery
-    participant NOW as NOWPayments
-    participant EMAIL as SMTP
+```
+POST /wallet/address           → register BEP-20 address; sends OTP
+POST /wallet/address/verify    → confirm OTP; marks address verified
+GET  /wallet/addresses         → list verified addresses
+DELETE /wallet/address/{id}    → remove a registered address
 
-    U->>API: POST /wallet/address (BEP-20 address)
-    API->>EMAIL: Send OTP
-    U->>API: POST /wallet/address/verify (OTP)
-    API->>DB: Mark address as verified
+POST /wallet/withdraw          → min $10, deducts from MAIN wallet
+                                 queues Celery process_withdrawal immediately
+Celery: process_withdrawal     → POST NOWPayments /v1/payout (USDT BEP-20)
+  Success → status=sent, sends "dispatched" email
+  Failure → status=failed, refunds to MAIN wallet, sends "refund" email (retries 3×)
 
-    U->>API: POST /wallet/withdraw (amount >= $10)
-    API->>DB: Deduct from MAIN wallet, create WithdrawalRequest
-    API->>EMAIL: "Withdrawal scheduled" email
-    API->>CELERY: Queue process_withdrawal (immediate)
-
-    CELERY->>NOW: POST /v1/payout (USDT BEP-20)
-    alt Success
-        NOW->>CELERY: Payout confirmed
-        CELERY->>DB: status = sent
-        CELERY->>EMAIL: "Withdrawal dispatched" email
-    else Failure (retry x3)
-        NOW->>CELERY: Error
-        CELERY->>DB: status = failed, refund to MAIN wallet
-        CELERY->>EMAIL: "Withdrawal failed + refunded" email
-    end
+GET  /wallet/withdrawals       → full withdrawal history
 ```
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Vite + React 18 + Tailwind CSS |
-| Backend | FastAPI (Python 3.11+) |
-| Database | PostgreSQL 18 |
-| Task Queue | Celery + Redis |
-| Auth | JWT — python-jose + passlib/bcrypt 4.0.1 |
-| Payments | NOWPayments (USDT on BEP-20) |
-| Email | SMTP (configurable — Gmail, Mailer91, etc.) |
+| Layer        | Technology                                     |
+|--------------|------------------------------------------------|
+| Frontend     | Vite + React 18 + Tailwind CSS                 |
+| Backend      | FastAPI (Python 3.11+)                         |
+| Database     | PostgreSQL 18                                  |
+| Task Queue   | Celery + Redis                                 |
+| Auth         | JWT — python-jose + passlib/bcrypt==4.0.1      |
+| Payments     | NOWPayments (USDT on BEP-20)                   |
+| Email        | SMTP (Gmail App Password or any provider)      |
 
 ---
 
@@ -289,16 +267,16 @@ sequenceDiagram
 
 ### Prerequisites
 
-- Python 3.11+ with conda env `luxus`
-- PostgreSQL 18 running on localhost:5432
-- Redis running on localhost:6379
-- Node.js 18+ (for frontend)
+- Python 3.11+ (conda env `luxus` recommended)
+- PostgreSQL 18 on localhost:5432 with database `luxus` and user `luxus`
+- Redis on localhost:6379
+- Node.js 18+
 
-### 1. Clone & configure environment
+### 1. Clone & configure
 
 ```bash
 cp .env.example .env
-# Edit .env — fill in NOWPAYMENTS keys, SMTP credentials, ADMIN_* fields
+# Edit .env — fill in NOWPayments keys, SMTP credentials, SECRET_KEY, ADMIN_* fields
 ```
 
 ### 2. Install backend dependencies
@@ -308,32 +286,23 @@ conda activate luxus
 pip install -r requirements.txt
 ```
 
-### 3. Create database tables
+### 3. Create database tables (fresh install — run once)
 
 ```bash
 cd backend
 python create_tables.py
 ```
 
-### 4. Run all migrations in order
+### 4. Seed the admin user (run once)
 
 ```bash
-python migrate_v2.py   # enum values + deposits table
-python migrate_v3.py   # sponsor_milestone_income enum
-python migrate_v4.py   # is_admin column
-python migrate_v5.py   # dummy re-entries, transfer verifications, wallet addresses
-python migrate_v6.py   # fix enum case mismatch (ACCOUNT, DEPOSIT, etc.)
-```
-
-### 5. Seed the admin user
-
-```bash
+cd backend
 python seed_admin.py
 ```
 
-Reads `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_REFERRAL_CODE` from `.env`. Safe to re-run.
+Reads `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_REFERRAL_CODE` from `.env`. Safe to re-run — exits early if admin already exists.
 
-### 6. Install frontend dependencies
+### 5. Install frontend dependencies
 
 ```bash
 cd ../frontend
@@ -344,38 +313,33 @@ npm install
 
 ## Running the Project
 
-Open **4 terminals**:
-
 ```bash
 # Terminal 1 — Backend API
 conda activate luxus
 cd backend
 uvicorn app.main:app --reload
-# → http://localhost:8000
-# → Swagger docs: http://localhost:8000/docs
+# API → http://localhost:8000
+# Swagger → http://localhost:8000/docs
 
-# Terminal 2 — Celery worker (handles async revenue + withdrawals)
+# Terminal 2 — Celery worker
 conda activate luxus
 cd backend
 celery -A app.workers.celery_app worker --loglevel=info
 
-# Terminal 3 — Redis (if not running as a service)
-redis-server
-
-# Terminal 4 — Frontend
+# Terminal 3 — Frontend dev server
 cd frontend
 npm run dev
-# → http://localhost:3000
+# App → http://localhost:3000
 ```
 
 ---
 
 ## Admin Setup
 
-The admin cannot self-register. Create via the seed script:
+The platform admin cannot self-register. Create via seed script:
 
 ```bash
-# Set credentials in .env first:
+# In .env:
 ADMIN_EMAIL=admin@yourdomain.com
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=StrongPassword@123
@@ -385,50 +349,52 @@ cd backend
 python seed_admin.py
 ```
 
-Login at **http://localhost:3000** with the admin credentials — the system automatically routes admin users to the **Admin Dashboard** (`/admin`).
+Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`.
 
-### Admin capabilities
-
-- Platform-wide stats (users, transactions, withdrawals)
-- Freeze / unfreeze user accounts
-- Credit or debit any user's wallet directly
-- View all withdrawals and transaction history
-- Access their own user account pages (wallet, matrix, etc.) from admin sidebar
+**Admin capabilities:**
+- Platform-wide stats and transaction history
+- View / freeze / unfreeze user accounts
+- Manually credit or debit any user wallet
+- Review and manage all withdrawal requests
 
 ---
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis connection string |
-| `SECRET_KEY` | JWT signing secret (use a long random string in production) |
-| `APP_ENV` | `development` (sandbox) or `production` (live NOWPayments) |
-| `NOWPAYMENTS_API_KEY` | NOWPayments API key |
-| `NOWPAYMENTS_IPN_SECRET` | NOWPayments IPN secret for HMAC verification |
-| `NOWPAYMENTS_CALLBACK_BASE` | Public URL of backend for IPN callbacks (use ngrok locally) |
-| `FRONTEND_URL` | Frontend URL for payment redirect links |
-| `SMTP_SERVER` | SMTP host |
-| `SMTP_PORT` | SMTP port (usually 587) |
-| `SMTP_USERNAME` | SMTP login username |
-| `SMTP_PASSWORD` | SMTP password / app password |
-| `SENDER_EMAIL` | From address for outgoing emails |
-| `ADMIN_EMAIL` | Admin account email (used by seed_admin.py) |
-| `ADMIN_USERNAME` | Admin account username |
-| `ADMIN_PASSWORD` | Admin account password |
-| `ADMIN_REFERRAL_CODE` | Admin referral code (used as sponsor for first users) |
+| Variable                    | Description                                                   |
+|-----------------------------|---------------------------------------------------------------|
+| `DATABASE_URL`              | PostgreSQL connection string                                  |
+| `REDIS_URL`                 | Redis connection string                                       |
+| `SECRET_KEY`                | JWT signing secret (long random string)                       |
+| `APP_ENV`                   | `development` (sandbox) or `production` (live NOWPayments)    |
+| `NOWPAYMENTS_API_KEY`       | NOWPayments API key                                           |
+| `NOWPAYMENTS_IPN_SECRET`    | NOWPayments IPN secret for HMAC-SHA512 verification           |
+| `NOWPAYMENTS_CALLBACK_BASE` | Public URL of backend for IPN callbacks (use ngrok locally)   |
+| `FRONTEND_URL`              | Frontend URL for redirect links in emails                     |
+| `SMTP_SERVER`               | SMTP host (e.g. `smtp.gmail.com`)                             |
+| `SMTP_PORT`                 | SMTP port (587 for TLS)                                       |
+| `SMTP_USERNAME`             | SMTP login username                                           |
+| `SMTP_PASSWORD`             | Gmail App Password or SMTP password                           |
+| `SENDER_EMAIL`              | From address for outgoing emails                              |
+| `ADMIN_EMAIL`               | Admin account email (used by `seed_admin.py`)                 |
+| `ADMIN_USERNAME`            | Admin account username                                        |
+| `ADMIN_PASSWORD`            | Admin account password                                        |
+| `ADMIN_REFERRAL_CODE`       | Admin's own referral code (root sponsor for first users)      |
 
 ---
 
-## Agent Tier Pricing & Payouts
+## Key Notes
 
-| Tier | Price | ProActive (60%) | Proportion L3 | Speculation L3 |
-|------|-------|-----------------|---------------|----------------|
-| Agent 1 | $10 | $6.00 split between sponsor chain | $26.00 | $7.20 |
-| Agent 2 | $20 | $12.00 split | $52.00 | $14.40 |
-| Agent 3 | $50 | $30.00 split | $130.00 | $36.00 |
-| Agent 4 | $100 | $60.00 split | $260.00 | $72.00 |
-
-All payouts: **90% to main wallet** (withdrawable) + **10% to repurchase reserve** (auto-held).
-When repurchase reserve reaches the tier price, a new agent is automatically purchased.
+- `APP_ENV=development` always hits the NOWPayments sandbox — no real funds used.
+- All financial amounts use Python `Decimal` — no float precision errors.
+- Matrix concurrency uses PostgreSQL `SELECT FOR UPDATE` on `MatrixCounter`.
+- Celery tasks retry up to 3× on failure (60s delay for purchases, 300s for withdrawals).
+- **bcrypt is pinned to 4.0.1** — bcrypt 5.x breaks passlib; do not upgrade.
+- `POST /agents/purchase/{id}/confirm` is **dev-only** — remove before production.
+- Multiple purchases of the same tier are allowed.
+- Sponsor is identified by **username** at registration (not a referral code).
+- Username availability is checked in real-time during registration.
+- Minimum withdrawal is **$10**. Minimum transfer is **$1**.
+- Withdrawal addresses must be OTP-verified before a withdrawal can be submitted.
+- Transfer fee is **1%** — sender is debited the full amount; recipient receives 99%.
+- First transfer to a new recipient requires email OTP confirmation.

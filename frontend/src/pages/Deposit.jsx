@@ -1,26 +1,94 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
-import { ArrowDownToLine, ExternalLink, Copy, Check, Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { ArrowDownToLine, Clock, CheckCircle, XCircle, RefreshCw, Loader2 } from 'lucide-react'
 
 export default function Deposit() {
-  const [balance, setBalance] = useState(0)
-  const [deposits, setDeposits] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [amount, setAmount] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [invoiceUrl, setInvoiceUrl] = useState(null)
-  const [copied, setCopied] = useState(false)
+  const [balance, setBalance]           = useState(0)
+  const [deposits, setDeposits]         = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [amount, setAmount]             = useState('')
+  const [creating, setCreating]         = useState(false)
+  const [awaitingPayment, setAwaiting]  = useState(false)
+  const [pendingOrderId, setPending]    = useState(null)
+  const pollRef                         = useRef(null)
 
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  // ── initial data load ──────────────────────────────────────────────────────
   const load = () =>
     Promise.all([api.get('/deposit/balance'), api.get('/deposit')])
-      .then(([b, d]) => { setBalance(parseFloat(b.data.account_balance) || 0); setDeposits(d.data) })
+      .then(([b, d]) => {
+        setBalance(parseFloat(b.data.account_balance) || 0)
+        setDeposits(d.data)
+      })
       .catch(() => toast.error('Failed to load'))
       .finally(() => setLoading(false))
 
   useEffect(() => { load() }, [])
 
+  // ── handle return from NOWPayments ─────────────────────────────────────────
+  useEffect(() => {
+    const params  = new URLSearchParams(location.search)
+    const payment = params.get('payment')
+    const orderId = params.get('order_id')
+
+    if (payment === 'success' && orderId) {
+      setAwaiting(true)
+      setPending(orderId)
+      navigate('/deposit', { replace: true })   // clean URL
+    } else if (payment === 'cancelled') {
+      toast.error('Payment cancelled — no funds were deducted.')
+      navigate('/deposit', { replace: true })
+    }
+  }, [])                                        // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── poll for confirmation after returning from payment ─────────────────────
+  useEffect(() => {
+    if (!awaitingPayment || !pendingOrderId) return
+
+    let attempts = 0
+    const MAX_ATTEMPTS = 60  // 3 min at 3-second intervals
+
+    pollRef.current = setInterval(async () => {
+      attempts++
+      try {
+        const [bRes, dRes] = await Promise.all([
+          api.get('/deposit/balance'),
+          api.get('/deposit'),
+        ])
+        setBalance(parseFloat(bRes.data.account_balance) || 0)
+        setDeposits(dRes.data)
+
+        const dep = dRes.data.find(d => d.order_id === pendingOrderId)
+
+        if (dep?.status === 'completed') {
+          clearInterval(pollRef.current)
+          setAwaiting(false)
+          setPending(null)
+          toast.success('Payment confirmed! Your account balance has been credited.')
+        } else if (dep?.status === 'failed' || attempts >= MAX_ATTEMPTS) {
+          clearInterval(pollRef.current)
+          setAwaiting(false)
+          setPending(null)
+          toast.error(
+            dep?.status === 'failed'
+              ? 'Payment failed or expired. Please try again.'
+              : 'Confirmation is taking longer than expected. Check your deposit history.'
+          )
+        }
+      } catch {
+        // silently retry
+      }
+    }, 3000)
+
+    return () => clearInterval(pollRef.current)
+  }, [awaitingPayment, pendingOrderId])
+
+  // ── generate invoice & auto-redirect ──────────────────────────────────────
   const handleCreate = async (e) => {
     e.preventDefault()
     const amt = parseFloat(amount)
@@ -28,23 +96,18 @@ export default function Deposit() {
     setCreating(true)
     try {
       const { data } = await api.post('/deposit', { amount_usd: amt })
-      setInvoiceUrl(data.invoice_url)
-      toast.success('Invoice created! Complete payment to credit your account.')
-      load()
+      // Redirect immediately — user goes straight to the NOWPayments page
+      window.location.href = data.invoice_url
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to create deposit')
-    } finally {
+      toast.error(err.response?.data?.detail || 'Failed to create deposit invoice')
       setCreating(false)
     }
+    // Note: setCreating(false) is intentionally omitted on success —
+    // the page navigates away so the button stays in its "loading" state
+    // until the redirect completes, giving clear visual feedback.
   }
 
-  const copyUrl = () => {
-    navigator.clipboard.writeText(invoiceUrl)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  const statusIcon = { pending: Clock, completed: CheckCircle, failed: XCircle }
+  const statusIcon  = { pending: Clock, completed: CheckCircle, failed: XCircle }
   const statusColor = { pending: '#FFB547', completed: '#00D4B4', failed: '#FF4D6A' }
 
   if (loading) return (
@@ -80,115 +143,92 @@ export default function Deposit() {
           </div>
         </div>
 
+        {/* Awaiting confirmation banner */}
+        {awaitingPayment && (
+          <div
+            className="rounded-xl p-4 flex items-center gap-4"
+            style={{ background: 'rgba(255,181,71,0.08)', border: '1px solid rgba(255,181,71,0.3)' }}
+          >
+            <Loader2 size={22} className="animate-spin flex-shrink-0" style={{ color: '#FFB547' }} />
+            <div>
+              <p className="text-sm font-semibold" style={{ color: '#FFB547' }}>Waiting for payment confirmation…</p>
+              <p className="text-xs mt-0.5" style={{ color: '#8899AA' }}>
+                Your payment is being verified. This usually takes under a minute. Your balance will update automatically.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Deposit Form */}
         <div className="rounded-xl p-6" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
           <h2 className="font-semibold text-white mb-4">Create Deposit Invoice</h2>
 
-          {invoiceUrl ? (
-            <div className="space-y-4">
-              <div
-                className="rounded-xl p-4"
-                style={{ background: 'rgba(0,212,180,0.05)', border: '1px solid rgba(0,212,180,0.2)' }}
-              >
-                <p className="text-sm font-semibold mb-2" style={{ color: '#00D4B4' }}>Invoice Created</p>
-                <p className="text-xs mb-3" style={{ color: '#8899AA' }}>
-                  Complete your USDT BEP-20 payment using the link below. Your account will be credited automatically.
-                </p>
-                <div className="flex gap-2">
-                  <a
-                    href={invoiceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
-                    style={{ background: '#00D4B4', color: '#000' }}
-                  >
-                    <ExternalLink size={14} />
-                    Open Payment Page
-                  </a>
-                  <button
-                    onClick={copyUrl}
-                    className="px-3 rounded-lg"
-                    style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#8899AA' }}
-                  >
-                    {copied ? <Check size={16} style={{ color: '#00D4B4' }} /> : <Copy size={16} />}
-                  </button>
-                </div>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
+                Amount (USD)
+              </label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 font-semibold" style={{ color: '#8899AA' }}>$</span>
+                <input
+                  type="number"
+                  min="10"
+                  step="0.01"
+                  required
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  placeholder="10.00"
+                  className="w-full pl-8 pr-4 py-3 rounded-xl text-sm outline-none"
+                  style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
+                  onFocus={e => e.target.style.borderColor = '#00D4B4'}
+                  onBlur={e => e.target.style.borderColor = '#1E2A38'}
+                />
               </div>
-              <button
-                onClick={() => setInvoiceUrl(null)}
-                className="w-full py-2.5 rounded-xl text-sm"
-                style={{ border: '1px solid #1E2A38', color: '#8899AA', background: 'transparent' }}
-              >
-                Create Another Deposit
-              </button>
+              <p className="text-xs mt-1" style={{ color: '#4A5568' }}>Minimum deposit: $10.00</p>
             </div>
-          ) : (
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
-                  Amount (USD)
-                </label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-semibold" style={{ color: '#8899AA' }}>$</span>
-                  <input
-                    type="number"
-                    min="10"
-                    step="0.01"
-                    required
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    placeholder="10.00"
-                    className="w-full pl-8 pr-4 py-3 rounded-xl text-sm outline-none"
-                    style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
-                    onFocus={e => e.target.style.borderColor = '#00D4B4'}
-                    onBlur={e => e.target.style.borderColor = '#1E2A38'}
-                  />
-                </div>
-                <p className="text-xs mt-1" style={{ color: '#4A5568' }}>Minimum deposit: $10.00</p>
-              </div>
 
-              {/* Quick amounts */}
-              <div className="flex gap-2 flex-wrap">
-                {[10, 20, 50, 100, 200].map(a => (
-                  <button
-                    key={a}
-                    type="button"
-                    onClick={() => setAmount(String(a))}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-                    style={parseFloat(amount) === a
-                      ? { background: 'rgba(0,212,180,0.15)', color: '#00D4B4', border: '1px solid rgba(0,212,180,0.4)' }
-                      : { background: '#0E1117', color: '#8899AA', border: '1px solid #1E2A38' }
-                    }
-                  >
-                    ${a}
-                  </button>
-                ))}
-              </div>
+            {/* Quick amounts */}
+            <div className="flex gap-2 flex-wrap">
+              {[10, 20, 50, 100, 200].map(a => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => setAmount(String(a))}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                  style={parseFloat(amount) === a
+                    ? { background: 'rgba(0,212,180,0.15)', color: '#00D4B4', border: '1px solid rgba(0,212,180,0.4)' }
+                    : { background: '#0E1117', color: '#8899AA', border: '1px solid #1E2A38' }
+                  }
+                >
+                  ${a}
+                </button>
+              ))}
+            </div>
 
-              <button
-                type="submit"
-                disabled={creating}
-                className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
-                style={{
-                  background: creating ? 'rgba(0,212,180,0.3)' : '#00D4B4',
-                  color: creating ? '#8899AA' : '#000',
-                  cursor: creating ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {creating
-                  ? <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                  : <><ArrowDownToLine size={16} /> Generate Invoice</>
-                }
-              </button>
+            <button
+              type="submit"
+              disabled={creating}
+              className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+              style={{
+                background: creating ? 'rgba(0,212,180,0.3)' : '#00D4B4',
+                color: creating ? '#8899AA' : '#000',
+                cursor: creating ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {creating
+                ? <><div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin" /> Redirecting to payment…</>
+                : <><ArrowDownToLine size={16} /> Generate Invoice</>
+              }
+            </button>
 
-              <div className="rounded-lg px-4 py-3 text-xs" style={{ background: '#0E1117', color: '#8899AA' }}>
-                <p className="font-medium mb-1 text-white">How it works:</p>
-                <p>1. Enter amount and click Generate Invoice</p>
-                <p>2. Open the NOWPayments page and send USDT BEP-20</p>
-                <p>3. Your balance is credited automatically on confirmation</p>
-              </div>
-            </form>
-          )}
+            <div className="rounded-lg px-4 py-3 text-xs" style={{ background: '#0E1117', color: '#8899AA' }}>
+              <p className="font-medium mb-1 text-white">How it works:</p>
+              <p>1. Enter amount and click Generate Invoice</p>
+              <p>2. You'll be taken to the NOWPayments page to send USDT BEP-20</p>
+              <p>3. After payment, you're redirected back here automatically</p>
+              <p>4. Your balance is credited once the transaction is confirmed</p>
+            </div>
+          </form>
         </div>
 
         {/* Deposit History */}
@@ -203,7 +243,7 @@ export default function Deposit() {
             <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
               <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
                 {deposits.map(d => {
-                  const Icon = statusIcon[d.status] || Clock
+                  const Icon  = statusIcon[d.status]  || Clock
                   const color = statusColor[d.status] || '#8899AA'
                   return (
                     <div key={d.id} className="flex items-center gap-3 px-4 py-3">

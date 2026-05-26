@@ -1,12 +1,12 @@
 """
-ProActive income routing — updated per Luxus.docx spec.
+Core Agent income routing (formerly ProActive).
 
 Split: 60% of purchase price → two equal halves
   • First  30%  → Sponsor         (direct upline)
   • Second 30%  → Supreme Sponsor (sponsor's sponsor)
 
 Odd / Even rule — applied independently at each recipient:
-  • Count how many PROACTIVE_INCOME credits the recipient has already received.
+  • Count how many CORE_INCOME credits the recipient has already received.
   • Next incoming credit will be count + 1.
     – Odd  → credit goes to recipient's wallet
     – Even → credit passes to recipient's sponsor's wallet instead
@@ -24,11 +24,11 @@ from app.models.transaction import Transaction, TransactionType
 from app.core.wallet_ops import credit_wallet
 
 
-def _proactive_income_count(db: Session, user_id: int) -> int:
-    """Return the number of PROACTIVE_INCOME credits this user has received so far."""
+def _core_income_count(db: Session, user_id: int) -> int:
+    """Return the number of CORE_INCOME credits this user has received so far."""
     return (
         db.query(Transaction)
-        .filter_by(user_id=user_id, transaction_type=TransactionType.PROACTIVE_INCOME)
+        .filter_by(user_id=user_id, transaction_type=TransactionType.CORE_INCOME)
         .count()
     )
 
@@ -42,7 +42,7 @@ def _route_half(
     label: str,
 ) -> None:
     """
-    Route one half (30%) of the proactive amount.
+    Route one half (30%) of the Core Agent amount.
 
     Odd income  → primary_recipient's wallet
     Even income → primary_recipient's sponsor's wallet
@@ -53,26 +53,25 @@ def _route_half(
         primary_recipient = None
 
     if primary_recipient is None:
-        # Q10: No sponsor/supreme sponsor → amount goes to company (platform profit).
-        # Record the outgoing transaction on the buyer for accounting, but do NOT
-        # credit any user wallet — money stays with the platform.
+        # No sponsor/supreme sponsor → amount goes to company (platform profit).
+        # Record the outgoing transaction on the buyer for accounting.
         db.add(Transaction(
             user_id=buyer.id,
             agent_tier=agent_tier,
-            transaction_type=TransactionType.PROACTIVE_SENT,
+            transaction_type=TransactionType.CORE_SENT,
             amount=amount,
-            reference_id=f"proactive_{buyer.id}_{label}",
-            notes=f"ProActive {label} — no sponsor, amount retained by platform",
+            reference_id=f"core_{buyer.id}_{label}",
+            notes=f"Core {label} — no sponsor, amount retained by platform",
         ))
         return
 
     # Determine odd/even: next income number = current_count + 1
-    next_count = _proactive_income_count(db, primary_recipient.id) + 1
+    next_count = _core_income_count(db, primary_recipient.id) + 1
 
     if next_count % 2 == 1:
         # Odd → primary recipient keeps it
         beneficiary_id = primary_recipient.id
-        notes = f"ProActive {label} — odd income #{next_count}"
+        notes = f"Core {label} — odd income #{next_count}"
     else:
         # Even → pass to primary recipient's sponsor (if active)
         upline: User | None = (
@@ -84,20 +83,20 @@ def _route_half(
 
         if upline is not None:
             beneficiary_id = upline.id
-            notes = f"ProActive {label} — even income #{next_count}, passed to upline"
+            notes = f"Core {label} — even income #{next_count}, passed to upline"
         else:
             # No active upline to pass to — recipient keeps it
             beneficiary_id = primary_recipient.id
-            notes = f"ProActive {label} — even income #{next_count}, no active upline, kept"
+            notes = f"Core {label} — even income #{next_count}, no active upline, kept"
 
     # Record outgoing side on buyer
     db.add(Transaction(
         user_id=buyer.id,
         agent_tier=agent_tier,
-        transaction_type=TransactionType.PROACTIVE_SENT,
+        transaction_type=TransactionType.CORE_SENT,
         amount=amount,
-        reference_id=f"proactive_{buyer.id}_{label}",
-        notes=f"ProActive {label} sent (buyer position in sponsor downline: {buyer.sponsor_position})",
+        reference_id=f"core_{buyer.id}_{label}",
+        notes=f"Core {label} sent",
     ))
 
     credit_wallet(
@@ -105,20 +104,20 @@ def _route_half(
         user_id=beneficiary_id,
         agent_tier=agent_tier,
         gross_amount=amount,
-        tx_type=TransactionType.PROACTIVE_INCOME,
-        reference_id=f"proactive_{buyer.id}_{label}",
+        tx_type=TransactionType.CORE_INCOME,
+        reference_id=f"core_{buyer.id}_{label}",
         notes=notes,
     )
 
 
-def route_proactive(
+def route_core(
     db: Session,
     buyer: User,
     agent_tier: int,
     amount: Decimal,  # This is 60% of the purchase price
 ) -> None:
     """
-    Route the ProActive portion of a purchase.
+    Route the Core Agent portion of a purchase.
 
     amount (60% of purchase) is split into two equal halves:
       • First  half → buyer's direct Sponsor
