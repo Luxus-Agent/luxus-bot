@@ -4,6 +4,9 @@ import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import { ArrowDownToLine, Clock, CheckCircle, XCircle, RefreshCw, Loader2 } from 'lucide-react'
+import Pagination from '../components/Pagination'
+
+const PAGE_SIZE = 10
 
 export default function Deposit() {
   const [balance, setBalance]           = useState(0)
@@ -13,6 +16,7 @@ export default function Deposit() {
   const [creating, setCreating]         = useState(false)
   const [awaitingPayment, setAwaiting]  = useState(false)
   const [pendingOrderId, setPending]    = useState(null)
+  const [historyPage, setHistoryPage]   = useState(1)
   const pollRef                         = useRef(null)
 
   const location = useLocation()
@@ -56,32 +60,30 @@ export default function Deposit() {
     pollRef.current = setInterval(async () => {
       attempts++
       try {
-        const [bRes, dRes] = await Promise.all([
-          api.get('/deposit/balance'),
-          api.get('/deposit'),
-        ])
-        setBalance(parseFloat(bRes.data.account_balance) || 0)
-        setDeposits(dRes.data)
+        // Use the lightweight status endpoint — avoids fetching the full list on every tick
+        const statusRes = await api.get(`/deposit/status/${pendingOrderId}`)
+        const depStatus = statusRes.data.status
 
-        const dep = dRes.data.find(d => d.order_id === pendingOrderId)
-
-        if (dep?.status === 'completed') {
+        if (depStatus === 'completed') {
           clearInterval(pollRef.current)
           setAwaiting(false)
           setPending(null)
+          // Refresh balance and list now that payment is confirmed
+          load()
           toast.success('Payment confirmed! Your account balance has been credited.')
-        } else if (dep?.status === 'failed' || attempts >= MAX_ATTEMPTS) {
+        } else if (depStatus === 'failed' || attempts >= MAX_ATTEMPTS) {
           clearInterval(pollRef.current)
           setAwaiting(false)
           setPending(null)
+          load()
           toast.error(
-            dep?.status === 'failed'
+            depStatus === 'failed'
               ? 'Payment failed or expired. Please try again.'
               : 'Confirmation is taking longer than expected. Check your deposit history.'
           )
         }
       } catch {
-        // silently retry
+        // silently retry — 404 just means the IPN hasn't fired yet
       }
     }, 3000)
 
@@ -109,6 +111,8 @@ export default function Deposit() {
 
   const statusIcon  = { pending: Clock, completed: CheckCircle, failed: XCircle }
   const statusColor = { pending: '#FFB547', completed: '#00D4B4', failed: '#FF4D6A' }
+  const depositPages = Math.max(1, Math.ceil(deposits.length / PAGE_SIZE))
+  const paginatedDeposits = deposits.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE)
 
   if (loading) return (
     <Layout>
@@ -242,7 +246,7 @@ export default function Deposit() {
             </div>
             <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
               <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
-                {deposits.map(d => {
+                {paginatedDeposits.map(d => {
                   const Icon  = statusIcon[d.status]  || Clock
                   const color = statusColor[d.status] || '#8899AA'
                   return (
@@ -263,6 +267,9 @@ export default function Deposit() {
                     </div>
                   )
                 })}
+              </div>
+              <div className="px-4 pb-3">
+                <Pagination page={historyPage} totalPages={depositPages} onChange={setHistoryPage} />
               </div>
             </div>
           </div>

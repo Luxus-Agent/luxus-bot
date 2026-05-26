@@ -6,6 +6,9 @@ import {
   ArrowUpFromLine, Plus, Trash2, CheckCircle, Clock, XCircle,
   ShieldCheck, AlertCircle, Wallet
 } from 'lucide-react'
+import Pagination from '../components/Pagination'
+
+const PAGE_SIZE = 10
 
 const TIER_LABELS = { 1: 'Agent 1 ($10)', 2: 'Agent 2 ($20)', 3: 'Agent 3 ($50)', 4: 'Agent 4 ($100)' }
 const STATUS_COLOR = { PENDING: '#FFB547', PROCESSING: '#3498DB', SENT: '#00D4B4', FAILED: '#FF4D6A' }
@@ -17,6 +20,7 @@ export default function Withdraw() {
   const [withdrawals, setWithdrawals] = useState([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('withdraw')
+  const [historyPage, setHistoryPage] = useState(1)
 
   // Withdrawal form
   const [wForm, setWForm] = useState({ agent_tier: '1', amount: '', wallet_address: '' })
@@ -41,7 +45,8 @@ export default function Withdraw() {
 
   useEffect(() => { load() }, [])
 
-  const mainWallet = (tier) => wallets.find(w => w.agent_tier === parseInt(tier) && w.wallet_type === 'MAIN')
+  const mainWallet = (tier) => wallets.find(w => w.agent_tier === parseInt(tier) && w.wallet_type === 'main')
+  const accountBalance = parseFloat(wallets.find(w => w.wallet_type === 'account' && w.agent_tier === 0)?.balance || 0)
   const selectedBalance = parseFloat(mainWallet(wForm.agent_tier)?.balance || 0)
 
   const handleWithdraw = async (e) => {
@@ -109,6 +114,8 @@ export default function Withdraw() {
   }
 
   const verifiedAddresses = addresses.filter(a => a.is_verified)
+  const withdrawalPages = Math.max(1, Math.ceil(withdrawals.length / PAGE_SIZE))
+  const paginatedWithdrawals = withdrawals.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE)
 
   if (loading) return (
     <Layout>
@@ -154,6 +161,18 @@ export default function Withdraw() {
         {/* Withdraw Tab */}
         {tab === 'withdraw' && (
           <div className="max-w-lg">
+            {/* Account Balance Banner */}
+            <div
+              className="rounded-xl p-4 mb-4 flex items-center justify-between"
+              style={{ background: '#141922', border: '1px solid rgba(0,212,180,0.2)' }}
+            >
+              <div>
+                <p className="text-xs" style={{ color: '#8899AA' }}>Account Balance</p>
+                <p className="text-xl font-bold" style={{ color: '#00D4B4' }}>${accountBalance.toFixed(2)}</p>
+              </div>
+              <Wallet size={22} style={{ color: '#00D4B4', opacity: 0.6 }} />
+            </div>
+
             {verifiedAddresses.length === 0 && (
               <div
                 className="rounded-xl p-4 mb-4 flex gap-3 items-start"
@@ -396,7 +415,7 @@ export default function Withdraw() {
                 </div>
               ) : (
                 <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
-                  {withdrawals.map(w => {
+                  {paginatedWithdrawals.map(w => {
                     const Icon = STATUS_ICON[w.status] || Clock
                     const color = STATUS_COLOR[w.status] || '#8899AA'
                     return (
@@ -427,6 +446,11 @@ export default function Withdraw() {
                 </div>
               )}
             </div>
+            {withdrawals.length > 0 && (
+              <div className="px-4 pb-3" style={{ background: '#141922' }}>
+                <Pagination page={historyPage} totalPages={withdrawalPages} onChange={setHistoryPage} />
+              </div>
+            )}
           </div>
         )}
       </div>

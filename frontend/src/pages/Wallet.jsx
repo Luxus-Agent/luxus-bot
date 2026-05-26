@@ -3,6 +3,9 @@ import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Wallet as WalletIcon, TrendingUp, Lock, Activity } from 'lucide-react'
+import Pagination from '../components/Pagination'
+
+const PAGE_SIZE = 10
 
 const TIER_PRICES = { 1: 10, 2: 20, 3: 50, 4: 100 }
 
@@ -21,6 +24,7 @@ export default function Wallet() {
   const [loading, setLoading] = useState(true)
   const [filterTier, setFilterTier] = useState('all')
   const [filterType, setFilterType] = useState('all')
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     Promise.all([
@@ -32,9 +36,9 @@ export default function Wallet() {
     }).catch(() => toast.error('Failed to load wallet')).finally(() => setLoading(false))
   }, [])
 
-  const mainWallets = wallets.filter(w => w.wallet_type === 'MAIN' && w.agent_tier > 0)
-  const repurchaseWallets = wallets.filter(w => w.wallet_type === 'REPURCHASE' && w.agent_tier > 0)
-  const accountWallet = wallets.find(w => w.wallet_type === 'ACCOUNT')
+  const mainWallets = wallets.filter(w => w.wallet_type === 'main' && w.agent_tier > 0)
+  const repurchaseWallets = wallets.filter(w => w.wallet_type === 'repurchase' && w.agent_tier > 0)
+  const accountWallet = wallets.find(w => w.wallet_type === 'account')
   const totalMain = mainWallets.reduce((s, w) => s + parseFloat(w.balance), 0)
   const totalRep = repurchaseWallets.reduce((s, w) => s + parseFloat(w.balance), 0)
 
@@ -44,6 +48,8 @@ export default function Wallet() {
     if (filterType !== 'all' && t.transaction_type !== filterType) return false
     return true
   })
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   if (loading) return (
     <Layout>
@@ -88,8 +94,8 @@ export default function Wallet() {
           <h2 className="font-semibold text-white mb-4">Per-Tier Balances</h2>
           <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">
             {[1, 2, 3, 4].map(tier => {
-              const mw = wallets.find(w => w.agent_tier === tier && w.wallet_type === 'MAIN')
-              const rw = wallets.find(w => w.agent_tier === tier && w.wallet_type === 'REPURCHASE')
+              const mw = wallets.find(w => w.agent_tier === tier && w.wallet_type === 'main')
+              const rw = wallets.find(w => w.agent_tier === tier && w.wallet_type === 'repurchase')
               const mBal = parseFloat(mw?.balance || 0)
               const rBal = parseFloat(rw?.balance || 0)
               const progress = Math.min(100, (rBal / TIER_PRICES[tier]) * 100)
@@ -136,7 +142,7 @@ export default function Wallet() {
             <div className="flex gap-2">
               <select
                 value={filterTier}
-                onChange={e => setFilterTier(e.target.value)}
+                onChange={e => { setFilterTier(e.target.value); setPage(1) }}
                 className="px-3 py-1.5 rounded-lg text-xs outline-none"
                 style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
               >
@@ -145,7 +151,7 @@ export default function Wallet() {
               </select>
               <select
                 value={filterType}
-                onChange={e => setFilterType(e.target.value)}
+                onChange={e => { setFilterType(e.target.value); setPage(1) }}
                 className="px-3 py-1.5 rounded-lg text-xs outline-none"
                 style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
               >
@@ -163,7 +169,7 @@ export default function Wallet() {
               </div>
             ) : (
               <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
-                {filtered.map(tx => {
+                {paginated.map(tx => {
                   const isNeg = NEGATIVE.includes(tx.transaction_type)
                   const color = TX_COLOR[tx.transaction_type] || '#8899AA'
                   return (
@@ -190,6 +196,11 @@ export default function Wallet() {
                     </div>
                   )
                 })}
+              </div>
+            )}
+            {filtered.length > 0 && (
+              <div className="px-4 pb-3">
+                <Pagination page={page} totalPages={totalPages} onChange={setPage} />
               </div>
             )}
           </div>

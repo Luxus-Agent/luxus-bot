@@ -19,7 +19,10 @@ class Wallet(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     agent_tier: Mapped[int] = mapped_column(Integer, nullable=False)
-    wallet_type: Mapped[WalletType] = mapped_column(Enum(WalletType), nullable=False)
+    wallet_type: Mapped[WalletType] = mapped_column(
+        Enum(WalletType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     balance: Mapped[float] = mapped_column(Numeric(14, 4), default=0)
 
     user = relationship("User", back_populates="wallets")

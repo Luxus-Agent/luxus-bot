@@ -55,8 +55,8 @@ export default function Dashboard() {
     }).catch(() => toast.error('Failed to load dashboard')).finally(() => setLoading(false))
   }, [])
 
-  const mainWallets = wallets.filter(w => w.wallet_type === 'MAIN')
-  const accountWallet = wallets.find(w => w.wallet_type === 'ACCOUNT' && w.agent_tier === 0)
+  const mainWallets = wallets.filter(w => w.wallet_type === 'main')
+  const accountWallet = wallets.find(w => w.wallet_type === 'account' && w.agent_tier === 0)
   const totalMain = mainWallets.reduce((s, w) => s + parseFloat(w.balance), 0)
   const activePurchases = purchases.filter(p => p.status === 'active')
 
@@ -185,8 +185,8 @@ export default function Dashboard() {
                 {[1, 2, 3, 4].map(tier => {
                   const tierPurchases = activePurchases.filter(p => p.agent_tier === tier)
                   if (tierPurchases.length === 0) return null
-                  const mainW = wallets.find(w => w.wallet_type === 'MAIN' && w.agent_tier === tier)
-                  const repW = wallets.find(w => w.wallet_type === 'REPURCHASE' && w.agent_tier === tier)
+                  const mainW = wallets.find(w => w.wallet_type === 'main' && w.agent_tier === tier)
+                  const repW = wallets.find(w => w.wallet_type === 'repurchase' && w.agent_tier === tier)
                   const repBal = parseFloat(repW?.balance || 0)
                   const progress = Math.min(100, (repBal / TIER_PRICES[tier]) * 100)
                   return (

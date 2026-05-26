@@ -23,7 +23,9 @@ class WithdrawalRequest(Base):
     amount: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
     wallet_address: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[WithdrawalStatus] = mapped_column(
-        Enum(WithdrawalStatus), nullable=False, default=WithdrawalStatus.PENDING
+        Enum(WithdrawalStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=WithdrawalStatus.PENDING,
     )
     scheduled_for: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     nowpayments_payout_id: Mapped[str | None] = mapped_column(String, nullable=True)

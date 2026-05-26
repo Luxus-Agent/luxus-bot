@@ -35,6 +35,7 @@ def activate_purchase(self, purchase_id: int) -> None:
     from app.models.agent import AgentPurchase
     from app.models.matrix import SystemType
     from app.models.user import User
+    from app.models.wallet_address import WalletAddress  # noqa: F401 — must be imported before User mapper resolves relationships
     from app.database import SessionLocal
 
     db = SessionLocal()
@@ -107,8 +108,8 @@ def activate_purchase(self, purchase_id: int) -> None:
             )
 
         total_payouts = (
-            len(proportion_payouts) + len(speculation_payouts) +
-            len(proportion_sponsor_payouts) + len(speculation_sponsor_payouts)
+            len(stream_payouts) + len(boost_payouts) +
+            len(stream_sponsor_payouts) + len(boost_sponsor_payouts)
         )
         logger.info(
             "activate_purchase: purchase %s activated. %d payouts queued.",
@@ -209,6 +210,7 @@ def process_sponsor_payout(
     """
     from app.core.wallet_ops import credit_wallet
     from app.models.user import User
+    from app.models.wallet_address import WalletAddress  # noqa: F401
     from app.models.transaction import TransactionType
     from app.database import SessionLocal
 
@@ -270,6 +272,7 @@ def place_reentry(
     """
     from app.core.matrix_engine import place_in_matrix
     from app.models.matrix import MatrixPosition, SystemType
+    from app.models.wallet_address import WalletAddress  # noqa: F401
     from app.database import SessionLocal
 
     db = SessionLocal()

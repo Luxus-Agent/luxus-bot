@@ -3,6 +3,9 @@ import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Activity, TrendingUp, TrendingDown } from 'lucide-react'
+import Pagination from '../components/Pagination'
+
+const PAGE_SIZE = 10
 
 const TX_COLOR = {
   DEPOSIT: '#00D4B4', CORE_INCOME: '#00D4B4', STREAM_PAYOUT: '#00D4B4',
@@ -23,6 +26,7 @@ export default function Transactions() {
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState('all')
   const [filterGroup, setFilterGroup] = useState('all')
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     api.get('/wallet/transactions')
@@ -49,6 +53,8 @@ export default function Transactions() {
     }
     return true
   })
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   if (loading) return (
     <Layout>
@@ -95,7 +101,7 @@ export default function Transactions() {
         <div className="flex gap-2 flex-wrap">
           <select
             value={filterGroup}
-            onChange={e => { setFilterGroup(e.target.value); setFilterType('all') }}
+            onChange={e => { setFilterGroup(e.target.value); setFilterType('all'); setPage(1) }}
             className="px-3 py-1.5 rounded-lg text-xs outline-none"
             style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
           >
@@ -104,7 +110,7 @@ export default function Transactions() {
           </select>
           <select
             value={filterType}
-            onChange={e => setFilterType(e.target.value)}
+            onChange={e => { setFilterType(e.target.value); setPage(1) }}
             className="px-3 py-1.5 rounded-lg text-xs outline-none"
             style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
           >
@@ -136,7 +142,7 @@ export default function Transactions() {
             </div>
           ) : (
             <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
-              {filtered.map(tx => {
+              {paginated.map(tx => {
                 const isNeg = NEGATIVE.includes(tx.transaction_type)
                 const color = TX_COLOR[tx.transaction_type] || '#8899AA'
                 return (
@@ -170,6 +176,11 @@ export default function Transactions() {
                   </div>
                 )
               })}
+            </div>
+          )}
+          {filtered.length > 0 && (
+            <div className="px-4 pb-3">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
             </div>
           )}
         </div>

@@ -78,6 +78,30 @@ async def create_deposit(
     )
 
 
+@router.get("/status/{order_id}")
+def deposit_status(
+    order_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return the status of a single deposit by order_id.
+    Used by the frontend to poll for payment confirmation without fetching the full list.
+    """
+    deposit = (
+        db.query(Deposit)
+        .filter_by(order_id=order_id, user_id=current_user.id)
+        .first()
+    )
+    if not deposit:
+        raise HTTPException(status_code=404, detail="Deposit not found.")
+    return {
+        "status":     deposit.status,
+        "order_id":   deposit.order_id,
+        "amount_usd": float(deposit.amount_usd),
+    }
+
+
 @router.get("", response_model=list[DepositOut])
 def list_deposits(
     db: Session = Depends(get_db),

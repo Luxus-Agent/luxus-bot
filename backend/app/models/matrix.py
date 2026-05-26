@@ -31,7 +31,10 @@ class MatrixPosition(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     agent_tier: Mapped[int] = mapped_column(Integer, nullable=False)
-    system_type: Mapped[SystemType] = mapped_column(Enum(SystemType), nullable=False)
+    system_type: Mapped[SystemType] = mapped_column(
+        Enum(SystemType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     position_number: Mapped[int] = mapped_column(Integer, nullable=False)
 
     l1_filled: Mapped[int] = mapped_column(Integer, default=0)
@@ -62,5 +65,8 @@ class MatrixCounter(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     agent_tier: Mapped[int] = mapped_column(Integer, nullable=False)
-    system_type: Mapped[SystemType] = mapped_column(Enum(SystemType), nullable=False)
+    system_type: Mapped[SystemType] = mapped_column(
+        Enum(SystemType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     next_position: Mapped[int] = mapped_column(Integer, default=1)

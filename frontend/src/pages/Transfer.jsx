@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
-import { Send, ShieldCheck, AlertCircle } from 'lucide-react'
+import { Send, ShieldCheck, AlertCircle, Wallet } from 'lucide-react'
 
 export default function Transfer() {
   const [step, setStep] = useState('form') // form | otp
@@ -11,6 +11,13 @@ export default function Transfer() {
   const [loading, setLoading] = useState(false)
   const [needsOtp, setNeedsOtp] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [accountBalance, setAccountBalance] = useState(0)
+
+  useEffect(() => {
+    api.get('/deposit/balance')
+      .then(r => setAccountBalance(parseFloat(r.data.account_balance) || 0))
+      .catch(() => {})
+  }, [])
 
   const handleTransfer = async (e) => {
     e.preventDefault()
@@ -30,6 +37,7 @@ export default function Transfer() {
       } else {
         toast.success(`$${amt.toFixed(2)} transferred to ${form.to_username}!`)
         setForm({ to_username: '', amount: '' })
+        api.get('/deposit/balance').then(r => setAccountBalance(parseFloat(r.data.account_balance) || 0)).catch(() => {})
       }
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Transfer failed')
@@ -52,6 +60,7 @@ export default function Transfer() {
       setOtp('')
       setPreview(null)
       setForm({ to_username: '', amount: '' })
+      api.get('/deposit/balance').then(r => setAccountBalance(parseFloat(r.data.account_balance) || 0)).catch(() => {})
     } catch (err) {
       toast.error(err.response?.data?.detail || 'OTP verification failed')
     } finally {
@@ -67,6 +76,18 @@ export default function Transfer() {
           <p className="text-sm mt-1" style={{ color: '#8899AA' }}>
             Send account balance to another user. 1% platform fee applies.
           </p>
+        </div>
+
+        {/* Account Balance Banner */}
+        <div
+          className="rounded-xl p-4 flex items-center justify-between"
+          style={{ background: '#141922', border: '1px solid rgba(0,212,180,0.2)' }}
+        >
+          <div>
+            <p className="text-xs" style={{ color: '#8899AA' }}>Account Balance</p>
+            <p className="text-xl font-bold" style={{ color: '#00D4B4' }}>${accountBalance.toFixed(2)}</p>
+          </div>
+          <Wallet size={22} style={{ color: '#00D4B4', opacity: 0.6 }} />
         </div>
 
         <div className="rounded-xl p-6" style={{ background: '#141922', border: '1px solid #1E2A38' }}>

@@ -30,7 +30,10 @@ class Transaction(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     agent_tier: Mapped[int] = mapped_column(Integer, nullable=False)
-    transaction_type: Mapped[TransactionType] = mapped_column(Enum(TransactionType), nullable=False)
+    transaction_type: Mapped[TransactionType] = mapped_column(
+        Enum(TransactionType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     amount: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
     reference_id: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
