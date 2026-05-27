@@ -3,6 +3,9 @@ import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Network, CheckCircle, Clock, Users } from 'lucide-react'
+import Pagination from '../components/Pagination'
+
+const PAGE_SIZE = 10
 
 const SYSTEM_TYPES = ['stream', 'boost']
 const SYSTEM_COLOR = { stream: '#3498DB', boost: '#9B59B6' }
@@ -87,6 +90,7 @@ export default function Matrix() {
   const [loading, setLoading] = useState(true)
   const [filterSystem, setFilterSystem] = useState('all')
   const [filterTier, setFilterTier] = useState('all')
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     api.get('/agents/matrix')
@@ -100,6 +104,8 @@ export default function Matrix() {
     if (filterTier !== 'all' && p.agent_tier !== parseInt(filterTier)) return false
     return true
   })
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const streamPositions = positions.filter(p => p.system_type === 'stream')
   const boostPositions  = positions.filter(p => p.system_type === 'boost')
@@ -169,7 +175,7 @@ export default function Matrix() {
         <div className="flex gap-2 flex-wrap">
           <select
             value={filterSystem}
-            onChange={e => setFilterSystem(e.target.value)}
+            onChange={e => { setFilterSystem(e.target.value); setPage(1) }}
             className="px-3 py-1.5 rounded-lg text-xs outline-none"
             style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
           >
@@ -179,7 +185,7 @@ export default function Matrix() {
           </select>
           <select
             value={filterTier}
-            onChange={e => setFilterTier(e.target.value)}
+            onChange={e => { setFilterTier(e.target.value); setPage(1) }}
             className="px-3 py-1.5 rounded-lg text-xs outline-none"
             style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
           >
@@ -199,10 +205,17 @@ export default function Matrix() {
             <p className="text-xs mt-1" style={{ color: '#4A5568' }}>Purchase an agent to enter the matrix</p>
           </div>
         ) : (
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {filtered.map(p => (
-              <MatrixCard key={p.id} position={p} systemType={p.system_type} />
-            ))}
+          <div>
+            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {paginated.map(p => (
+                <MatrixCard key={p.id} position={p} systemType={p.system_type} />
+              ))}
+            </div>
+            {totalPages > 1 && (
+              <div className="mt-4 rounded-xl px-4 py-1" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+                <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+              </div>
+            )}
           </div>
         )}
       </div>

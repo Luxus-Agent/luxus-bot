@@ -3,6 +3,7 @@ import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Bot, Zap, TrendingUp, Activity, CheckCircle, Clock, ShoppingCart } from 'lucide-react'
+import Pagination from '../components/Pagination'
 
 const TIERS = [
   {
@@ -27,11 +28,14 @@ const TIERS = [
   },
 ]
 
+const PAGE_SIZE = 10
+
 export default function AgentPurchase() {
   const [purchases, setPurchases] = useState([])
   const [accountBalance, setAccountBalance] = useState(0)
   const [loading, setLoading] = useState(true)
   const [purchasing, setPurchasing] = useState(null)
+  const [historyPage, setHistoryPage] = useState(1)
 
   useEffect(() => {
     Promise.all([
@@ -193,41 +197,57 @@ export default function AgentPurchase() {
         </div>
 
         {/* Purchase History */}
-        {purchases.length > 0 && (
-          <div>
-            <h2 className="font-semibold text-white mb-4">Purchase History</h2>
-            <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-              <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
-                {purchases.map(p => (
-                  <div key={p.id} className="flex items-center gap-3 px-4 py-3">
-                    <div
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0"
-                      style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }}
-                    >
-                      A{p.agent_tier}
+        {purchases.length > 0 && (() => {
+          const totalPages = Math.ceil(purchases.length / PAGE_SIZE)
+          const page = Math.min(historyPage, totalPages)
+          const paged = purchases.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+          return (
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-semibold text-white">Purchase History</h2>
+                <span className="text-xs" style={{ color: '#8899AA' }}>
+                  {purchases.length} total
+                </span>
+              </div>
+              <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+                <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+                  {paged.map(p => (
+                    <div key={p.id} className="flex items-center gap-3 px-4 py-3">
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0"
+                        style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }}
+                      >
+                        A{p.agent_tier}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white">Agent {p.agent_tier} — ${parseFloat(p.price).toFixed(2)}</p>
+                        <p className="text-xs" style={{ color: '#4A5568' }}>
+                          {new Date(p.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 flex-shrink-0"
+                        style={p.status === 'active'
+                          ? { background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }
+                          : { background: 'rgba(255,181,71,0.12)', color: '#FFB547' }
+                        }
+                      >
+                        {p.status === 'active' ? <CheckCircle size={11} /> : <Clock size={11} />}
+                        {p.status.toUpperCase()}
+                      </span>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white">Agent {p.agent_tier} — ${parseFloat(p.price).toFixed(2)}</p>
-                      <p className="text-xs" style={{ color: '#4A5568' }}>
-                        {new Date(p.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                    <span
-                      className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 flex-shrink-0"
-                      style={p.status === 'active'
-                        ? { background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }
-                        : { background: 'rgba(255,181,71,0.12)', color: '#FFB547' }
-                      }
-                    >
-                      {p.status === 'active' ? <CheckCircle size={11} /> : <Clock size={11} />}
-                      {p.status.toUpperCase()}
-                    </span>
+                  ))}
+                </div>
+
+                {purchases.length > 0 && (
+                  <div className="px-4 pb-3">
+                    <Pagination page={page} totalPages={totalPages} onChange={setHistoryPage} />
                   </div>
-                ))}
+                )}
               </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
       </div>
     </Layout>
   )

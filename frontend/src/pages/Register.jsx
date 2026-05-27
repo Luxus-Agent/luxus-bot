@@ -5,7 +5,6 @@ import Logo from '../components/Logo'
 import toast from 'react-hot-toast'
 import { Eye, EyeOff, UserPlus, CheckCircle, XCircle, Loader } from 'lucide-react'
 
-const Required = () => <span style={{ color: '#FF4D6A' }}> *</span>
 
 export default function Register() {
   const navigate = useNavigate()
@@ -98,18 +97,14 @@ export default function Register() {
 
         <div className="rounded-2xl p-8" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
           <h1 className="text-2xl font-bold text-white mb-1">Create Account</h1>
-          <p className="text-sm mb-1" style={{ color: '#8899AA' }}>Join Luxus — your sponsor's username is required</p>
-          <p className="text-xs mb-6" style={{ color: '#4A5568' }}>
-            Fields marked <span style={{ color: '#FF4D6A' }}>*</span> are required
-          </p>
+          <p className="text-sm mb-6" style={{ color: '#8899AA' }}>Join Luxus — all fields are required</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
 
             {/* Sponsor Username */}
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
-                Sponsor Username<Required />
-              </label>
+                Sponsor Username              </label>
               <input
                 type="text"
                 required
@@ -126,8 +121,7 @@ export default function Register() {
             {/* Email */}
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
-                Email<Required />
-              </label>
+                Email              </label>
               <input
                 type="email"
                 required
@@ -144,8 +138,7 @@ export default function Register() {
             {/* Username */}
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
-                Username<Required />
-              </label>
+                Username              </label>
               <div className="relative">
                 <input
                   type="text"
@@ -191,8 +184,7 @@ export default function Register() {
             {/* Password */}
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
-                Password<Required />
-              </label>
+                Password              </label>
               <div className="relative">
                 <input
                   type={showPw ? 'text' : 'password'}
@@ -219,8 +211,7 @@ export default function Register() {
             {/* Confirm Password */}
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
-                Confirm Password<Required />
-              </label>
+                Confirm Password              </label>
               <div className="relative">
                 <input
                   type={showConfirm ? 'text' : 'password'}

@@ -135,9 +135,23 @@ export default function Withdraw() {
   return (
     <Layout>
       <div className="space-y-6 fade-in">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Withdraw</h1>
-          <p className="text-sm mt-1" style={{ color: '#8899AA' }}>Send USDT to your BEP-20 wallet address</p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-white">Withdraw</h1>
+            <p className="text-sm mt-1" style={{ color: '#8899AA' }}>Send USDT to your BEP-20 wallet address</p>
+          </div>
+          <div
+            className="flex items-start gap-2 px-3 py-2 rounded-xl flex-shrink-0"
+            style={{ background: 'rgba(255,77,106,0.07)', border: '1px solid rgba(255,77,106,0.25)' }}
+          >
+            <AlertCircle size={14} style={{ color: '#FF4D6A' }} className="flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold leading-tight" style={{ color: '#FF4D6A' }}>BEP-20 Network Only</p>
+              <p className="text-xs mt-0.5 leading-tight" style={{ color: '#8899AA' }}>
+                Only use BEP-20 addresses.<br />Other networks = permanent loss.
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -448,12 +462,12 @@ export default function Withdraw() {
                   })}
                 </div>
               )}
+              {withdrawals.length > 0 && (
+                <div className="px-4 pb-3">
+                  <Pagination page={historyPage} totalPages={withdrawalPages} onChange={setHistoryPage} />
+                </div>
+              )}
             </div>
-            {withdrawals.length > 0 && (
-              <div className="px-4 pb-3" style={{ background: '#141922' }}>
-                <Pagination page={historyPage} totalPages={withdrawalPages} onChange={setHistoryPage} />
-              </div>
-            )}
           </div>
         )}
       </div>
