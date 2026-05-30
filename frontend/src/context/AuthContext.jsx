@@ -13,9 +13,9 @@ export function AuthProvider({ children }) {
     }
   })
 
-  const login = async (email, password) => {
+  const login = async (username, password) => {
     // Step 1: get token
-    const { data: tokenData } = await api.post('/auth/login', { email, password })
+    const { data: tokenData } = await api.post('/auth/login', { username, password })
     localStorage.setItem('token', tokenData.access_token)
 
     // Step 2: fetch full profile (includes is_admin, is_active, referral_code, etc.)

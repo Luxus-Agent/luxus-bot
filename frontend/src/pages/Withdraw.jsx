@@ -11,7 +11,6 @@ import Pagination from '../components/Pagination'
 
 const PAGE_SIZE = 10
 
-const TIER_LABELS = { 1: 'Agent 1 ($10)', 2: 'Agent 2 ($20)', 3: 'Agent 3 ($50)', 4: 'Agent 4 ($100)' }
 const STATUS_COLOR = { PENDING: '#FFB547', PROCESSING: '#3498DB', SENT: '#00D4B4', FAILED: '#FF4D6A' }
 const STATUS_ICON = { PENDING: Clock, PROCESSING: Clock, SENT: CheckCircle, FAILED: XCircle }
 
@@ -26,7 +25,7 @@ export default function Withdraw() {
   const [historyPage, setHistoryPage] = useState(1)
 
   // Withdrawal form
-  const [wForm, setWForm] = useState({ agent_tier: '1', amount: '', wallet_address: '' })
+  const [wForm, setWForm] = useState({ amount: '', wallet_address: '' })
   const [withdrawing, setWithdrawing] = useState(false)
 
   // Address form
@@ -48,24 +47,26 @@ export default function Withdraw() {
 
   useEffect(() => { load() }, [])
 
-  const mainWallet = (tier) => wallets.find(w => w.agent_tier === parseInt(tier) && w.wallet_type === 'main')
+  // Withdrawable balance = account balance + all earnings (every MAIN wallet)
+  const earnings = wallets
+    .filter(w => w.wallet_type === 'main')
+    .reduce((s, w) => s + parseFloat(w.balance || 0), 0)
   const accountBalance = parseFloat(wallets.find(w => w.wallet_type === 'account' && w.agent_tier === 0)?.balance || 0)
-  const selectedBalance = parseFloat(mainWallet(wForm.agent_tier)?.balance || 0)
+  const withdrawable = accountBalance + earnings
 
   const handleWithdraw = async (e) => {
     e.preventDefault()
     const amt = parseFloat(wForm.amount)
     if (amt < 10) { toast.error('Minimum withdrawal is $10'); return }
-    if (amt > selectedBalance) { toast.error('Insufficient balance'); return }
+    if (amt > withdrawable) { toast.error('Insufficient balance'); return }
     setWithdrawing(true)
     try {
       await api.post('/wallet/withdraw', {
-        agent_tier: parseInt(wForm.agent_tier),
         amount: amt,
         wallet_address: wForm.wallet_address,
       })
       toast.success('Withdrawal initiated!')
-      setWForm({ agent_tier: '1', amount: '', wallet_address: '' })
+      setWForm({ amount: '', wallet_address: '' })
       load()
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Withdrawal failed')
@@ -184,8 +185,11 @@ export default function Withdraw() {
               style={{ background: '#141922', border: '1px solid rgba(0,212,180,0.2)' }}
             >
               <div>
-                <p className="text-xs" style={{ color: '#8899AA' }}>Account Balance</p>
-                <p className="text-xl font-bold" style={{ color: '#00D4B4' }}>${accountBalance.toFixed(2)}</p>
+                <p className="text-xs" style={{ color: '#8899AA' }}>Withdrawable Balance</p>
+                <p className="text-xl font-bold" style={{ color: '#00D4B4' }}>${withdrawable.toFixed(2)}</p>
+                <p className="text-xs mt-0.5" style={{ color: '#4A5568' }}>
+                  ${accountBalance.toFixed(2)} balance + ${earnings.toFixed(2)} earnings
+                </p>
               </div>
               <Wallet size={22} style={{ color: '#00D4B4', opacity: 0.6 }} />
             </div>
@@ -207,25 +211,6 @@ export default function Withdraw() {
 
             <div className="rounded-xl p-6" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
               <form onSubmit={handleWithdraw} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>Agent Tier</label>
-                  <select
-                    value={wForm.agent_tier}
-                    onChange={e => setWForm(f => ({ ...f, agent_tier: e.target.value, amount: '' }))}
-                    className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                    style={inputStyle}
-                    onFocus={e => e.target.style.borderColor = '#00D4B4'}
-                    onBlur={e => e.target.style.borderColor = '#1E2A38'}
-                  >
-                    {[1, 2, 3, 4].map(t => (
-                      <option key={t} value={t}>{TIER_LABELS[t]}</option>
-                    ))}
-                  </select>
-                  <p className="text-xs mt-1" style={{ color: '#4A5568' }}>
-                    Available: <span className="text-white font-medium">${selectedBalance.toFixed(2)}</span>
-                  </p>
-                </div>
-
                 <div>
                   <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>Amount (USD)</label>
                   <div className="relative">
@@ -385,7 +370,7 @@ export default function Withdraw() {
             {/* Addresses List */}
             {addresses.length > 0 && (
               <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-                <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+                <div className="row-divide">
                   {addresses.map(addr => (
                     <div key={addr.id} className="flex items-center gap-3 px-4 py-3">
                       <Wallet size={18} style={{ color: addr.is_verified ? '#00D4B4' : '#4A5568' }} className="flex-shrink-0" />
@@ -431,7 +416,7 @@ export default function Withdraw() {
                   <p className="text-sm">No withdrawals yet</p>
                 </div>
               ) : (
-                <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+                <div className="row-divide">
                   {paginatedWithdrawals.map(w => {
                     const Icon = STATUS_ICON[w.status] || Clock
                     const color = STATUS_COLOR[w.status] || '#8899AA'
@@ -453,7 +438,7 @@ export default function Withdraw() {
                               {w.wallet_address.slice(0, 14)}...{w.wallet_address.slice(-8)}
                             </p>
                             <p className="text-xs mt-0.5" style={{ color: '#4A5568' }}>
-                              Agent {w.agent_tier} • {new Date(w.created_at).toLocaleString()}
+                              {new Date(w.created_at).toLocaleString()}
                             </p>
                           </div>
                         </div>

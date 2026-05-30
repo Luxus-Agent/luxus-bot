@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_platform_active
 from app.core.wallet_ops import debit_account, get_account_balance
 from app.database import get_db
 from app.models.agent import AgentPurchase, AGENT_TIER_PRICES
@@ -35,14 +35,15 @@ VALID_TIERS = set(AGENT_TIER_PRICES.keys())
 def purchase_agent(
     payload: PurchaseRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_platform_active),
 ):
     """
     Purchase an AI Agent tier using your account balance.
 
     Requirements:
       - Account balance must be >= agent price
-      - Multiple purchases of the same tier are allowed
+      - Each tier can be purchased only once
+      - Tiers must be purchased in order: 1 → 2 → 3 → 4 (cannot skip ahead)
 
     On success the purchase is queued for immediate activation via Celery.
     """
@@ -50,6 +51,34 @@ def purchase_agent(
         raise HTTPException(
             status_code=400,
             detail=f"Invalid agent tier. Choose from: {sorted(VALID_TIERS)}",
+        )
+
+    # One purchase per tier, and tiers must be bought in order (1 → 2 → 3 → 4).
+    # A tier counts as "owned" the moment it is purchased (pending or active).
+    # NOTE: this gate applies only to manual purchases. Auto-repurchase calls
+    # activate_purchase directly (not this endpoint), so it is intentionally exempt.
+    owned_tiers = {
+        row.agent_tier
+        for row in db.query(AgentPurchase.agent_tier)
+        .filter(AgentPurchase.user_id == current_user.id)
+        .all()
+    }
+
+    if payload.agent_tier in owned_tiers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You already own Agent {payload.agent_tier}. Each agent tier can only be purchased once.",
+        )
+
+    missing_lower = [t for t in range(1, payload.agent_tier) if t not in owned_tiers]
+    if missing_lower:
+        next_tier = missing_lower[0]
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Agents must be purchased in order. "
+                f"Purchase Agent {next_tier} before Agent {payload.agent_tier}."
+            ),
         )
 
     price = Decimal(str(AGENT_TIER_PRICES[payload.agent_tier]))

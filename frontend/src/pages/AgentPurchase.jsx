@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
-import { Bot, Zap, TrendingUp, Activity, CheckCircle, Clock, ShoppingCart } from 'lucide-react'
-import Pagination from '../components/Pagination'
+import { Bot, Zap, TrendingUp, Activity, CheckCircle, ShoppingCart } from 'lucide-react'
 
 const TIERS = [
   {
@@ -28,14 +27,11 @@ const TIERS = [
   },
 ]
 
-const PAGE_SIZE = 10
-
 export default function AgentPurchase() {
   const [purchases, setPurchases] = useState([])
   const [accountBalance, setAccountBalance] = useState(0)
   const [loading, setLoading] = useState(true)
   const [purchasing, setPurchasing] = useState(null)
-  const [historyPage, setHistoryPage] = useState(1)
 
   useEffect(() => {
     Promise.all([
@@ -48,6 +44,14 @@ export default function AgentPurchase() {
   }, [])
 
   const handlePurchase = async (tierId, price) => {
+    if (isOwned(tierId)) {
+      toast.error(`You already own Agent ${tierId}. Each agent can be purchased once.`)
+      return
+    }
+    if (!isUnlocked(tierId)) {
+      toast.error(`Purchase Agent ${tierId - 1} before Agent ${tierId}.`)
+      return
+    }
     if (accountBalance < price) {
       toast.error(`Insufficient balance. You need $${price} but have $${accountBalance.toFixed(2)}`)
       return
@@ -67,7 +71,12 @@ export default function AgentPurchase() {
     }
   }
 
-  const tierCount = (tier) => purchases.filter(p => p.agent_tier === tier && p.status === 'active').length
+  // One purchase per tier, bought in order. A tier is "owned" once a purchase
+  // record exists (pending or active); the next tier unlocks only after the
+  // previous one is owned.
+  const ownedTiers = new Set(purchases.map(p => p.agent_tier))
+  const isOwned = (tier) => ownedTiers.has(tier)
+  const isUnlocked = (tier) => tier === 1 || ownedTiers.has(tier - 1)
 
   if (loading) return (
     <Layout>
@@ -101,15 +110,14 @@ export default function AgentPurchase() {
           <p className="text-sm font-semibold text-white mb-3">Revenue Split on Every Purchase</p>
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: 'Core Agent', pct: '60%', desc: '30% sponsor + 30% supreme', icon: Zap, color: '#00D4B4' },
-              { label: 'Stream Agent', pct: '30%', desc: '3×3 matrix queue', icon: TrendingUp, color: '#3498DB' },
-              { label: 'Boost Agent', pct: '10%', desc: '3×3 matrix queue', icon: Activity, color: '#9B59B6' },
-            ].map(({ label, pct, desc, icon: Icon, color }) => (
+              { label: 'Core Agent', pct: '60%', icon: Zap, color: '#00D4B4' },
+              { label: 'Stream Agent', pct: '30%', icon: TrendingUp, color: '#3498DB' },
+              { label: 'Boost Agent', pct: '10%', icon: Activity, color: '#9B59B6' },
+            ].map(({ label, pct, icon: Icon, color }) => (
               <div key={label} className="rounded-lg p-3 text-center" style={{ background: '#0E1117' }}>
                 <Icon size={18} className="mx-auto mb-1" style={{ color }} />
                 <p className="text-xs font-bold" style={{ color }}>{pct}</p>
                 <p className="text-xs font-medium text-white">{label}</p>
-                <p className="text-xs mt-0.5" style={{ color: '#4A5568' }}>{desc}</p>
               </div>
             ))}
           </div>
@@ -118,9 +126,11 @@ export default function AgentPurchase() {
         {/* Agent Tier Cards */}
         <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {TIERS.map(tier => {
-            const count = tierCount(tier.id)
+            const owned = isOwned(tier.id)
+            const unlocked = isUnlocked(tier.id)
             const canAfford = accountBalance >= tier.price
             const isBuying = purchasing === tier.id
+            const disabled = owned || !unlocked || !canAfford || isBuying
             return (
               <div
                 key={tier.id}
@@ -136,12 +146,19 @@ export default function AgentPurchase() {
                     >
                       <Bot size={20} style={{ color: tier.color }} />
                     </div>
-                    {count > 0 && (
+                    {owned ? (
                       <span
                         className="text-xs px-2 py-0.5 rounded-full font-semibold"
                         style={{ background: `${tier.color}20`, color: tier.color }}
                       >
-                        {count}x ACTIVE
+                        OWNED
+                      </span>
+                    ) : !unlocked && (
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                        style={{ background: '#1E2A38', color: '#4A5568' }}
+                      >
+                        LOCKED
                       </span>
                     )}
                   </div>
@@ -169,23 +186,27 @@ export default function AgentPurchase() {
                 <div className="px-4 pb-4">
                   <button
                     onClick={() => handlePurchase(tier.id, tier.price)}
-                    disabled={isBuying || !canAfford}
+                    disabled={disabled}
                     className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
                     style={{
-                      background: isBuying ? `${tier.color}40` : canAfford ? tier.color : '#1E2A38',
-                      color: canAfford && !isBuying ? '#000' : '#4A5568',
-                      cursor: isBuying || !canAfford ? 'not-allowed' : 'pointer',
+                      background: isBuying ? `${tier.color}40` : (owned ? `${tier.color}20` : (unlocked && canAfford ? tier.color : '#1E2A38')),
+                      color: owned ? tier.color : (unlocked && canAfford && !isBuying ? '#000' : '#4A5568'),
+                      cursor: disabled ? 'not-allowed' : 'pointer',
                     }}
                   >
                     {isBuying ? (
                       <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    ) : owned ? (
+                      <><CheckCircle size={14} /> Owned</>
+                    ) : !unlocked ? (
+                      <>Buy Agent {tier.id - 1} first</>
                     ) : !canAfford ? (
                       <>Insufficient Balance</>
                     ) : (
                       <><ShoppingCart size={14} /> Purchase</>
                     )}
                   </button>
-                  {!canAfford && (
+                  {!owned && unlocked && !canAfford && (
                     <p className="text-xs mt-1.5 text-center" style={{ color: '#4A5568' }}>
                       Need ${(tier.price - accountBalance).toFixed(2)} more
                     </p>
@@ -195,59 +216,6 @@ export default function AgentPurchase() {
             )
           })}
         </div>
-
-        {/* Purchase History */}
-        {purchases.length > 0 && (() => {
-          const totalPages = Math.ceil(purchases.length / PAGE_SIZE)
-          const page = Math.min(historyPage, totalPages)
-          const paged = purchases.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-          return (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-semibold text-white">Purchase History</h2>
-                <span className="text-xs" style={{ color: '#8899AA' }}>
-                  {purchases.length} total
-                </span>
-              </div>
-              <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-                <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
-                  {paged.map(p => (
-                    <div key={p.id} className="flex items-center gap-3 px-4 py-3">
-                      <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0"
-                        style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }}
-                      >
-                        A{p.agent_tier}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white">Agent {p.agent_tier} — ${parseFloat(p.price).toFixed(2)}</p>
-                        <p className="text-xs" style={{ color: '#4A5568' }}>
-                          {new Date(p.created_at).toLocaleString()}
-                        </p>
-                      </div>
-                      <span
-                        className="text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 flex-shrink-0"
-                        style={p.status === 'active'
-                          ? { background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }
-                          : { background: 'rgba(255,181,71,0.12)', color: '#FFB547' }
-                        }
-                      >
-                        {p.status === 'active' ? <CheckCircle size={11} /> : <Clock size={11} />}
-                        {p.status.toUpperCase()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {purchases.length > 0 && (
-                  <div className="px-4 pb-3">
-                    <Pagination page={page} totalPages={totalPages} onChange={setHistoryPage} />
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-        })()}
       </div>
     </Layout>
   )

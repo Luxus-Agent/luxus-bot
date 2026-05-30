@@ -50,12 +50,15 @@ class MatrixPositionOut(BaseModel):
     l3_paid: bool
     completed: bool
     reentry_count: int
+    is_dummy: bool = False
 
     model_config = {"from_attributes": True}
 
 
 class WithdrawalIn(BaseModel):
-    agent_tier: int
+    # Withdrawals draw from the user's combined earnings (all MAIN wallets), so a
+    # tier is no longer required. Kept optional for backward compatibility; 0 = combined.
+    agent_tier: int = 0
     amount: Decimal
     wallet_address: str
 
@@ -239,3 +242,41 @@ class AdminWalletDebitIn(BaseModel):
         if v <= 0:
             raise ValueError("amount must be positive")
         return v
+
+
+class AdminGenerateIn(BaseModel):
+    amount: Decimal
+
+    @field_validator("amount")
+    @classmethod
+    def amount_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("amount must be greater than zero")
+        return v
+
+
+class AdminTransferIn(BaseModel):
+    to_username: str
+    amount: Decimal
+
+    @field_validator("amount")
+    @classmethod
+    def amount_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("amount must be greater than zero")
+        return v
+
+
+class PlatformFreezeIn(BaseModel):
+    # Optional note explaining why the platform was frozen (stored for the audit trail).
+    reason: str | None = None
+
+
+class PlatformStatusOut(BaseModel):
+    is_frozen: bool
+    frozen_reason: str | None = None
+    frozen_by: int | None = None
+    frozen_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}

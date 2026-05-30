@@ -166,13 +166,41 @@ def get_me(
     }
 
 
+@router.get("/referrals")
+def get_direct_referrals(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Direct referrals = users who registered using this user's username as their
+    sponsor (i.e. sponsor_id == current_user.id). Returns the count and a list.
+    """
+    referrals = (
+        db.query(User)
+        .filter(User.sponsor_id == current_user.id)
+        .order_by(User.created_at.desc())
+        .all()
+    )
+    return {
+        "count": len(referrals),
+        "referrals": [
+            {
+                "username": r.username,
+                "is_active": r.is_active,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in referrals
+        ],
+    }
+
+
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: UserLogin, db: Session = Depends(get_db)):
-    user = db.query(User).filter_by(email=payload.email).first()
+    user = db.query(User).filter_by(username=payload.username).first()
     if not user or not verify_password(payload.password, user.password_hash):
-        logger.warning("AUTH login_failed: invalid credentials email=%s", payload.email)
+        logger.warning("AUTH login_failed: invalid credentials username=%s", payload.username)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_email_verified:
         logger.warning("AUTH login_failed: email not verified user_id=%d email=%s", user.id, user.email)

@@ -40,9 +40,11 @@ Payout amounts (Agent 1 / $10 base — higher Stream tiers scale by multiplier):
         All re-entries (from Stream and Boost) enter this same single Boost queue.
         Re-entries in the Boost queue are NOT dummy — they receive full payouts.
 
-Re-entry destination:
-  Stream re-entries → placed into BOOST (not back into Stream)
-  Boost  re-entries → placed back into BOOST
+Re-entry destination (each queue self-cycles — per the client matrix diagram
+  A · B · C · D · A1 · E · F · B1 · …, where A1/B1/… are re-entries rejoining the
+  same queue at the next breadth-first slot):
+  Stream re-entries → placed back into the SAME tier's Stream queue as DUMMY slots
+  Boost  re-entries → placed back into the single Boost queue as REAL slots
 
 Re-entry count scaling (Stream only):
   reentry_count = base_count × tier_multiplier
@@ -50,9 +52,10 @@ Re-entry count scaling (Stream only):
        Agent 3 (5×): L1=5, L2=10, L3=15
        Agent 4 (10×): L1=10, L2=20, L3=30
 
-Stream re-entries in the Boost queue: NOT dummy (receive full payouts when their
-  Boost level fills). Only Stream queue itself uses dummy re-entries to keep one
-  active entry at a time.
+Dummy positions (Stream re-entries) fill slots to push the real members above them
+  toward their next level completion, but they themselves earn no wallet payout and
+  spawn no further re-entries. Only one real Stream entry exists per user at a time.
+  Boost positions (including re-entries) are all real and receive full payouts.
 
 Concurrency safety
 ------------------

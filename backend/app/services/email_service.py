@@ -133,13 +133,6 @@ def send_agent_activated_email(email: str, username: str, agent_tier: int, price
         <h2 style="color: #1a1a2e; margin-top: 0;">Your Agent is Active!</h2>
         <p>Hi <strong>{username}</strong>,</p>
         <p>Your payment was confirmed and <strong>{tier_label}</strong> is now active.</p>
-        <div style="background-color: #f0fdf4; border-left: 4px solid #10B981;
-                    padding: 16px; margin: 24px 0; border-radius: 4px;">
-            <p style="margin: 0; color: #065f46; font-weight: bold;">Revenue engine running</p>
-            <p style="margin: 8px 0 0; color: #065f46;">
-                60% → ProActive &nbsp;|&nbsp; 30% → Proportion matrix &nbsp;|&nbsp; 10% → Speculation matrix
-            </p>
-        </div>
         <p>Log in to your dashboard to track your matrix position, wallet balance,
            and incoming payouts.</p>
     """)

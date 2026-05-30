@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { UserLayout as Layout } from '../components/Layout'
+import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 import toast from 'react-hot-toast'
-import { Send, ShieldCheck, AlertCircle, Wallet } from 'lucide-react'
+import { Send, ShieldCheck, AlertCircle, Wallet, CheckCircle, XCircle, Loader } from 'lucide-react'
 
 export default function Transfer() {
   const [step, setStep] = useState('form') // form | otp
@@ -12,6 +13,9 @@ export default function Transfer() {
   const [needsOtp, setNeedsOtp] = useState(false)
   const [preview, setPreview] = useState(null)
   const [accountBalance, setAccountBalance] = useState(0)
+  const { user } = useAuth()
+  const [recipientStatus, setRecipientStatus] = useState(null) // null | checking | found | notfound | self
+  const debounceRef = useRef(null)
 
   useEffect(() => {
     api.get('/deposit/balance')
@@ -19,8 +23,32 @@ export default function Transfer() {
       .catch(() => {})
   }, [])
 
+  // Live recipient validation — debounced existence check (recipient must exist)
+  useEffect(() => {
+    const name = form.to_username.trim()
+    if (!name) { setRecipientStatus(null); return }
+    if (user && name.toLowerCase() === user.username.toLowerCase()) {
+      setRecipientStatus('self'); return
+    }
+    setRecipientStatus('checking')
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const { data } = await api.get(`/auth/check-username?username=${encodeURIComponent(name)}`)
+        // available === true => username is free => the user does NOT exist
+        setRecipientStatus(data.available ? 'notfound' : 'found')
+      } catch {
+        setRecipientStatus(null)
+      }
+    }, 500)
+    return () => clearTimeout(debounceRef.current)
+  }, [form.to_username, user])
+
   const handleTransfer = async (e) => {
     e.preventDefault()
+    if (recipientStatus === 'self') { toast.error('You cannot transfer to yourself'); return }
+    if (recipientStatus === 'notfound') { toast.error('That username does not exist'); return }
+    if (recipientStatus === 'checking') { toast.error('Still checking the username — please wait'); return }
     const amt = parseFloat(form.amount)
     if (amt < 1) { toast.error('Minimum transfer is $1'); return }
     setLoading(true)
@@ -95,17 +123,44 @@ export default function Transfer() {
             <form onSubmit={handleTransfer} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>Recipient Username</label>
-                <input
-                  type="text"
-                  required
-                  value={form.to_username}
-                  onChange={e => setForm(f => ({ ...f, to_username: e.target.value }))}
-                  placeholder="Enter username"
-                  className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-                  style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
-                  onFocus={e => e.target.style.borderColor = '#00D4B4'}
-                  onBlur={e => e.target.style.borderColor = '#1E2A38'}
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    value={form.to_username}
+                    onChange={e => setForm(f => ({ ...f, to_username: e.target.value }))}
+                    placeholder="Enter username"
+                    className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                    style={{
+                      background: '#0E1117', color: '#fff', paddingRight: '2.75rem',
+                      border: `1px solid ${
+                        recipientStatus === 'found' ? '#00D4B4'
+                        : (recipientStatus === 'notfound' || recipientStatus === 'self') ? '#FF4D6A'
+                        : '#1E2A38'
+                      }`,
+                    }}
+                  />
+                  {recipientStatus === 'checking' && (
+                    <Loader size={16} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin" style={{ color: '#8899AA' }} />
+                  )}
+                  {recipientStatus === 'found' && (
+                    <CheckCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: '#00D4B4' }} />
+                  )}
+                  {(recipientStatus === 'notfound' || recipientStatus === 'self') && (
+                    <XCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2" style={{ color: '#FF4D6A' }} />
+                  )}
+                </div>
+                {recipientStatus === 'found' && (
+                  <p className="text-xs mt-1" style={{ color: '#00D4B4' }}>User found</p>
+                )}
+                {recipientStatus === 'notfound' && (
+                  <p className="text-xs mt-1" style={{ color: '#FF4D6A' }}>No user with that username</p>
+                )}
+                {recipientStatus === 'self' && (
+                  <p className="text-xs mt-1" style={{ color: '#FF4D6A' }}>You can't transfer to yourself</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>Amount (USD)</label>
@@ -150,21 +205,26 @@ export default function Transfer() {
                 <span>First transfer to a new recipient requires email OTP verification</span>
               </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
-                style={{
-                  background: loading ? 'rgba(0,212,180,0.3)' : '#00D4B4',
-                  color: loading ? '#8899AA' : '#000',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {loading
-                  ? <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                  : <><Send size={14} /> Send Transfer</>
-                }
-              </button>
+              {(() => {
+                const blocked = loading || recipientStatus === 'notfound' || recipientStatus === 'self' || recipientStatus === 'checking'
+                return (
+                  <button
+                    type="submit"
+                    disabled={blocked}
+                    className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+                    style={{
+                      background: blocked ? 'rgba(0,212,180,0.3)' : '#00D4B4',
+                      color: blocked ? '#8899AA' : '#000',
+                      cursor: blocked ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {loading
+                      ? <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                      : <><Send size={14} /> Send Transfer</>
+                    }
+                  </button>
+                )
+              })()}
             </form>
           ) : (
             <form onSubmit={handleVerify} className="space-y-4">

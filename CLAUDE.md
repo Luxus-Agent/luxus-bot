@@ -40,28 +40,31 @@ agent-revenue-sharing-platform/
 │   │   │   ├── wallet.py        # Wallet (MAIN + REPURCHASE + ACCOUNT types)
 │   │   │   ├── transaction.py   # Transaction ledger (TransactionType enum)
 │   │   │   ├── deposit.py       # Deposit (account balance top-up via NOWPayments)
-│   │   │   └── withdrawal.py    # WithdrawalRequest (instant BEP-20 payout)
+│   │   │   ├── withdrawal.py    # WithdrawalRequest (instant BEP-20 payout)
+│   │   │   └── platform_setting.py # Single-row platform state (global freeze kill switch)
 │   │   ├── core/
 │   │   │   ├── matrix_engine.py # 3x3 forced matrix + sponsor milestones (Stream + Boost)
 │   │   │   ├── proactive.py     # Core Agent: 30% sponsor + 30% supreme, odd/even routing
 │   │   │   ├── revenue_split.py # 60/30/10 split → core / stream / boost
-│   │   │   ├── wallet_ops.py    # credit/debit_wallet() + credit/debit_account()
+│   │   │   ├── wallet_ops.py    # credit/debit_wallet() + credit/debit_account() + withdrawable/earnings
+│   │   │   ├── platform_state.py # Freeze get/set helpers
 │   │   │   └── security.py      # JWT + password hashing
 │   │   ├── services/
 │   │   │   ├── nowpayments.py   # Deposit invoices, IPN verify, payout API
 │   │   │   └── email_service.py # SMTP email — OTP, activation, withdrawal notifications
 │   │   ├── workers/
 │   │   │   ├── celery_app.py    # Celery + Redis setup
-│   │   │   └── tasks.py         # activate → payout → re-entry(BOOST) → withdrawal
+│   │   │   └── tasks.py         # activate → payout → re-entry (Stream=dummy same queue / Boost=real) → withdrawal
 │   │   ├── schemas/
-│   │   │   ├── user.py          # Register (sponsor_username required), Login, OTP, reset
-│   │   │   └── agent.py         # Purchase, Deposit, Transfer, Wallet, Withdrawal schemas
+│   │   │   ├── user.py          # Register (sponsor_username), Login (username+password), OTP, reset
+│   │   │   └── agent.py         # Purchase, Deposit, Transfer, Wallet, Withdrawal, Admin treasury/freeze schemas
 │   │   └── api/
-│   │       ├── auth.py          # register / check-username / verify-email / login / forgot & reset
-│   │       ├── agents.py        # purchase (from balance, multiple per tier) / matrix view
-│   │       ├── wallet.py        # balances / transactions / withdraw / withdrawals list
+│   │       ├── auth.py          # register / check-username / verify-email / login (username) / forgot & reset
+│   │       ├── agents.py        # purchase (from balance, one per tier, sequential 1→2→3→4) / matrix view
+│   │       ├── wallet.py        # balances / transactions / income-daily / withdraw (combined balance) / withdrawals
 │   │       ├── deposit.py       # account balance / create deposit / transfer / refund
-│   │       ├── admin.py         # admin-only: users, wallets, transactions, freeze/unfreeze
+│   │       ├── admin.py         # admin-only: users + summary, transactions, withdrawals, freeze/unfreeze, treasury (generate/transfer), platform freeze
+│   │       ├── platform.py      # GET /platform/status (freeze state for any logged-in user)
 │   │       └── payments.py      # NOWPayments IPN webhook
 │   ├── create_tables.py         # One-time DB table creation (run once on fresh setup)
 ├── .env                         # Local secrets (never commit)
@@ -100,7 +103,7 @@ Tables: `users`, `agent_purchases`, `matrix_positions`, `matrix_counters`, `wall
 1. POST /auth/register          → creates user (sponsor_username REQUIRED), sends OTP
    GET  /auth/check-username    → real-time username availability check (used by register form)
 2. POST /auth/verify-email      → verifies OTP, marks email as verified
-3. POST /auth/login             → returns JWT (blocked until email is verified)
+3. POST /auth/login             → login with USERNAME + password → returns JWT (blocked until email is verified)
 
 Password reset:
 4. POST /auth/forgot-password   → sends reset OTP (1h expiry)
@@ -175,8 +178,7 @@ Remaining pool after payouts + re-entries + sponsor milestone → **platform pro
 **Tier multipliers:** Agent 1 = 1×, Agent 2 = 2×, Agent 3 = 5×, Agent 4 = 10×
 (wallet amounts and re-entry counts both scale by multiplier)
 
-**Re-entry rule:** All Stream re-entries go into the **Boost** queue (not back into Stream).
-Only one real entry per user in the Stream queue at a time — re-entries are **dummy** (fill slots, no payout).
+**Re-entry rule:** Stream re-entries are **dummy** positions placed back into the **same tier's Stream queue** (per the client matrix diagram `A·B·C·D·A1·E·F·B1·…`). They fill slots to advance the queue, earn no payout, and spawn no further re-entries. Only one real entry per user in the Stream queue at a time. Stream does **not** feed Boost.
 
 ### Boost Agent (10%) — formerly Speculation
 Uses the same 3x3 matrix format. **Single global queue** (no per-tier split). Always placed at `agent_tier=1`.
@@ -189,9 +191,9 @@ Uses the same 3x3 matrix format. **Single global queue** (no per-tier split). Al
 
 Remaining pool after payouts → **platform profit**.
 
-**Key difference from Stream:** Boost Agent positions are **NOT dummy** — all positions (including re-entries from Stream and Boost) receive full wallet payouts when their level fills.
+**Key difference from Stream:** Boost Agent positions are **NOT dummy** — all positions (including Boost's own re-entries) receive full wallet payouts when their level fills.
 
-**Re-entry rule:** All re-entries (from both Stream and Boost) go back into the single Boost queue as real (non-dummy) positions.
+**Re-entry rule:** Boost re-entries are real (non-dummy) positions placed back into the single Boost queue. (Stream no longer feeds Boost — each queue self-cycles its own re-entries.)
 
 ### Wallet rule
 Every income credit → two separate 10% deductions:
@@ -328,16 +330,21 @@ Safe to re-run — exits early if an admin already exists.
 - **Withdrawal addresses must be pre-verified** — register via `POST /wallet/address`, confirm OTP via `POST /wallet/address/verify`.
 - **Transfer fee is 1%** — sender debited full amount; recipient receives 99%.
 - **First-time transfer to a new recipient requires email OTP.**
-- **Multiple agents per tier allowed** — users can purchase the same tier multiple times.
+- **One purchase per tier, bought in order** — each tier can be purchased only once, and tiers must be bought sequentially 1 → 2 → 3 → 4 (cannot skip ahead). Auto-repurchase is the only exception (it activates a tier directly, bypassing this gate).
 - **Inactive sponsors are skipped** in Core Agent routing — income passes to supreme sponsor or goes to platform.
-- **Stream re-entries are dummy** — they fill matrix slots but do not receive wallet payouts. Only one real Stream entry per user at a time.
-- **Boost re-entries are NOT dummy** — all positions in the Boost queue (including re-entries from Stream/Boost) receive full payouts when their level fills.
+- **Stream re-entries are dummy** — they are placed back into the **same tier's Stream queue**, fill matrix slots, do not receive wallet payouts, and spawn no further re-entries. Only one real Stream entry per user at a time.
+- **Boost re-entries are NOT dummy** — all positions in the Boost queue (including Boost's own re-entries) receive full payouts when their level fills.
 - **Re-entry count scales by tier multiplier** for Stream Agent (Agent 2 = 2×, Agent 3 = 5×, Agent 4 = 10×).
-- **All re-entries go into the single Boost queue** at agent_tier=1, regardless of source tier.
+- **Each queue self-cycles its own re-entries:** Stream re-entries (dummy) re-enter the same tier's Stream queue; Boost re-entries (real) re-enter the single Boost queue at agent_tier=1. Stream does not feed Boost.
 - **Auto-repurchase:** when REPURCHASE wallet >= tier price, a new purchase is auto-activated via Celery.
 - **Two separate 10% deductions** on every wallet credit: 10% software fee (platform profit) + 10% repurchase reserve. Effective user take = 81% of gross income credited.
 - **`/deposit/balance` returns `{ "account_balance": float }`** — use key `account_balance`, not `balance`.
-- **Admin access:** created via `seed_admin.py`. Admin endpoints at `/admin/*`. Admin logs in through the same `/login` page and is routed to `/admin` automatically.
-- **Frontend auth:** two-step login — POST `/auth/login` for JWT, then GET `/auth/me` for full profile (includes `is_admin`).
+- **Login is by username + password** (not email) — for both regular users and admin. `UserLogin` takes `username`; the frontend Login form has a Username field.
+- **Admin access:** created via `seed_admin.py`. Admin endpoints at `/admin/*`. Admin logs in through the same `/login` page and is routed to `/admin` automatically. Admin pages (including Profile) render the admin sidebar.
+- **Frontend auth:** two-step login — POST `/auth/login` (username + password) for JWT, then GET `/auth/me` for full profile (includes `is_admin`).
+- **Platform freeze (global kill switch):** admin can freeze all user money-movement (deposit / withdraw / transfer / purchase) via `POST /admin/platform/freeze` (reason optional, admin-only) and lift it via `POST /admin/platform/unfreeze`. While frozen, guarded user endpoints return HTTP 423; admins bypass. State lives in the single-row `platform_settings` table. Users poll `GET /platform/status` (no reason exposed); admins read `GET /admin/platform/status` (full audit). Frontend shows a red banner + a Freeze/Frozen toggle in the admin top bar.
+- **Admin Treasury (separate from user flows):** `POST /admin/generate` mints funds into the admin's own account balance (for off-platform payments — cash/GPay/cheque/crypto, NOT a deposit); `POST /admin/transfer` sends treasury funds to any user by username (no fee, instant); `GET /admin/treasury/summary` returns account_balance / total_generated / total_sent / total_invested / total_deposited. Admin nav has a Treasury group (Generate, Send to User) and no longer reuses the user Wallet/Withdraw pages.
+- **Admin user management:** per-user expandable summary (agents bought, account balance, revenue generated) via `GET /admin/users/{id}/summary`; freeze/unfreeze per user; no credit/debit wallet UI; admin's own row shows no controls. `GET /admin/transactions` resolves each transaction's owner username.
+- **Transfer recipient validation:** both user and admin transfer forms validate the recipient username live (debounced, via `GET /auth/check-username`) — the recipient must exist; self-transfer is blocked client-side.
 - **bcrypt pinned to 4.0.1** — bcrypt 5.x breaks passlib's 72-byte wrap detection; do not upgrade.
 - `ACCOUNT_TIER = 0` is the sentinel agent_tier used for the account balance wallet.

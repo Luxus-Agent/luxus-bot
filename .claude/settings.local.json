@@ -9,7 +9,8 @@
       "Read(//c/Users/Shamlatech/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/17e3c3e0-8811-4b35-aae4-c76b9b24c5c9/79227e8f-7243-450e-8121-e90bb7b52a25/skills/docx/**)",
       "Bash(pandoc \"C:\\\\Users\\\\Shamlatech\\\\Downloads\\\\Luxus \\(2\\).docx\" -t markdown)",
       "Bash(python -c ' *)",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(/opt/homebrew/Caskroom/miniconda/base/envs/luxus/bin/python -c \"import ast; ast.parse\\(open\\('app/services/email_service.py'\\).read\\(\\)\\); print\\('email_service.py: syntax OK'\\)\")"
     ]
   }
 }

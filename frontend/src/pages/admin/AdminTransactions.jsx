@@ -33,7 +33,11 @@ export default function AdminTransactions() {
 
   const filtered = transactions.filter(t => {
     if (filterType !== 'all' && t.transaction_type !== filterType) return false
-    if (search && !String(t.user_id).includes(search) && !t.transaction_type.toLowerCase().includes(search.toLowerCase())) return false
+    if (search) {
+      const q = search.toLowerCase()
+      const hay = `${t.user_id} ${t.username || ''} ${t.transaction_type} ${t.notes || ''}`.toLowerCase()
+      if (!hay.includes(q)) return false
+    }
     return true
   })
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
@@ -97,15 +101,16 @@ export default function AdminTransactions() {
             <span className="text-right">Amount</span>
           </div>
 
-          <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+          <div className="row-divide">
             {filtered.length === 0 ? (
               <div className="p-8 text-center" style={{ color: '#8899AA' }}>
                 <Activity size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No transactions found</p>
               </div>
             ) : paginated.map(tx => {
-              const isNeg = NEGATIVE.includes(tx.transaction_type)
-              const color = TX_COLOR[tx.transaction_type] || '#8899AA'
+              const ttype = (tx.transaction_type || '').toUpperCase()
+              const isNeg = NEGATIVE.includes(ttype)
+              const color = TX_COLOR[ttype] || '#8899AA'
               return (
                 <div key={tx.id} className="flex sm:grid sm:grid-cols-6 items-center gap-3 px-5 py-3">
                   <div className="col-span-2 flex items-center gap-2 min-w-0">
@@ -117,7 +122,9 @@ export default function AdminTransactions() {
                       {tx.notes && <p className="text-xs truncate" style={{ color: '#4A5568' }}>{tx.notes}</p>}
                     </div>
                   </div>
-                  <span className="hidden sm:block text-xs" style={{ color: '#8899AA' }}>#{tx.user_id}</span>
+                  <span className="hidden sm:block text-xs truncate" style={{ color: '#8899AA' }}>
+                    {tx.username ? `@${tx.username}` : `#${tx.user_id}`}
+                  </span>
                   <span className="hidden sm:block text-xs" style={{ color: '#8899AA' }}>
                     {tx.agent_tier === 0 ? 'Acct' : `A${tx.agent_tier}`}
                   </span>

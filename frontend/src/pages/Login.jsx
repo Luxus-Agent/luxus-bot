@@ -8,7 +8,7 @@ import { Eye, EyeOff, LogIn } from 'lucide-react'
 export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
-  const [form, setForm] = useState({ email: '', password: '' })
+  const [form, setForm] = useState({ username: '', password: '' })
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -16,7 +16,7 @@ export default function Login() {
     e.preventDefault()
     setLoading(true)
     try {
-      const profile = await login(form.email, form.password)
+      const profile = await login(form.username, form.password)
       // Admin goes to admin dashboard, users go to user dashboard — never mixed
       if (profile.is_admin) {
         navigate('/admin', { replace: true })
@@ -55,13 +55,15 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>Email</label>
+              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>Username</label>
               <input
-                type="email"
+                type="text"
                 required
-                value={form.email}
-                onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                placeholder="you@example.com"
+                autoCapitalize="none"
+                autoCorrect="off"
+                value={form.username}
+                onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+                placeholder="yourusername"
                 className="w-full px-4 py-3 rounded-xl text-sm outline-none transition-all"
                 style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
                 onFocus={e => e.target.style.borderColor = '#00D4B4'}

@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from app.config import settings
 from app.database import SessionLocal
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 
 # Import all models so SQLAlchemy resolves all relationships before any query
 import app.models.user
@@ -24,9 +24,39 @@ from app.models.user import User
 def seed_admin():
     db = SessionLocal()
     try:
-        existing = db.query(User).filter(User.is_admin == True).first()
+        # Identify the admin by username (the stable key), falling back to any
+        # existing admin row — so a changed ADMIN_EMAIL still matches the record.
+        existing = (
+            db.query(User).filter(User.username == settings.ADMIN_USERNAME).first()
+            or db.query(User).filter(User.is_admin == True).first()
+        )
+
         if existing:
-            print(f"Admin already exists: {existing.email}")
+            changes = []
+
+            # Update email if it changed in .env
+            if existing.email != settings.ADMIN_EMAIL:
+                existing.email = settings.ADMIN_EMAIL
+                changes.append("email")
+
+            # Update password only if the .env password no longer matches the stored hash
+            if not verify_password(settings.ADMIN_PASSWORD, existing.password_hash):
+                existing.password_hash = hash_password(settings.ADMIN_PASSWORD)
+                changes.append("password")
+
+            # Make sure this account is still flagged as a usable admin
+            if not existing.is_admin:
+                existing.is_admin = True
+                changes.append("is_admin")
+            if not existing.is_active:
+                existing.is_active = True
+                changes.append("is_active")
+
+            if changes:
+                db.commit()
+                print(f"Admin already exists ({existing.username}) — updated: {', '.join(changes)}")
+            else:
+                print(f"Admin already exists: {existing.email} — no changes needed")
             return
 
         admin = User(

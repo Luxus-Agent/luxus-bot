@@ -72,6 +72,11 @@ body {
   animation: fade-in 0.3s ease-out forwards;
 }
 
+/* Subtle row separators that match the card border tone (not white). */
+.row-divide > * + * {
+  border-top: 1px solid #1E2A38;
+}
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {

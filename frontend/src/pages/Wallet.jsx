@@ -171,7 +171,7 @@ export default function Wallet() {
                 <p className="text-sm">No transactions found</p>
               </div>
             ) : (
-              <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+              <div className="row-divide">
                 {paginated.map(tx => {
                   const isNeg = NEGATIVE.includes(tx.transaction_type)
                   const color = TX_COLOR[tx.transaction_type] || '#8899AA'

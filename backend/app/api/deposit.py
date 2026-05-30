@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_platform_active
 from app.core.wallet_ops import credit_account, debit_account, get_account_balance, ACCOUNT_TIER
 from app.database import get_db
 from app.models.deposit import Deposit
@@ -57,7 +57,7 @@ def account_balance(
 async def create_deposit(
     body: DepositIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_platform_active),
 ):
     """
     Create a deposit invoice via NOWPayments.
@@ -130,7 +130,7 @@ def list_deposits(
 async def refund_deposit(
     body: DepositRefundIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_platform_active),
 ):
     """
     Refund the full unspent account balance back to the user's BEP-20 wallet.
@@ -233,7 +233,7 @@ def transfer_balance(
     body: TransferIn,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_platform_active),
 ):
     """
     Transfer account balance to another user.
@@ -300,7 +300,7 @@ def transfer_balance(
 def verify_transfer(
     body: TransferVerifyIn,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_platform_active),
 ):
     """
     Confirm the OTP for a first-time transfer and execute it.

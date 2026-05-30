@@ -22,6 +22,8 @@ import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminUsers from './pages/admin/AdminUsers'
 import AdminTransactions from './pages/admin/AdminTransactions'
 import AdminWithdrawals from './pages/admin/AdminWithdrawals'
+import AdminGenerate from './pages/admin/AdminGenerate'
+import AdminTransfer from './pages/admin/AdminTransfer'
 
 export default function App() {
   return (
@@ -69,6 +71,8 @@ export default function App() {
           <Route path="/admin/users" element={<AdminRoute><AdminUsers /></AdminRoute>} />
           <Route path="/admin/transactions" element={<AdminRoute><AdminTransactions /></AdminRoute>} />
           <Route path="/admin/withdrawals" element={<AdminRoute><AdminWithdrawals /></AdminRoute>} />
+          <Route path="/admin/generate" element={<AdminRoute><AdminGenerate /></AdminRoute>} />
+          <Route path="/admin/transfer" element={<AdminRoute><AdminTransfer /></AdminRoute>} />
 
           {/* Redirects */}
           <Route path="/" element={<Navigate to="/login" replace />} />

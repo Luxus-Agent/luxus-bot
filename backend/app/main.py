@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, agents, wallet, payments, deposit, admin
+from app.api import auth, agents, wallet, payments, deposit, admin, platform
 from app.models import webhook_event  # noqa: F401 — registers table with SQLAlchemy metadata
+from app.models import platform_setting  # noqa: F401 — registers table with SQLAlchemy metadata
 from app.workers.celery_app import celery_app  # noqa: F401
 
 app = FastAPI(
@@ -25,3 +26,4 @@ app.include_router(wallet.router)
 app.include_router(payments.router)
 app.include_router(deposit.router)
 app.include_router(admin.router)
+app.include_router(platform.router)

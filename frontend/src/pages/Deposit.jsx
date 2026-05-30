@@ -245,7 +245,7 @@ export default function Deposit() {
               </button>
             </div>
             <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-              <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+              <div className="row-divide">
                 {paginatedDeposits.map(d => {
                   const Icon  = statusIcon[d.status]  || Clock
                   const color = statusColor[d.status] || '#8899AA'

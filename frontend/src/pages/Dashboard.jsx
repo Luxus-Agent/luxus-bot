@@ -5,9 +5,12 @@ import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import {
   Wallet, TrendingUp, Bot, ArrowDownToLine, ArrowUpFromLine,
-  Copy, Check, Users, Zap, Activity, ChevronRight
+  Copy, Check, Users, Zap, ChevronRight
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts'
 
 const TIER_PRICES = { 1: 10, 2: 20, 3: 50, 4: 100 }
 const TIER_NAMES = { 1: 'Agent 1', 2: 'Agent 2', 3: 'Agent 3', 4: 'Agent 4' }
@@ -39,7 +42,8 @@ export default function Dashboard() {
   const { user } = useAuth()
   const [wallets, setWallets] = useState([])
   const [purchases, setPurchases] = useState([])
-  const [transactions, setTransactions] = useState([])
+  const [income, setIncome] = useState({ total: 0, buckets: [] })
+  const [referralCount, setReferralCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
 
@@ -47,11 +51,13 @@ export default function Dashboard() {
     Promise.all([
       api.get('/wallet/balances'),
       api.get('/agents/purchases'),
-      api.get('/wallet/transactions'),
-    ]).then(([wb, pb, tb]) => {
+      api.get('/auth/referrals'),
+      api.get('/wallet/income/daily'),
+    ]).then(([wb, pb, rb, ib]) => {
       setWallets(wb.data)
       setPurchases(pb.data)
-      setTransactions(tb.data.slice(0, 5))
+      setReferralCount(rb.data.count || 0)
+      setIncome(ib.data || { total: 0, buckets: [] })
     }).catch(() => toast.error('Failed to load dashboard')).finally(() => setLoading(false))
   }, [])
 
@@ -59,6 +65,7 @@ export default function Dashboard() {
   const accountWallet = wallets.find(w => w.wallet_type === 'account' && w.agent_tier === 0)
   const totalMain = mainWallets.reduce((s, w) => s + parseFloat(w.balance), 0)
   const activePurchases = purchases.filter(p => p.status === 'active')
+  const highestTier = purchases.length ? Math.max(...purchases.map(p => p.agent_tier)) : 0
 
   const copyRef = () => {
     const name = user?.username
@@ -69,20 +76,11 @@ export default function Dashboard() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const txTypeColor = {
-    DEPOSIT: '#00D4B4',
-    CORE_INCOME: '#00D4B4',
-    STREAM_PAYOUT: '#00D4B4',
-    BOOST_PAYOUT: '#00D4B4',
-    SPONSOR_MILESTONE_INCOME: '#00D4B4',
-    TRANSFER_IN: '#00D4B4',
-    WITHDRAWAL: '#FF4D6A',
-    TRANSFER_OUT: '#FF4D6A',
-    REPURCHASE_HOLD: '#FFB547',
-    REENTRY: '#8899AA',
-    PURCHASE: '#FF4D6A',
-    AGENT_PURCHASE: '#FF4D6A',
-  }
+  // Build the 24h income chart series from hourly UTC buckets → local-time labels
+  const incomeChart = (income.buckets || []).map(b => ({
+    label: new Date(b.hour).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+    amount: Number(b.amount) || 0,
+  }))
 
   if (loading) return (
     <Layout>
@@ -138,17 +136,17 @@ export default function Dashboard() {
             color="#00FFD4"
           />
           <StatCard
-            icon={Bot}
-            label="Active Agents"
-            value={activePurchases.length}
-            sub={`of ${purchases.length} purchased`}
+            icon={Users}
+            label="Direct Referrals"
+            value={referralCount}
+            sub="Users you invited"
             color="#9B59B6"
           />
           <StatCard
-            icon={Activity}
-            label="Transactions"
-            value={transactions.length > 0 ? `${transactions.length}+` : '0'}
-            sub="Recent activity"
+            icon={Bot}
+            label="Highest Agent"
+            value={highestTier ? TIER_NAMES[highestTier] : 'None'}
+            sub={highestTier ? `$${TIER_PRICES[highestTier]} tier` : 'No agents yet'}
             color="#FFB547"
           />
         </div>
@@ -248,7 +246,7 @@ export default function Dashboard() {
                 { to: '/deposit', icon: ArrowDownToLine, label: 'Deposit USDT', sub: 'Top up account', color: '#00D4B4' },
                 { to: '/agents', icon: Bot, label: 'Buy Agent', sub: 'Purchase a tier', color: '#9B59B6' },
                 { to: '/withdraw', icon: ArrowUpFromLine, label: 'Withdraw', sub: 'Send to wallet', color: '#FFB547' },
-                { to: '/matrix', icon: Users, label: 'View Matrix', sub: 'Track positions', color: '#3498DB' },
+                { to: '/matrix', icon: Users, label: 'View Queue', sub: 'Track progress', color: '#3498DB' },
               ].map(({ to, icon: Icon, label, sub, color }) => (
                 <Link key={to} to={to}>
                   <div
@@ -275,52 +273,59 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Recent Transactions */}
+        {/* Daily Income (last 24h) */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-white">Recent Transactions</h2>
-            <Link to="/transactions" className="text-xs font-medium" style={{ color: '#00D4B4' }}>View All →</Link>
+            <h2 className="font-semibold text-white">Daily Income</h2>
+            <span className="text-xs font-medium" style={{ color: '#8899AA' }}>Last 24 hours</span>
           </div>
-          <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-            {transactions.length === 0 ? (
-              <div className="p-8 text-center" style={{ color: '#8899AA' }}>
-                <Activity size={32} className="mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No transactions yet</p>
-              </div>
-            ) : (
-              <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
-                {transactions.map(tx => {
-                  const isPositive = !['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE', 'REPURCHASE_HOLD'].includes(tx.transaction_type)
-                  return (
-                    <div key={tx.id} className="flex items-center gap-3 px-4 py-3">
-                      <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0"
-                        style={{
-                          background: `${txTypeColor[tx.transaction_type] || '#8899AA'}18`,
-                          color: txTypeColor[tx.transaction_type] || '#8899AA'
-                        }}
-                      >
-                        {isPositive ? '+' : '-'}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">
-                          {tx.transaction_type.replace(/_/g, ' ')}
-                        </p>
-                        <p className="text-xs" style={{ color: '#4A5568' }}>
-                          Agent {tx.agent_tier || 'Account'} • {new Date(tx.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <p
-                        className="text-sm font-semibold flex-shrink-0"
-                        style={{ color: isPositive ? '#00D4B4' : '#FF4D6A' }}
-                      >
-                        {isPositive ? '+' : '-'}${Math.abs(parseFloat(tx.amount)).toFixed(2)}
-                      </p>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+          <div className="rounded-xl p-4 sm:p-5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+            <div className="flex items-baseline gap-2 mb-4">
+              <span className="text-2xl font-bold" style={{ color: '#00D4B4' }}>
+                ${Number(income.total || 0).toFixed(2)}
+              </span>
+              <span className="text-xs" style={{ color: '#8899AA' }}>earned in the past 24 hours</span>
+            </div>
+            <div style={{ width: '100%', height: 240 }}>
+              <ResponsiveContainer>
+                <AreaChart data={incomeChart} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="incomeFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#00D4B4" stopOpacity={0.4} />
+                      <stop offset="100%" stopColor="#00D4B4" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1E2A38" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    interval={3}
+                    tick={{ fill: '#4A5568', fontSize: 11 }}
+                    axisLine={{ stroke: '#1E2A38' }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: '#4A5568', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={52}
+                    tickFormatter={(v) => `$${v}`}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: '#0E1117', border: '1px solid #1E2A38', borderRadius: 8 }}
+                    labelStyle={{ color: '#8899AA' }}
+                    itemStyle={{ color: '#00D4B4' }}
+                    formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Income']}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="amount"
+                    stroke="#00D4B4"
+                    strokeWidth={2}
+                    fill="url(#incomeFill)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
       </div>

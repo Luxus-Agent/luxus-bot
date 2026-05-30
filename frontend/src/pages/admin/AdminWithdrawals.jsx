@@ -111,7 +111,7 @@ export default function AdminWithdrawals() {
             <span className="text-right">Status</span>
           </div>
 
-          <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+          <div className="row-divide">
             {filtered.length === 0 ? (
               <div className="p-8 text-center" style={{ color: '#8899AA' }}>
                 <ArrowUpFromLine size={32} className="mx-auto mb-2 opacity-30" />

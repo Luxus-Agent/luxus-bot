@@ -45,7 +45,7 @@ export default function Profile() {
     : '—'
 
   return (
-    <UserLayout>
+    <Layout>
       <div className="max-w-lg mx-auto space-y-5">
 
         {/* Header */}
@@ -106,6 +106,6 @@ export default function Profile() {
         </button>
 
       </div>
-    </UserLayout>
+    </Layout>
   )
 }

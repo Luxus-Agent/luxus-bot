@@ -1,17 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import api from '../api/client'
+import toast from 'react-hot-toast'
 import Logo from './Logo'
 import {
   LayoutDashboard, Wallet, ArrowDownToLine, ArrowUpFromLine,
   Users, BarChart3, History, Bot, Network, LogOut, Menu, X,
-  ChevronRight, Send, ShieldCheck, User
+  ChevronRight, Send, ShieldCheck, User, ShieldAlert, Lock, Unlock, AlertTriangle, Coins
 } from 'lucide-react'
 
 const userNav = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/agents',    label: 'Buy Agents', icon: Bot },
-  { path: '/matrix',   label: 'Matrix',      icon: Network },
+  { path: '/matrix',   label: 'Queue',       icon: Network },
   { path: '/wallet',   label: 'Wallet',      icon: Wallet },
   { path: '/deposit',  label: 'Deposit',     icon: ArrowDownToLine },
   { path: '/transfer', label: 'Transfer',    icon: Send },
@@ -24,9 +26,9 @@ const adminNav = [
   { path: '/admin/users',        label: 'Users',        icon: Users },
   { path: '/admin/transactions', label: 'Transactions', icon: BarChart3 },
   { path: '/admin/withdrawals',  label: 'Withdrawals',  icon: ArrowUpFromLine },
-  { divider: 'My Account' },
-  { path: '/wallet',   label: 'Wallet',   icon: Wallet },
-  { path: '/withdraw', label: 'Withdraw', icon: ArrowUpFromLine },
+  { divider: 'Treasury' },
+  { path: '/admin/generate', label: 'Generate',    icon: Coins },
+  { path: '/admin/transfer', label: 'Send to User', icon: Send },
 ]
 
 function SidebarNav({ nav, onClose }) {
@@ -176,10 +178,162 @@ function ProfileDropdown({ user, isAdmin, logout, navigate }) {
   )
 }
 
+/** Banner shown across every page while the platform is globally frozen. */
+function FrozenBanner({ reason, isAdmin }) {
+  return (
+    <div
+      className="flex items-center gap-3 px-5 py-2.5 flex-shrink-0"
+      style={{ background: 'rgba(255,77,106,0.12)', borderBottom: '1px solid rgba(255,77,106,0.35)' }}
+    >
+      <AlertTriangle size={16} style={{ color: '#FF4D6A' }} className="flex-shrink-0" />
+      <p className="text-xs sm:text-sm" style={{ color: '#FF8095' }}>
+        <span className="font-semibold" style={{ color: '#FF4D6A' }}>Platform frozen.</span>{' '}
+        {isAdmin
+          ? 'All user deposits, withdrawals, transfers, and purchases are paused. Use the “Frozen” button to resume.'
+          : 'Deposits, withdrawals, transfers, and purchases are temporarily paused. Please try again later.'}
+        {/* Reason is admin-only — the public status endpoint never sends it to users. */}
+        {reason ? <span style={{ color: '#8899AA' }}> — {reason}</span> : null}
+      </p>
+    </div>
+  )
+}
+
+/** Admin-only kill switch: freeze/unfreeze all user money-movement flows. */
+function PlatformFreezeControl({ frozen, onChanged }) {
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [reason, setReason] = useState('')
+
+  const submit = async () => {
+    setLoading(true)
+    try {
+      if (frozen) {
+        await api.post('/admin/platform/unfreeze')
+        toast.success('Platform resumed — user flows are live again')
+      } else {
+        await api.post('/admin/platform/freeze', { reason: reason.trim() || null })
+        toast.success('Platform frozen — all user flows are paused')
+      }
+      setOpen(false)
+      setReason('')
+      onChanged?.()
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Action failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title={frozen ? 'Platform is frozen — click to resume' : 'Freeze all user activity'}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all"
+        style={frozen
+          ? { background: 'rgba(255,77,106,0.15)', color: '#FF4D6A', border: '1px solid rgba(255,77,106,0.45)' }
+          : { background: 'rgba(255,181,71,0.10)', color: '#FFB547', border: '1px solid rgba(255,181,71,0.30)' }
+        }
+      >
+        {frozen ? <Lock size={13} /> : <ShieldAlert size={13} />}
+        <span className="hidden sm:inline">{frozen ? 'Frozen' : 'Freeze'}</span>
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.75)' }} onClick={() => !loading && setOpen(false)} />
+          <div
+            className="relative w-full max-w-md rounded-2xl p-6"
+            style={{ background: '#141922', border: '1px solid #1E2A38', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+          >
+            <div className="flex items-center gap-3 mb-3">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={frozen
+                  ? { background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }
+                  : { background: 'rgba(255,77,106,0.12)', color: '#FF4D6A' }}
+              >
+                {frozen ? <Unlock size={20} /> : <ShieldAlert size={20} />}
+              </div>
+              <h2 className="text-lg font-bold text-white">
+                {frozen ? 'Resume platform?' : 'Freeze platform?'}
+              </h2>
+            </div>
+
+            <p className="text-sm mb-4" style={{ color: '#8899AA' }}>
+              {frozen
+                ? 'This will immediately re-enable deposits, withdrawals, transfers, and agent purchases for all users.'
+                : 'This is an emergency stop. While frozen, all users are blocked from deposits, withdrawals, transfers, and agent purchases. Read-only access stays available. Only you can resume.'}
+            </p>
+
+            {!frozen && (
+              <div className="mb-4">
+                <label className="block text-xs font-medium mb-1.5" style={{ color: '#8899AA' }}>
+                  Reason (optional)
+                </label>
+                <input
+                  type="text"
+                  value={reason}
+                  onChange={e => setReason(e.target.value)}
+                  placeholder="e.g. Suspicious activity under investigation"
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                  style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
+                  onFocus={e => e.target.style.borderColor = '#FF4D6A'}
+                  onBlur={e => e.target.style.borderColor = '#1E2A38'}
+                />
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setOpen(false)}
+                disabled={loading}
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
+                style={{ background: '#1E2A38', color: '#8899AA' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submit}
+                disabled={loading}
+                className="px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2"
+                style={frozen
+                  ? { background: '#00D4B4', color: '#000' }
+                  : { background: '#FF4D6A', color: '#fff' }}
+              >
+                {loading
+                  ? <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  : (frozen ? <Unlock size={15} /> : <Lock size={15} />)}
+                {frozen ? 'Resume Platform' : 'Freeze Platform'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function AppShell({ nav, children, badge }) {
   const { user, logout, isAdmin } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
+  const [platform, setPlatform] = useState({ is_frozen: false, frozen_reason: null })
+
+  const refreshPlatform = () => {
+    // Admins read the full status (includes the internal reason); regular users
+    // hit the public endpoint, which never exposes the reason.
+    const url = isAdmin ? '/admin/platform/status' : '/platform/status'
+    api.get(url)
+      .then(r => setPlatform(r.data))
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    refreshPlatform()
+    const id = setInterval(refreshPlatform, 20000)  // keep banner in sync across sessions
+    return () => clearInterval(id)
+  }, [isAdmin])
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: '#080B10' }}>
@@ -234,6 +388,9 @@ function AppShell({ nav, children, badge }) {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            {isAdmin && (
+              <PlatformFreezeControl frozen={platform.is_frozen} onChanged={refreshPlatform} />
+            )}
             {badge && (
               <span
                 className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold"
@@ -245,6 +402,9 @@ function AppShell({ nav, children, badge }) {
             <ProfileDropdown user={user} isAdmin={isAdmin} logout={logout} navigate={navigate} />
           </div>
         </header>
+
+        {/* Global freeze banner */}
+        {platform.is_frozen && <FrozenBanner reason={platform.frozen_reason} isAdmin={isAdmin} />}
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto p-5 lg:p-6">

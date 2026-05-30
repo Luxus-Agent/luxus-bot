@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { Users, BarChart3, ArrowUpFromLine, Activity, TrendingUp, DollarSign } from 'lucide-react'
+import { Users, BarChart3, ArrowUpFromLine, ArrowDownToLine, Activity, TrendingUp, DollarSign, Wallet, Coins } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState([])
   const [transactions, setTransactions] = useState([])
   const [withdrawals, setWithdrawals] = useState([])
+  const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0 })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -16,10 +17,12 @@ export default function AdminDashboard() {
       api.get('/admin/users'),
       api.get('/admin/transactions'),
       api.get('/admin/withdrawals'),
-    ]).then(([u, t, w]) => {
+      api.get('/admin/treasury/summary'),
+    ]).then(([u, t, w, s]) => {
       setUsers(u.data)
       setTransactions(t.data)
       setWithdrawals(w.data)
+      setTreasury(s.data)
     }).catch(() => toast.error('Failed to load admin data')).finally(() => setLoading(false))
   }, [])
 
@@ -63,10 +66,10 @@ export default function AdminDashboard() {
         {/* Key Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: 'Total Users', val: users.length, sub: `${activeUsers} active`, icon: Users, color: '#00D4B4' },
-            { label: 'Transactions', val: transactions.length, sub: 'All time', icon: Activity, color: '#3498DB' },
-            { label: 'Pending Withdrawals', val: pendingWithdrawals, sub: 'Awaiting payout', icon: ArrowUpFromLine, color: '#FFB547' },
-            { label: 'Total Withdrawn', val: `$${totalWithdrawn.toFixed(0)}`, sub: 'USDT sent', icon: DollarSign, color: '#00FFD4' },
+            { label: 'Total Users', val: users.length, sub: `${activeUsers} active`, icon: Users, color: '#3498DB' },
+            { label: 'Treasury Balance', val: `$${treasury.account_balance.toFixed(2)}`, sub: 'In admin account', icon: Wallet, color: '#00D4B4' },
+            { label: 'Total Deposited', val: `$${treasury.total_deposited.toFixed(2)}`, sub: 'By users in the platform', icon: ArrowDownToLine, color: '#FFB547' },
+            { label: 'Total Invested', val: `$${treasury.total_invested.toFixed(2)}`, sub: 'By users in the platform', icon: TrendingUp, color: '#00FFD4' },
           ].map(({ label, val, sub, icon: Icon, color }) => (
             <div key={label} className="rounded-xl p-5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
               <div
@@ -93,7 +96,7 @@ export default function AdminDashboard() {
                 .map(([type, count]) => {
                   const total = transactions.length
                   const pct = Math.round((count / total) * 100)
-                  const color = TOP_TX_COLOR[type] || '#8899AA'
+                  const color = TOP_TX_COLOR[type.toUpperCase()] || '#8899AA'
                   return (
                     <div key={type}>
                       <div className="flex justify-between text-xs mb-1">
@@ -115,19 +118,21 @@ export default function AdminDashboard() {
               <h2 className="font-semibold text-white">Recent Transactions</h2>
               <Link to="/admin/transactions" className="text-xs" style={{ color: '#00D4B4' }}>View All →</Link>
             </div>
-            <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+            <div className="row-divide">
               {recentTx.map(tx => {
-                const color = TOP_TX_COLOR[tx.transaction_type] || '#8899AA'
-                const isNeg = ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE'].includes(tx.transaction_type)
+                const ttype = (tx.transaction_type || '').toUpperCase()
+                const color = TOP_TX_COLOR[ttype] || '#8899AA'
+                const isNeg = ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE', 'SOFTWARE_FEE'].includes(ttype)
                 return (
                   <div key={tx.id} className="flex items-center gap-3 px-5 py-3">
                     <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-white truncate">
                         {tx.transaction_type.replace(/_/g, ' ')}
+                        <span style={{ color: '#8899AA' }}> · @{tx.username || `user${tx.user_id}`}</span>
                       </p>
-                      <p className="text-xs" style={{ color: '#4A5568' }}>
-                        User #{tx.user_id} · Agent {tx.agent_tier || 'Acct'} · {new Date(tx.created_at).toLocaleString()}
+                      <p className="text-xs truncate" style={{ color: '#4A5568' }}>
+                        {tx.notes ? `${tx.notes} · ` : ''}{new Date(tx.created_at).toLocaleString()}
                       </p>
                     </div>
                     <p className="text-sm font-semibold flex-shrink-0" style={{ color: isNeg ? '#FF4D6A' : '#00D4B4' }}>
@@ -150,7 +155,7 @@ export default function AdminDashboard() {
             {recentWithdrawals.length === 0 ? (
               <div className="p-6 text-center text-sm" style={{ color: '#8899AA' }}>No withdrawals</div>
             ) : (
-              <div className="divide-y" style={{ borderColor: '#1E2A38' }}>
+              <div className="row-divide">
                 {recentWithdrawals.map(w => {
                   const statusColor = { PENDING: '#FFB547', PROCESSING: '#3498DB', SENT: '#00D4B4', FAILED: '#FF4D6A' }
                   const color = statusColor[w.status] || '#8899AA'

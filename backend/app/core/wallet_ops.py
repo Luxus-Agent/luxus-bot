@@ -201,6 +201,86 @@ def debit_wallet(
     ))
 
 
+def get_total_earnings(db: Session, user_id: int) -> Decimal:
+    """Sum of all MAIN wallet balances (the user's earnings)."""
+    wallets = (
+        db.query(Wallet)
+        .filter_by(user_id=user_id, wallet_type=WalletType.MAIN)
+        .all()
+    )
+    return sum((Decimal(str(w.balance)) for w in wallets), Decimal("0"))
+
+
+def get_withdrawable_balance(db: Session, user_id: int) -> Decimal:
+    """
+    Total amount a user can withdraw = unspent account balance + all earnings
+    (every MAIN wallet). This is the single combined pool shown on the Withdraw page.
+    """
+    return get_account_balance(db, user_id) + get_total_earnings(db, user_id)
+
+
+def debit_withdrawable(
+    db: Session,
+    user_id: int,
+    amount: Decimal,
+    reference_id: str | None = None,
+    notes: str | None = None,
+) -> None:
+    """
+    Deduct `amount` from the user's combined withdrawable balance: drains MAIN
+    wallet earnings first (lowest tier first), then the account balance.
+    Raises HTTP 400 if the combined balance is insufficient.
+    Records a single WITHDRAWAL transaction (agent_tier=0 = combined).
+    """
+    four_places = Decimal("0.0001")
+    amount = amount.quantize(four_places, rounding=ROUND_HALF_UP)
+
+    main_wallets = (
+        db.query(Wallet)
+        .filter_by(user_id=user_id, wallet_type=WalletType.MAIN)
+        .with_for_update()
+        .all()
+    )
+    account_wallet = (
+        db.query(Wallet)
+        .filter_by(user_id=user_id, agent_tier=ACCOUNT_TIER, wallet_type=WalletType.ACCOUNT)
+        .with_for_update()
+        .first()
+    )
+
+    main_total = sum((Decimal(str(w.balance)) for w in main_wallets), Decimal("0"))
+    account_bal = Decimal(str(account_wallet.balance)) if account_wallet else Decimal("0")
+    total = main_total + account_bal
+    if total < amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient balance. Available: ${total:.4f}, Requested: ${amount:.4f}",
+        )
+
+    remaining = amount
+    # 1. Drain earnings (MAIN wallets), lowest tier first
+    for wallet in sorted(main_wallets, key=lambda w: w.agent_tier):
+        if remaining <= 0:
+            break
+        bal = Decimal(str(wallet.balance))
+        take = min(bal, remaining)
+        wallet.balance = bal - take
+        remaining -= take
+    # 2. Then the account balance
+    if remaining > 0 and account_wallet is not None:
+        account_wallet.balance = Decimal(str(account_wallet.balance)) - remaining
+        remaining = Decimal("0")
+
+    db.add(Transaction(
+        user_id=user_id,
+        agent_tier=ACCOUNT_TIER,
+        transaction_type=TransactionType.WITHDRAWAL,
+        amount=amount,
+        reference_id=reference_id,
+        notes=notes or "Withdrawal from combined balance",
+    ))
+
+
 # ── Account balance (deposit wallet) ─────────────────────────────────────────
 
 def get_account_balance(db: Session, user_id: int) -> Decimal:

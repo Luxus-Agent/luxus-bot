@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
-from app.core.wallet_ops import debit_wallet
+from app.api.deps import get_current_user, require_platform_active
+from app.core.wallet_ops import debit_withdrawable, get_withdrawable_balance
 from app.database import get_db
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
 from app.models.wallet import Wallet, WalletType
 from app.models.wallet_address import WalletAddress
@@ -57,6 +57,53 @@ def get_transactions(
         .limit(200)
         .all()
     )
+
+
+# Earnings credited to the user's MAIN wallet by the revenue engine
+INCOME_TYPES = [
+    TransactionType.CORE_INCOME,
+    TransactionType.STREAM_PAYOUT,
+    TransactionType.BOOST_PAYOUT,
+    TransactionType.SPONSOR_MILESTONE_INCOME,
+]
+
+
+@router.get("/income/daily")
+def daily_income(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Income earned in the last 24 hours, bucketed into 24 hourly slots.
+    Only revenue-engine earnings count (deposits/transfers are excluded).
+    Bucket timestamps are UTC (ISO with trailing 'Z') so the client can
+    render them in the viewer's local time.
+    """
+    now = datetime.utcnow()
+    start = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+
+    rows = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type.in_(INCOME_TYPES),
+            Transaction.created_at >= start,
+        )
+        .all()
+    )
+
+    buckets = [
+        {"hour": (start + timedelta(hours=i)).isoformat() + "Z", "amount": 0.0}
+        for i in range(24)
+    ]
+    total = Decimal("0")
+    for tx in rows:
+        idx = int((tx.created_at - start).total_seconds() // 3600)
+        if 0 <= idx < 24:
+            buckets[idx]["amount"] = round(buckets[idx]["amount"] + float(tx.amount), 4)
+            total += Decimal(str(tx.amount))
+
+    return {"total": float(round(total, 4)), "buckets": buckets}
 
 
 # ── Wallet address management ─────────────────────────────────────────────────
@@ -197,7 +244,7 @@ async def request_withdrawal(
     body: WithdrawalIn,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_platform_active),
 ):
     """
     Request a USDT (BEP-20) withdrawal from the user's MAIN wallet.
@@ -223,27 +270,19 @@ async def request_withdrawal(
 
     amount = Decimal(str(body.amount))
 
-    wallet = (
-        db.query(Wallet)
-        .filter_by(
-            user_id=current_user.id,
-            agent_tier=body.agent_tier,
-            wallet_type=WalletType.MAIN,
-        )
-        .first()
-    )
-    current_balance = Decimal(str(wallet.balance)) if wallet else Decimal("0")
-    if current_balance < amount:
+    # Withdrawals draw from the user's combined balance: account balance + all earnings.
+    withdrawable = get_withdrawable_balance(db, current_user.id)
+    if withdrawable < amount:
         raise HTTPException(
             status_code=400,
-            detail=f"Insufficient balance. Available: ${current_balance:.4f}, Requested: ${amount:.4f}",
+            detail=f"Insufficient balance. Available: ${withdrawable:.4f}, Requested: ${amount:.4f}",
         )
 
     scheduled_for = datetime.utcnow()
 
     withdrawal = WithdrawalRequest(
         user_id=current_user.id,
-        agent_tier=body.agent_tier,
+        agent_tier=0,  # 0 = combined earnings (no per-tier withdrawal)
         amount=amount,
         wallet_address=body.wallet_address,
         status=WithdrawalStatus.PENDING,
@@ -252,10 +291,9 @@ async def request_withdrawal(
     db.add(withdrawal)
     db.flush()
 
-    debit_wallet(
+    debit_withdrawable(
         db=db,
         user_id=current_user.id,
-        agent_tier=body.agent_tier,
         amount=amount,
         reference_id=f"withdrawal_{withdrawal.id}",
         notes=f"Withdrawal to {body.wallet_address[:10]}… processing now",

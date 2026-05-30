@@ -7,6 +7,7 @@ from app.models.transaction import Transaction, TransactionType
 from app.models.withdrawal import WithdrawalRequest, WithdrawalStatus
 from app.models.deposit import Deposit
 from app.models.webhook_event import WebhookEvent
+from app.models.platform_setting import PlatformSetting
 
 __all__ = [
     "User",
@@ -23,4 +24,5 @@ __all__ = [
     "Deposit",
     "WebhookEvent",
     "WalletAddress",
+    "PlatformSetting",
 ]
