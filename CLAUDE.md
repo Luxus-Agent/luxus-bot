@@ -43,7 +43,7 @@ agent-revenue-sharing-platform/
 │   │   │   ├── withdrawal.py    # WithdrawalRequest (instant BEP-20 payout)
 │   │   │   └── platform_setting.py # Single-row platform state (global freeze kill switch)
 │   │   ├── core/
-│   │   │   ├── matrix_engine.py # 3x3 forced matrix + Stream completion-share + Boost milestones
+│   │   │   ├── matrix_engine.py # 3x3 forced matrix + Stream & Boost 10% sponsor completion-share
 │   │   │   ├── proactive.py     # Core Agent: 30% sponsor + 30% supreme, odd/even routing
 │   │   │   ├── revenue_split.py # 60/30/10 split → core / stream / boost
 │   │   │   ├── wallet_ops.py    # credit/debit_wallet() + credit/debit_account() + withdrawable/earnings
@@ -186,13 +186,15 @@ Wallet, per-re-entry amount, and sponsor share all scale by multiplier.
 ### Boost Agent (10%) — formerly Speculation
 Uses the same 3x3 matrix format. **Single global queue** (no per-tier split). Always placed at `agent_tier=1`.
 
-| Level | Threshold | Wallet | Re-entry | Sponsor milestone |
-|-------|-----------|--------|----------|------------------|
+| Level | Threshold | Wallet | Re-entry | Sponsor share |
+|-------|-----------|--------|----------|---------------|
 | L1 | 3 members | $0.60 | 1 × $0.30 | — |
-| L2 | 9 members | $1.50 | 2 × $0.60 | 5th member → $0.30 |
-| L3 | 27 members | $4.90 | 3 × $0.90 | 4th → $0.30, 20th → $0.30 |
+| L2 | 9 members | $1.50 | 2 × $0.30 | $0.27 on completion (10% of $2.70 gross) |
+| L3 | 27 members | $3.60 | 3 × $0.30 | $0.81 on completion (10% of $8.10 gross) |
 
-Remaining pool after payouts → **platform profit**.
+Remaining pool after payouts + re-entries + sponsor share → **platform profit**.
+
+**Boost sponsor share:** identical model to Stream — at L2 and L3 an *extra* 10% of the level's gross is credited to the owner's sponsor on level completion, paid from the platform pool (not deducted from the owner's wallet). The older per-position milestone model (5th/4th/20th member → $0.30) was **retired** in the latest client spec. L1 has no sponsor share.
 
 **Key difference from Stream:** Boost Agent positions are **NOT dummy** — all positions (including Boost's own re-entries) receive full wallet payouts when their level fills.
 
@@ -302,7 +304,7 @@ Safe to re-run — exits early if an admin already exists.
 
 | File | Purpose |
 |------|---------|
-| `backend/app/core/matrix_engine.py` | 3x3 matrix + Stream sponsor share on completion + Boost sponsor milestones |
+| `backend/app/core/matrix_engine.py` | 3x3 matrix + Stream & Boost 10% sponsor share on level completion |
 | `backend/app/core/proactive.py` | Core Agent: 30%/30% sponsor chain routing with odd/even logic |
 | `backend/app/core/revenue_split.py` | 60/30/10 split → core / stream / boost |
 | `backend/app/core/wallet_ops.py` | credit/debit wallet + account balance functions |
@@ -339,6 +341,7 @@ Safe to re-run — exits early if an admin already exists.
 - **Boost re-entries are NOT dummy** — all positions in the Boost queue (including Boost's own re-entries) receive full payouts when their level fills.
 - **Stream re-entry count is FIXED at 1/2/3 for L1/L2/L3** across all tiers — only the per-re-entry $ amount scales by tier multiplier (Agent 2 = $2 per re-entry, Agent 3 = $5, Agent 4 = $10).
 - **Stream sponsor income (L2/L3) is paid on level completion as 10% × level gross × tier_multiplier** — L2 base $0.90, L3 base $2.70. Not a position-fill milestone. Paid extra from the platform pool; owner's wallet credit is unaffected.
+- **Boost sponsor income (L2/L3) uses the same completion-share model** — L2 $0.27 (10% of $2.70 gross), L3 $0.81 (10% of $8.10 gross). Boost is always tier 1, so no multiplier scaling. The old per-position milestone model (5th/4th/20th member → $0.30) is retired. Boost L3 wallet is **$3.60** (latest client spec, down from $4.90).
 - **Each queue self-cycles its own re-entries:** Stream re-entries (dummy) re-enter the same tier's Stream queue; Boost re-entries (real) re-enter the single Boost queue at agent_tier=1. Stream does not feed Boost.
 - **Auto-repurchase:** when REPURCHASE wallet >= tier price, a new purchase is auto-activated via Celery.
 - **Two separate 10% deductions** on every wallet credit: 10% software fee (platform profit) + 10% repurchase reserve. Effective user take = 81% of gross income credited.

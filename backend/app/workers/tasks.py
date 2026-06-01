@@ -347,7 +347,7 @@ def place_reentry(
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=300, name="tasks.process_withdrawal")
 def process_withdrawal(self, withdrawal_id: int) -> None:
     """
-    Fires 24h after a withdrawal request.
+    Dispatched immediately when a user requests a withdrawal (instant payout).
     Calls the NOWPayments Payouts API and marks the record sent or failed.
     On failure the deducted amount is refunded back to the MAIN wallet.
     """
