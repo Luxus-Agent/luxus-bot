@@ -18,14 +18,15 @@ Two types of events can fire on each fill increment:
   2. Level completion   — when fill count reaches the threshold (3 / 9 / 27) the
                           owner gets the main wallet payout + re-entry grants.
 
-Payout amounts (Agent 1 / $10 base — higher Stream tiers scale by multiplier):
+Payout amounts (Agent 1 / $10 base — higher Stream tiers scale wallet/re-entry
+$ amounts by tier_multiplier; re-entry COUNT stays fixed across tiers):
 
-  Stream Agent  L1: $2.00 wallet + $1.00 re-entry ×(1 × tier_multiplier)
-                    sponsor milestones: none
-                L2: $5.00 wallet + $2.00 re-entries ×(2 × tier_multiplier)
-                    sponsor milestones: {5: $1.00}
-                L3: $13.00 wallet + $3.00 re-entries ×(3 × tier_multiplier)
-                    sponsor milestones: {20: $1.00}
+  Stream Agent  L1: $2.00 wallet + $1.00 re-entry ×1
+                    sponsor on completion: none
+                L2: $5.00 wallet + $1.00 re-entries ×2
+                    sponsor on completion: $0.90 (= 10% of $9 level gross)
+                L3: $13.00 wallet + $1.00 re-entries ×3
+                    sponsor on completion: $2.70 (= 10% of $27 level gross)
                 (remaining pool amount → platform profit, not distributed)
 
   Boost Agent   L1: $0.60 wallet + $0.30 re-entry ×1  (single queue, always tier 1)
@@ -46,11 +47,20 @@ Re-entry destination (each queue self-cycles — per the client matrix diagram
   Stream re-entries → placed back into the SAME tier's Stream queue as DUMMY slots
   Boost  re-entries → placed back into the single Boost queue as REAL slots
 
-Re-entry count scaling (Stream only):
-  reentry_count = base_count × tier_multiplier
-  e.g. Agent 2 (2×): L1=2, L2=4, L3=6
-       Agent 3 (5×): L1=5, L2=10, L3=15
-       Agent 4 (10×): L1=10, L2=20, L3=30
+Re-entry count (Stream): FIXED at 1 / 2 / 3 across all tiers.
+  Only the per-re-entry $ amount scales by tier_multiplier:
+       Agent 2 (2×): each re-entry = $2  (still 1/2/3 re-entries)
+       Agent 3 (5×): each re-entry = $5  (still 1/2/3 re-entries)
+       Agent 4 (10×): each re-entry = $10 (still 1/2/3 re-entries)
+
+Stream sponsor share (L2 + L3 only):
+  Per the client doc, "10% of every income from Stream agents goes to the
+  user's sponsor — not deducted from the income, paid extra from the pool."
+  Implemented as a single sponsor credit fired on level completion equal to
+  10% × (threshold × tier_base), scaled by tier_multiplier:
+       L2 base = $0.90  (= 10% of 9 × $1)
+       L3 base = $2.70  (= 10% of 27 × $1)
+  L1 has no sponsor share.
 
 Dummy positions (Stream re-entries) fill slots to push the real members above them
   toward their next level completion, but they themselves earn no wallet payout and
@@ -78,9 +88,12 @@ class LevelConfig:
     threshold: int
     wallet_amount: Decimal
     reentry_amount: Decimal
-    reentry_count: int          # Base count — multiplied by tier_multiplier for Stream
-    # fill_count → amount to send to the position owner's sponsor
+    reentry_count: int          # Fixed across tiers (Stream + Boost both)
+    # fill_count → amount to send to the position owner's sponsor (Boost milestones)
     sponsor_milestones: dict[int, Decimal] = field(default_factory=dict)
+    # Stream only: extra 10% paid to the owner's sponsor on level completion
+    # (base amount — scaled by tier_multiplier at runtime)
+    sponsor_on_completion: Decimal = Decimal("0")
 
 
 PAYOUT_CONFIG: dict[SystemType, dict[int, LevelConfig]] = {
@@ -94,16 +107,16 @@ PAYOUT_CONFIG: dict[SystemType, dict[int, LevelConfig]] = {
         2: LevelConfig(
             threshold=9,
             wallet_amount=Decimal("5.00"),
-            reentry_amount=Decimal("2.00"),
+            reentry_amount=Decimal("1.00"),
             reentry_count=2,
-            sponsor_milestones={5: Decimal("1.00")},
+            sponsor_on_completion=Decimal("0.90"),
         ),
         3: LevelConfig(
             threshold=27,
             wallet_amount=Decimal("13.00"),
-            reentry_amount=Decimal("3.00"),
+            reentry_amount=Decimal("1.00"),
             reentry_count=3,
-            sponsor_milestones={20: Decimal("1.00")},
+            sponsor_on_completion=Decimal("2.70"),
         ),
     },
     SystemType.BOOST: {
@@ -278,9 +291,7 @@ def place_in_matrix(
             # Dummy positions (Stream re-entries) fill slots for others but don't
             # earn wallet payouts or spawn further re-entries themselves.
             if not ancestor.is_dummy:
-                # Scale reentry_count by tier multiplier for Stream Agent.
-                # Boost Agent is always tier 1 (multiplier=1) so count stays as-is.
-                scaled_reentry_count = int(cfg.reentry_count * int(multiplier))
+                # Re-entry count is FIXED across tiers; only $ amount scales.
                 pending_payouts.append(PendingPayout(
                     matrix_position_id=ancestor.id,
                     user_id=ancestor.user_id,
@@ -289,7 +300,19 @@ def place_in_matrix(
                     level=level,
                     wallet_amount=cfg.wallet_amount * multiplier,
                     reentry_amount=cfg.reentry_amount * multiplier,
-                    reentry_count=scaled_reentry_count,
+                    reentry_count=cfg.reentry_count,
                 ))
+
+                # Stream L2/L3: 10% extra to owner's sponsor on level completion
+                # (paid from platform pool, not deducted from owner's wallet).
+                if cfg.sponsor_on_completion > 0:
+                    sponsor_payouts.append(PendingSponsorPayout(
+                        matrix_position_id=ancestor.id,
+                        owner_user_id=ancestor.user_id,
+                        agent_tier=agent_tier,
+                        system_type=system_type,
+                        level=level,
+                        amount=cfg.sponsor_on_completion * multiplier,
+                    ))
 
     return new_slot, pending_payouts, sponsor_payouts

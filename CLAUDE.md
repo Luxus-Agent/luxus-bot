@@ -43,7 +43,7 @@ agent-revenue-sharing-platform/
 │   │   │   ├── withdrawal.py    # WithdrawalRequest (instant BEP-20 payout)
 │   │   │   └── platform_setting.py # Single-row platform state (global freeze kill switch)
 │   │   ├── core/
-│   │   │   ├── matrix_engine.py # 3x3 forced matrix + sponsor milestones (Stream + Boost)
+│   │   │   ├── matrix_engine.py # 3x3 forced matrix + Stream completion-share + Boost milestones
 │   │   │   ├── proactive.py     # Core Agent: 30% sponsor + 30% supreme, odd/even routing
 │   │   │   ├── revenue_split.py # 60/30/10 split → core / stream / boost
 │   │   │   ├── wallet_ops.py    # credit/debit_wallet() + credit/debit_account() + withdrawable/earnings
@@ -167,16 +167,19 @@ The 60% is split into two equal halves (30% each):
 Uses a 3x3 breadth-first matrix. Each tier has its **own separate queue**.
 Locked via `MatrixCounter` (SELECT FOR UPDATE).
 
-| Level | Threshold | Wallet (base $10) | Re-entries (base) | Sponsor milestone |
-|-------|-----------|-------------------|-------------------|------------------|
-| L1 | 3 members | $2.00 | 1 × tier_multiplier | — |
-| L2 | 9 members | $5.00 | 2 × tier_multiplier | 5th member → $1.00 |
-| L3 | 27 members | $13.00 | 3 × tier_multiplier | 20th member → $1.00 |
+| Level | Threshold | Wallet (base $10) | Re-entries | Sponsor share (base $10) |
+|-------|-----------|-------------------|------------|--------------------------|
+| L1 | 3 members | $2.00 | 1 × $1.00 | — |
+| L2 | 9 members | $5.00 | 2 × $1.00 | $0.90 on completion (10% of $9 gross) |
+| L3 | 27 members | $13.00 | 3 × $1.00 | $2.70 on completion (10% of $27 gross) |
 
-Remaining pool after payouts + re-entries + sponsor milestone → **platform profit**.
+Remaining pool after payouts + re-entries + sponsor share → **platform profit**.
 
 **Tier multipliers:** Agent 1 = 1×, Agent 2 = 2×, Agent 3 = 5×, Agent 4 = 10×
-(wallet amounts and re-entry counts both scale by multiplier)
+Wallet, per-re-entry amount, and sponsor share all scale by multiplier.
+**Re-entry COUNT is fixed at 1/2/3 across all tiers** (only the $ per re-entry scales).
+
+**Stream sponsor share:** At L2 and L3, an *extra* 10% of the level's gross is credited to the owner's sponsor on level completion — paid from the platform pool, not deducted from the owner's wallet. L1 has no sponsor share.
 
 **Re-entry rule:** Stream re-entries are **dummy** positions placed back into the **same tier's Stream queue** (per the client matrix diagram `A·B·C·D·A1·E·F·B1·…`). They fill slots to advance the queue, earn no payout, and spawn no further re-entries. Only one real entry per user in the Stream queue at a time. Stream does **not** feed Boost.
 
@@ -299,7 +302,7 @@ Safe to re-run — exits early if an admin already exists.
 
 | File | Purpose |
 |------|---------|
-| `backend/app/core/matrix_engine.py` | 3x3 matrix + sponsor milestones (Stream + Boost) |
+| `backend/app/core/matrix_engine.py` | 3x3 matrix + Stream sponsor share on completion + Boost sponsor milestones |
 | `backend/app/core/proactive.py` | Core Agent: 30%/30% sponsor chain routing with odd/even logic |
 | `backend/app/core/revenue_split.py` | 60/30/10 split → core / stream / boost |
 | `backend/app/core/wallet_ops.py` | credit/debit wallet + account balance functions |
@@ -334,7 +337,8 @@ Safe to re-run — exits early if an admin already exists.
 - **Inactive sponsors are skipped** in Core Agent routing — income passes to supreme sponsor or goes to platform.
 - **Stream re-entries are dummy** — they are placed back into the **same tier's Stream queue**, fill matrix slots, do not receive wallet payouts, and spawn no further re-entries. Only one real Stream entry per user at a time.
 - **Boost re-entries are NOT dummy** — all positions in the Boost queue (including Boost's own re-entries) receive full payouts when their level fills.
-- **Re-entry count scales by tier multiplier** for Stream Agent (Agent 2 = 2×, Agent 3 = 5×, Agent 4 = 10×).
+- **Stream re-entry count is FIXED at 1/2/3 for L1/L2/L3** across all tiers — only the per-re-entry $ amount scales by tier multiplier (Agent 2 = $2 per re-entry, Agent 3 = $5, Agent 4 = $10).
+- **Stream sponsor income (L2/L3) is paid on level completion as 10% × level gross × tier_multiplier** — L2 base $0.90, L3 base $2.70. Not a position-fill milestone. Paid extra from the platform pool; owner's wallet credit is unaffected.
 - **Each queue self-cycles its own re-entries:** Stream re-entries (dummy) re-enter the same tier's Stream queue; Boost re-entries (real) re-enter the single Boost queue at agent_tier=1. Stream does not feed Boost.
 - **Auto-repurchase:** when REPURCHASE wallet >= tier price, a new purchase is auto-activated via Celery.
 - **Two separate 10% deductions** on every wallet credit: 10% software fee (platform profit) + 10% repurchase reserve. Effective user take = 81% of gross income credited.
