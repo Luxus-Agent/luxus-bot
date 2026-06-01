@@ -8,6 +8,7 @@ import {
   ShieldCheck, AlertCircle, Wallet
 } from 'lucide-react'
 import Pagination from '../components/Pagination'
+import { formatDateTimeIST } from '../utils/datetime'
 
 const PAGE_SIZE = 10
 
@@ -438,7 +439,7 @@ export default function Withdraw() {
                               {w.wallet_address.slice(0, 14)}...{w.wallet_address.slice(-8)}
                             </p>
                             <p className="text-xs mt-0.5" style={{ color: '#4A5568' }}>
-                              {new Date(w.created_at).toLocaleString()}
+                              {formatDateTimeIST(w.created_at)}
                             </p>
                           </div>
                         </div>

@@ -400,3 +400,5 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - Transfer fee is **1%** — sender is debited the full amount; recipient receives 99%.
 - First transfer to a new recipient requires email OTP confirmation.
 - **Admin Treasury** (Generate / Send to User) and the **global freeze** kill switch are admin-only and separate from user flows.
+- **All timestamps are displayed in IST (`Asia/Kolkata`).** The backend stores naive UTC; the frontend converts via `frontend/src/utils/datetime.js` (`formatDateTimeIST` / `formatDateIST` / `formatTimeIST`). Storage stays UTC — only the display is localized to Indian time.
+- **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views classify them into Income / Expense / System groups; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income.

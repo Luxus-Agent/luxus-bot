@@ -38,10 +38,13 @@ export default function Profile() {
 
   if (!user) return null
 
+  // Backend stores naive UTC without a tz suffix — mark it UTC, then show in IST.
   const createdAt = user.created_at
-    ? new Date(user.created_at).toLocaleDateString('en-US', {
-        year: 'numeric', month: 'long', day: 'numeric',
-      })
+    ? new Date(`${user.created_at}${/[zZ]|[+-]\d{2}:?\d{2}$/.test(user.created_at) ? '' : 'Z'}`)
+        .toLocaleDateString('en-US', {
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric', month: 'long', day: 'numeric',
+        })
     : '—'
 
   return (

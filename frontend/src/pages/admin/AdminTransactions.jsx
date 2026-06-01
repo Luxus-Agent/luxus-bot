@@ -4,16 +4,21 @@ import Pagination from '../../components/Pagination'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { Activity, Search } from 'lucide-react'
+import { formatDateIST } from '../../utils/datetime'
 
 const PAGE_SIZE = 10
 
+// API serializes the TransactionType enum's lowercase *values* (e.g. "agent_purchase"),
+// so all keys/lists here must be lowercase to match.
 const TX_COLOR = {
-  DEPOSIT: '#00D4B4', CORE_INCOME: '#00D4B4', STREAM_PAYOUT: '#3498DB',
-  BOOST_PAYOUT: '#9B59B6', SPONSOR_MILESTONE_INCOME: '#00D4B4',
-  TRANSFER_IN: '#00D4B4', WITHDRAWAL: '#FF4D6A', TRANSFER_OUT: '#FF4D6A',
-  REPURCHASE_HOLD: '#FFB547', REENTRY: '#8899AA', PURCHASE: '#FF4D6A', AGENT_PURCHASE: '#FF4D6A',
+  deposit: '#00D4B4', core_income: '#00D4B4', stream_payout: '#3498DB',
+  boost_payout: '#9B59B6', sponsor_milestone_income: '#00D4B4',
+  transfer_in: '#00D4B4', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
+  repurchase_hold: '#FFB547', reentry: '#8899AA', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
+  core_sent: '#8899AA', software_fee: '#8899AA', platform_profit: '#8899AA', admin_generate: '#00D4B4',
 }
-const NEGATIVE = ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE']
+const INCOME = ['core_income', 'stream_payout', 'boost_payout', 'sponsor_milestone_income', 'transfer_in', 'deposit']
+const EXPENSE = ['withdrawal', 'transfer_out', 'purchase', 'agent_purchase']
 
 export default function AdminTransactions() {
   const [transactions, setTransactions] = useState([])
@@ -44,7 +49,7 @@ export default function AdminTransactions() {
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const totalVolume = transactions
-    .filter(t => !NEGATIVE.includes(t.transaction_type))
+    .filter(t => INCOME.includes(t.transaction_type))
     .reduce((s, t) => s + parseFloat(t.amount), 0)
 
   if (loading) return (
@@ -108,8 +113,11 @@ export default function AdminTransactions() {
                 <p className="text-sm">No transactions found</p>
               </div>
             ) : paginated.map(tx => {
-              const ttype = (tx.transaction_type || '').toUpperCase()
-              const isNeg = NEGATIVE.includes(ttype)
+              const ttype = tx.transaction_type || ''
+              const isNeg = EXPENSE.includes(ttype)
+              const isIncome = INCOME.includes(ttype)
+              const sign = isNeg ? '−' : isIncome ? '+' : ''
+              const amountColor = isNeg ? '#FF4D6A' : isIncome ? '#00D4B4' : '#8899AA'
               const color = TX_COLOR[ttype] || '#8899AA'
               return (
                 <div key={tx.id} className="flex sm:grid sm:grid-cols-6 items-center gap-3 px-5 py-3">
@@ -129,10 +137,10 @@ export default function AdminTransactions() {
                     {tx.agent_tier === 0 ? 'Acct' : `A${tx.agent_tier}`}
                   </span>
                   <span className="hidden sm:block text-xs" style={{ color: '#4A5568' }}>
-                    {new Date(tx.created_at).toLocaleDateString()}
+                    {formatDateIST(tx.created_at)}
                   </span>
-                  <p className="text-sm font-semibold ml-auto sm:ml-0 text-right" style={{ color: isNeg ? '#FF4D6A' : '#00D4B4' }}>
-                    {isNeg ? '−' : '+'}${Math.abs(parseFloat(tx.amount)).toFixed(2)}
+                  <p className="text-sm font-semibold ml-auto sm:ml-0 text-right" style={{ color: amountColor }}>
+                    {sign}${Math.abs(parseFloat(tx.amount)).toFixed(2)}
                   </p>
                 </div>
               )

@@ -4,6 +4,7 @@ import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { Users, BarChart3, ArrowUpFromLine, ArrowDownToLine, Activity, TrendingUp, DollarSign, Wallet, Coins } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { formatDateTimeIST, formatDateIST } from '../../utils/datetime'
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState([])
@@ -132,7 +133,7 @@ export default function AdminDashboard() {
                         <span style={{ color: '#8899AA' }}> · @{tx.username || `user${tx.user_id}`}</span>
                       </p>
                       <p className="text-xs truncate" style={{ color: '#4A5568' }}>
-                        {tx.notes ? `${tx.notes} · ` : ''}{new Date(tx.created_at).toLocaleString()}
+                        {tx.notes ? `${tx.notes} · ` : ''}{formatDateTimeIST(tx.created_at)}
                       </p>
                     </div>
                     <p className="text-sm font-semibold flex-shrink-0" style={{ color: isNeg ? '#FF4D6A' : '#00D4B4' }}>
@@ -175,7 +176,7 @@ export default function AdminDashboard() {
                           {w.status}
                         </span>
                         <p className="text-xs mt-0.5" style={{ color: '#4A5568' }}>
-                          {new Date(w.created_at).toLocaleDateString()}
+                          {formatDateIST(w.created_at)}
                         </p>
                       </div>
                     </div>

@@ -8,6 +8,7 @@ Endpoints:
   GET  /admin/withdrawals               — all withdrawal requests
   POST /admin/users/{user_id}/freeze    — deactivate a user
   POST /admin/users/{user_id}/unfreeze  — reactivate a user
+  DELETE /admin/users/{user_id}         — permanently delete a user + all their records
   POST /admin/wallet/credit             — manually credit a user's wallet
   POST /admin/wallet/debit              — manually debit a user's wallet
 
@@ -162,6 +163,92 @@ def unfreeze_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """
+    Permanently delete a user and all of their records (wallets, transactions,
+    purchases, matrix positions, withdrawals, deposits, addresses).
+
+    This is a HARD delete — it removes the user's financial history. Guards:
+      • cannot delete your own admin account
+      • cannot delete another admin account
+    Any downline users are re-parented to the deleted user's sponsor so the
+    sponsor tree stays connected.
+
+    Realized platform profit is PRESERVED: the user's SOFTWARE_FEE and
+    PLATFORM_PROFIT rows are re-attributed to the admin (not deleted), so the
+    platform-profit total is unaffected by the deletion.
+    """
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own admin account.")
+
+    user = db.query(User).filter_by(id=user_id).with_for_update().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="Cannot delete an admin account.")
+
+    # Lazy imports for the dependent models (kept local to this destructive op)
+    from app.models.matrix import MatrixPosition
+    from app.models.deposit import Deposit
+    from app.models.wallet_address import WalletAddress
+    from app.models.transfer_verification import TransferVerification
+    from app.models.platform_setting import PlatformSetting
+
+    username = user.username
+
+    try:
+        # 1. Re-parent downlines to this user's sponsor (keeps the tree connected)
+        db.query(User).filter(User.sponsor_id == user_id).update(
+            {User.sponsor_id: user.sponsor_id, User.sponsor_position: None},
+            synchronize_session=False,
+        )
+
+        # 2. Null out audit references that point at this user
+        db.query(PlatformSetting).filter(PlatformSetting.frozen_by == user_id).update(
+            {PlatformSetting.frozen_by: None}, synchronize_session=False
+        )
+
+        # 3. PRESERVE realized platform profit — the platform already earned these,
+        #    so deleting the user must NOT reduce the profit total. Re-attribute the
+        #    SOFTWARE_FEE and PLATFORM_PROFIT rows to the admin (kept, still counted),
+        #    then delete the user's remaining (user-specific) transactions.
+        db.query(Transaction).filter(
+            Transaction.user_id == user_id,
+            Transaction.transaction_type.in_(
+                [TransactionType.SOFTWARE_FEE, TransactionType.PLATFORM_PROFIT]
+            ),
+        ).update({Transaction.user_id: admin.id}, synchronize_session=False)
+
+        # 4. Delete all remaining rows owned by this user (children first)
+        db.query(TransferVerification).filter(
+            (TransferVerification.sender_id == user_id)
+            | (TransferVerification.recipient_id == user_id)
+        ).delete(synchronize_session=False)
+        db.query(WalletAddress).filter(WalletAddress.user_id == user_id).delete(synchronize_session=False)
+        db.query(Deposit).filter(Deposit.user_id == user_id).delete(synchronize_session=False)
+        db.query(WithdrawalRequest).filter(WithdrawalRequest.user_id == user_id).delete(synchronize_session=False)
+        db.query(MatrixPosition).filter(MatrixPosition.user_id == user_id).delete(synchronize_session=False)
+        db.query(Transaction).filter(Transaction.user_id == user_id).delete(synchronize_session=False)
+        db.query(Wallet).filter(Wallet.user_id == user_id).delete(synchronize_session=False)
+        db.query(AgentPurchase).filter(AgentPurchase.user_id == user_id).delete(synchronize_session=False)
+
+        # 5. Finally, the user
+        db.delete(user)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("delete_user failed for user_id=%s", user_id)
+        raise HTTPException(status_code=500, detail="Failed to delete user — no changes were made.")
+
+    logger.info("ADMIN deleted user id=%s username=%s", user_id, username)
+    return {"deleted": True, "user_id": user_id, "username": username}
 
 
 # ── Platform freeze (global kill switch) ───────────────────────────────────────

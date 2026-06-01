@@ -5,6 +5,7 @@ import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Wallet as WalletIcon, TrendingUp, Lock, Activity } from 'lucide-react'
 import Pagination from '../components/Pagination'
+import { formatDateTimeIST } from '../utils/datetime'
 
 const PAGE_SIZE = 10
 
@@ -190,7 +191,7 @@ export default function Wallet() {
                         <p className="text-xs" style={{ color: '#4A5568' }}>
                           {tx.agent_tier === 0 ? 'Account' : `Agent ${tx.agent_tier}`}
                           {tx.notes ? ` • ${tx.notes}` : ''}
-                          {' • '}{new Date(tx.created_at).toLocaleString()}
+                          {' • '}{formatDateTimeIST(tx.created_at)}
                         </p>
                       </div>
                       <p className="text-sm font-semibold flex-shrink-0" style={{ color: isNeg ? '#FF4D6A' : '#00D4B4' }}>

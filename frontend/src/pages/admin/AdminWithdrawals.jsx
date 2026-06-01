@@ -4,6 +4,7 @@ import Pagination from '../../components/Pagination'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { ArrowUpFromLine, Search, RefreshCw, Clock, CheckCircle, XCircle, Loader } from 'lucide-react'
+import { formatDateTimeIST } from '../../utils/datetime'
 
 const PAGE_SIZE = 10
 
@@ -140,7 +141,7 @@ export default function AdminWithdrawals() {
                         {w.status}
                       </span>
                       <p className="text-xs mt-1" style={{ color: '#4A5568' }}>
-                        {new Date(w.created_at).toLocaleString()}
+                        {formatDateTimeIST(w.created_at)}
                       </p>
                     </div>
                   </div>

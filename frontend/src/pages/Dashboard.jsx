@@ -11,6 +11,7 @@ import toast from 'react-hot-toast'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
+import { formatTimeIST } from '../utils/datetime'
 
 const TIER_PRICES = { 1: 10, 2: 20, 3: 50, 4: 100 }
 const TIER_NAMES = { 1: 'Agent 1', 2: 'Agent 2', 3: 'Agent 3', 4: 'Agent 4' }
@@ -78,7 +79,7 @@ export default function Dashboard() {
 
   // Build the 24h income chart series from hourly UTC buckets → local-time labels
   const incomeChart = (income.buckets || []).map(b => ({
-    label: new Date(b.hour).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+    label: formatTimeIST(b.hour, { hour: '2-digit', minute: '2-digit', hour12: false }),
     amount: Number(b.amount) || 0,
   }))
 

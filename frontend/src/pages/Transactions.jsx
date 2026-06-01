@@ -4,21 +4,32 @@ import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Activity, TrendingUp, TrendingDown } from 'lucide-react'
 import Pagination from '../components/Pagination'
+import { formatDateIST } from '../utils/datetime'
 
 const PAGE_SIZE = 10
 
+// NOTE: the API serializes the TransactionType enum's lowercase *values*
+// (e.g. "agent_purchase"), so all keys/lists here must be lowercase to match.
 const TX_COLOR = {
-  DEPOSIT: '#00D4B4', CORE_INCOME: '#00D4B4', STREAM_PAYOUT: '#00D4B4',
-  BOOST_PAYOUT: '#00D4B4', SPONSOR_MILESTONE_INCOME: '#00D4B4',
-  TRANSFER_IN: '#00D4B4', WITHDRAWAL: '#FF4D6A', TRANSFER_OUT: '#FF4D6A',
-  REPURCHASE_HOLD: '#FFB547', REENTRY: '#8899AA', PURCHASE: '#FF4D6A', AGENT_PURCHASE: '#FF4D6A',
+  deposit: '#00D4B4', core_income: '#00D4B4', stream_payout: '#00D4B4',
+  boost_payout: '#00D4B4', sponsor_milestone_income: '#00D4B4',
+  transfer_in: '#00D4B4', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
+  repurchase_hold: '#FFB547', reentry: '#8899AA', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
+  core_sent: '#8899AA', software_fee: '#8899AA', platform_profit: '#8899AA', admin_generate: '#00D4B4',
 }
-const NEGATIVE = ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE', 'REPURCHASE_HOLD']
+
+// Money actually received into a wallet
+const INCOME = ['core_income', 'stream_payout', 'boost_payout', 'sponsor_milestone_income', 'transfer_in', 'deposit']
+// Money actually leaving a wallet
+const EXPENSE = ['withdrawal', 'transfer_out', 'purchase', 'agent_purchase']
+// Informational / internal records — not a real inflow or outflow for this user
+// (core_sent = audit of the 60% core split sent to upline at purchase)
+const SYSTEM = ['repurchase_hold', 'reentry', 'core_sent', 'software_fee', 'platform_profit', 'admin_generate']
 
 const TX_GROUPS = {
-  Income: ['CORE_INCOME', 'STREAM_PAYOUT', 'BOOST_PAYOUT', 'SPONSOR_MILESTONE_INCOME', 'TRANSFER_IN', 'DEPOSIT'],
-  Expenses: ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE'],
-  System: ['REPURCHASE_HOLD', 'REENTRY'],
+  Income: INCOME,
+  Expenses: EXPENSE,
+  System: SYSTEM,
 }
 
 export default function Transactions() {
@@ -38,11 +49,11 @@ export default function Transactions() {
   const txTypes = [...new Set(transactions.map(t => t.transaction_type))]
 
   const totalIn = transactions
-    .filter(t => !NEGATIVE.includes(t.transaction_type))
+    .filter(t => INCOME.includes(t.transaction_type))
     .reduce((s, t) => s + parseFloat(t.amount), 0)
 
   const totalOut = transactions
-    .filter(t => NEGATIVE.includes(t.transaction_type))
+    .filter(t => EXPENSE.includes(t.transaction_type))
     .reduce((s, t) => s + parseFloat(t.amount), 0)
 
   const filtered = transactions.filter(t => {
@@ -143,7 +154,10 @@ export default function Transactions() {
           ) : (
             <div className="row-divide">
               {paginated.map(tx => {
-                const isNeg = NEGATIVE.includes(tx.transaction_type)
+                const isNeg = EXPENSE.includes(tx.transaction_type)
+                const isIncome = INCOME.includes(tx.transaction_type)
+                const sign = isNeg ? '−' : isIncome ? '+' : ''
+                const amountColor = isNeg ? '#FF4D6A' : isIncome ? '#00D4B4' : '#8899AA'
                 const color = TX_COLOR[tx.transaction_type] || '#8899AA'
                 return (
                   <div key={tx.id} className="flex sm:grid sm:grid-cols-5 items-center gap-3 px-4 py-3">
@@ -152,7 +166,7 @@ export default function Transactions() {
                         className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0"
                         style={{ background: `${color}18`, color }}
                       >
-                        {isNeg ? '−' : '+'}
+                        {sign || '·'}
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-white truncate">
@@ -165,13 +179,13 @@ export default function Transactions() {
                       {tx.agent_tier === 0 ? 'Account' : `Agent ${tx.agent_tier}`}
                     </span>
                     <span className="hidden sm:block text-xs" style={{ color: '#4A5568' }}>
-                      {new Date(tx.created_at).toLocaleDateString()}
+                      {formatDateIST(tx.created_at)}
                     </span>
                     <p
                       className="text-sm font-semibold text-right ml-auto sm:ml-0"
-                      style={{ color: isNeg ? '#FF4D6A' : '#00D4B4' }}
+                      style={{ color: amountColor }}
                     >
-                      {isNeg ? '−' : '+'}${Math.abs(parseFloat(tx.amount)).toFixed(2)}
+                      {sign}${Math.abs(parseFloat(tx.amount)).toFixed(2)}
                     </p>
                   </div>
                 )

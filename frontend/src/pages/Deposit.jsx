@@ -5,6 +5,7 @@ import api from '../api/client'
 import toast from 'react-hot-toast'
 import { ArrowDownToLine, Clock, CheckCircle, XCircle, RefreshCw, Loader2 } from 'lucide-react'
 import Pagination from '../components/Pagination'
+import { formatDateTimeIST } from '../utils/datetime'
 
 const PAGE_SIZE = 10
 
@@ -255,7 +256,7 @@ export default function Deposit() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-white">${parseFloat(d.amount_usd).toFixed(2)} USDT</p>
                         <p className="text-xs" style={{ color: '#4A5568' }}>
-                          {new Date(d.created_at).toLocaleString()}
+                          {formatDateTimeIST(d.created_at)}
                         </p>
                       </div>
                       <span

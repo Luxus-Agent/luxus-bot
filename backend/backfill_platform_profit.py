@@ -52,6 +52,14 @@ def backfill_residuals(db, existing: set[str]) -> Decimal:
             ref = f"residual_{pos.system_type.value}_t{pos.agent_tier}_pos{pos.id}_L{level}"
             if ref in existing:
                 continue
+            # Stamp with the source event's time (the level payout, else the position
+            # placement) so backfilled rows interleave naturally in the ledger feed.
+            payout = (
+                db.query(Transaction)
+                .filter(Transaction.reference_id == f"matrix_pos_{pos.id}_L{level}")
+                .first()
+            )
+            src_dt = payout.created_at if payout else pos.created_at
             db.add(Transaction(
                 user_id=pos.user_id,
                 agent_tier=pos.agent_tier,
@@ -59,6 +67,7 @@ def backfill_residuals(db, existing: set[str]) -> Decimal:
                 amount=residual,
                 reference_id=ref,
                 notes=f"[backfill] {pos.system_type.value} L{level} level residual → platform",
+                created_at=src_dt,
             ))
             existing.add(ref)
             total += residual
@@ -86,6 +95,7 @@ def backfill_core_retained(db, existing: set[str]) -> Decimal:
             amount=Decimal(str(tx.amount)),
             reference_id=ref,
             notes=f"[backfill] core retained (no sponsor) from tx #{tx.id}",
+            created_at=tx.created_at,
         ))
         existing.add(ref)
         total += Decimal(str(tx.amount))
@@ -127,6 +137,7 @@ def backfill_transfer_fees(db, existing: set[str]) -> Decimal:
             amount=fee,
             reference_id=ref,
             notes=f"[backfill] 1% transfer fee from tx #{tx.id}",
+            created_at=tx.created_at,
         ))
         existing.add(ref)
         total += fee

@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { Send, Wallet, ArrowRight, CheckCircle, XCircle, Loader } from 'lucide-react'
+import { formatDateTimeIST } from '../../utils/datetime'
 
 export default function AdminTransfer() {
   const [balance, setBalance] = useState(0)
@@ -209,7 +210,7 @@ export default function AdminTransfer() {
                   <ArrowRight size={16} style={{ color: '#FFB547' }} className="flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-white truncate">{t.notes || 'Transfer'}</p>
-                    <p className="text-xs" style={{ color: '#4A5568' }}>{new Date(t.created_at).toLocaleString()}</p>
+                    <p className="text-xs" style={{ color: '#4A5568' }}>{formatDateTimeIST(t.created_at)}</p>
                   </div>
                   <p className="text-sm font-semibold flex-shrink-0" style={{ color: '#FF4D6A' }}>
                     −${Math.abs(parseFloat(t.amount)).toFixed(2)}

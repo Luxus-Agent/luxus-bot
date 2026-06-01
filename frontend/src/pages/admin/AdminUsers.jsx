@@ -6,7 +6,7 @@ import api from '../../api/client'
 import toast from 'react-hot-toast'
 import {
   Search, UserX, UserCheck, ChevronDown, ChevronUp, ShieldCheck,
-  Bot, Wallet, TrendingUp
+  Bot, Wallet, TrendingUp, Trash2
 } from 'lucide-react'
 
 const PAGE_SIZE = 10
@@ -56,6 +56,23 @@ export default function AdminUsers() {
       load()
     } catch (err) {
       toast.error(err.response?.data?.detail || `Failed to ${action}`)
+    }
+  }
+
+  const handleDelete = async (userId, username) => {
+    if (!window.confirm(
+      `Permanently DELETE @${username}?\n\n` +
+      `This removes the user and ALL their records (wallets, transactions, ` +
+      `purchases, matrix positions, withdrawals, deposits). Their downline is ` +
+      `re-parented to their sponsor. This cannot be undone.`
+    )) return
+    try {
+      await api.delete(`/admin/users/${userId}`)
+      toast.success(`@${username} deleted`)
+      if (expanded === userId) setExpanded(null)
+      load()
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to delete user')
     }
   }
 
@@ -178,6 +195,14 @@ export default function AdminUsers() {
                             title={user.is_active ? 'Freeze user' : 'Unfreeze user'}
                           >
                             {user.is_active ? <UserX size={15} /> : <UserCheck size={15} />}
+                          </button>
+                          <button
+                            onClick={() => handleDelete(user.id, user.username)}
+                            className="p-1.5 rounded-lg"
+                            style={{ color: '#FF4D6A', background: 'rgba(255,77,106,0.1)' }}
+                            title="Delete user"
+                          >
+                            <Trash2 size={15} />
                           </button>
                         </>
                       )}

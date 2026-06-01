@@ -3,6 +3,7 @@ import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
 import { Coins, Wallet, PlusCircle } from 'lucide-react'
+import { formatDateTimeIST } from '../../utils/datetime'
 
 export default function AdminGenerate() {
   const [summary, setSummary] = useState({ account_balance: 0, total_generated: 0 })
@@ -142,7 +143,7 @@ export default function AdminGenerate() {
                 <div key={t.id} className="flex items-center gap-3 px-5 py-3">
                   <Coins size={16} style={{ color: '#00D4B4' }} className="flex-shrink-0" />
                   <p className="flex-1 text-xs" style={{ color: '#4A5568' }}>
-                    {new Date(t.created_at).toLocaleString()}
+                    {formatDateTimeIST(t.created_at)}
                   </p>
                   <p className="text-sm font-semibold" style={{ color: '#00D4B4' }}>
                     +${Math.abs(parseFloat(t.amount)).toFixed(2)}
