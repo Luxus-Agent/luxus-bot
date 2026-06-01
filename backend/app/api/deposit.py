@@ -25,7 +25,7 @@ from app.core.wallet_ops import credit_account, debit_account, get_account_balan
 from app.database import get_db
 from app.models.deposit import Deposit
 from app.models.transfer_verification import TransferVerification
-from app.models.transaction import TransactionType
+from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
 from app.schemas.agent import DepositIn, DepositOut, DepositRefundIn, TransferIn, TransferVerifyIn
 
@@ -215,6 +215,16 @@ def _execute_transfer(
         reference_id=ref,
         notes=f"Transfer from @{sender.username}",
     )
+    # The 1% fee is realized platform profit.
+    if fee > 0:
+        db.add(Transaction(
+            user_id=sender.id,
+            agent_tier=ACCOUNT_TIER,
+            transaction_type=TransactionType.PLATFORM_PROFIT,
+            amount=fee,
+            reference_id=f"{ref}_fee",
+            notes=f"1% transfer fee — @{sender.username} → @{recipient.username}",
+        ))
     db.commit()
 
     return {

@@ -253,12 +253,21 @@ def treasury_summary(
         )
         return float(total or 0)
 
+    # Realized platform profit = software fees (10% of every payout) + all other
+    # explicitly-ledgered profit (matrix-level residuals, core-retained when a buyer
+    # has no sponsor, and 1% transfer fees).
+    platform_profit = (
+        _sum_all(TransactionType.SOFTWARE_FEE)
+        + _sum_all(TransactionType.PLATFORM_PROFIT)
+    )
+
     return {
         "account_balance": float(get_account_balance(db, admin.id)),
         "total_generated": _sum(TransactionType.ADMIN_GENERATE),
         "total_sent": _sum(TransactionType.TRANSFER_OUT),
         "total_invested": _sum_all(TransactionType.AGENT_PURCHASE),
         "total_deposited": _sum_all(TransactionType.DEPOSIT),
+        "platform_profit": platform_profit,
     }
 
 

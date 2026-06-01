@@ -53,15 +53,14 @@ def _route_half(
         primary_recipient = None
 
     if primary_recipient is None:
-        # No sponsor/supreme sponsor → amount goes to company (platform profit).
-        # Record the outgoing transaction on the buyer for accounting.
+        # No sponsor/supreme sponsor → amount is retained by the platform (realized profit).
         db.add(Transaction(
             user_id=buyer.id,
             agent_tier=agent_tier,
-            transaction_type=TransactionType.CORE_SENT,
+            transaction_type=TransactionType.PLATFORM_PROFIT,
             amount=amount,
-            reference_id=f"core_{buyer.id}_{label}",
-            notes=f"Core {label} — no sponsor, amount retained by platform",
+            reference_id=f"core_retained_{buyer.id}_{label}",
+            notes=f"Core {label} — no sponsor, retained by platform",
         ))
         return
 

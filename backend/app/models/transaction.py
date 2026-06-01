@@ -23,6 +23,7 @@ class TransactionType(str, enum.Enum):
     TRANSFER_OUT = "transfer_out"        # Sent to another user
     AGENT_PURCHASE = "agent_purchase"    # Deducted from account balance for agent buy
     ADMIN_GENERATE = "admin_generate"    # Admin-minted funds into the admin's account balance
+    PLATFORM_PROFIT = "platform_profit"  # Realized platform earnings (residuals, core-retained, transfer fee)
 
 
 class Transaction(Base):

@@ -58,7 +58,7 @@ export default function Transfer() {
         amount: amt,
       })
       setPreview({ ...form, amount: amt, fee: amt * 0.01, receive: amt * 0.99 })
-      if (data.otp_required) {
+      if (data.requires_verification) {
         setNeedsOtp(true)
         setStep('otp')
         toast.success('OTP sent to your email — first-time transfer to this user')

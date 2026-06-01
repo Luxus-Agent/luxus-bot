@@ -80,6 +80,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models.matrix import MatrixCounter, MatrixPosition, SystemType
+from app.models.transaction import Transaction, TransactionType
 
 AGENT_TIER_PRICES = {1: 10, 2: 20, 3: 50, 4: 100}
 
@@ -289,6 +290,26 @@ def place_in_matrix(
                     reentry_amount=cfg.reentry_amount * multiplier,
                     reentry_count=cfg.reentry_count,
                 ))
+
+                # Realized platform profit = the level's leftover pool after the
+                # wallet payout, re-entries, and sponsor share. reentry_amount is the
+                # per-member contribution (equal by design: Stream $1, Boost $0.30),
+                # so level gross = threshold × reentry_amount.
+                residual = (
+                    cfg.threshold * cfg.reentry_amount
+                    - cfg.wallet_amount
+                    - cfg.reentry_count * cfg.reentry_amount
+                    - cfg.sponsor_on_completion
+                ) * multiplier
+                if residual > 0:
+                    db.add(Transaction(
+                        user_id=ancestor.user_id,
+                        agent_tier=agent_tier,
+                        transaction_type=TransactionType.PLATFORM_PROFIT,
+                        amount=residual,
+                        reference_id=f"residual_{system_type.value}_t{agent_tier}_pos{ancestor.id}_L{level}",
+                        notes=f"{system_type.value} L{level} level residual → platform",
+                    ))
 
                 # Stream & Boost L2/L3: 10% extra to owner's sponsor on level
                 # completion (paid from platform pool, not deducted from wallet).

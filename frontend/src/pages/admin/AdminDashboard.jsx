@@ -9,7 +9,7 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState([])
   const [transactions, setTransactions] = useState([])
   const [withdrawals, setWithdrawals] = useState([])
-  const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0 })
+  const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0, platform_profit: 0 })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -68,7 +68,7 @@ export default function AdminDashboard() {
           {[
             { label: 'Total Users', val: users.length, sub: `${activeUsers} active`, icon: Users, color: '#3498DB' },
             { label: 'Treasury Balance', val: `$${treasury.account_balance.toFixed(2)}`, sub: 'In admin account', icon: Wallet, color: '#00D4B4' },
-            { label: 'Total Deposited', val: `$${treasury.total_deposited.toFixed(2)}`, sub: 'By users in the platform', icon: ArrowDownToLine, color: '#FFB547' },
+            { label: 'Platform Profit', val: `$${(treasury.platform_profit || 0).toFixed(2)}`, sub: 'Fees + residuals + retained', icon: DollarSign, color: '#FFB547' },
             { label: 'Total Invested', val: `$${treasury.total_invested.toFixed(2)}`, sub: 'By users in the platform', icon: TrendingUp, color: '#00FFD4' },
           ].map(({ label, val, sub, icon: Icon, color }) => (
             <div key={label} className="rounded-xl p-5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
