@@ -6,10 +6,13 @@ Split: 60% of purchase price → two equal halves
   • Second 30%  → Supreme Sponsor (sponsor's sponsor)
 
 Odd / Even rule — applied independently at each recipient:
-  • Count how many CORE_INCOME credits the recipient has already received.
-  • Next incoming credit will be count + 1.
-    – Odd  → credit goes to recipient's wallet
-    – Even → credit passes to recipient's sponsor's wallet instead
+  • Each recipient has a targeting counter (User.core_route_count) that is
+    incremented every time they are targeted — whether they keep the amount
+    (odd) or pass it up (even). This guarantees strict alternation; counting
+    only kept credits left a recipient stuck on "even" forever after their
+    first pass-up.
+    – Odd  count → credit goes to recipient's wallet
+    – Even count → credit passes to recipient's sponsor's wallet instead
   • If the recipient has no upline when the pass-up fires, the amount stays
     with the recipient.
   • If a target (sponsor / supreme) does not exist, the amount goes to the
@@ -22,15 +25,6 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.models.transaction import Transaction, TransactionType
 from app.core.wallet_ops import credit_wallet
-
-
-def _core_income_count(db: Session, user_id: int) -> int:
-    """Return the number of CORE_INCOME credits this user has received so far."""
-    return (
-        db.query(Transaction)
-        .filter_by(user_id=user_id, transaction_type=TransactionType.CORE_INCOME)
-        .count()
-    )
 
 
 def _route_half(
@@ -64,8 +58,11 @@ def _route_half(
         ))
         return
 
-    # Determine odd/even: next income number = current_count + 1
-    next_count = _core_income_count(db, primary_recipient.id) + 1
+    # Determine odd/even by this recipient's TARGETING counter. Increment on
+    # every targeting (kept or passed) so the alternation never gets stuck.
+    primary_recipient.core_route_count = (primary_recipient.core_route_count or 0) + 1
+    next_count = primary_recipient.core_route_count
+    db.flush()
 
     if next_count % 2 == 1:
         # Odd → primary recipient keeps it
@@ -129,19 +126,23 @@ def route_core(
     first_half  = (amount / 2).quantize(four_places, rounding=ROUND_HALF_UP)
     second_half = amount - first_half  # Ensures exact sum
 
-    # Load sponsor — skip if inactive or missing
+    # Load sponsor (may be inactive — needed to resolve supreme below)
     sponsor: User | None = (
         db.query(User).filter_by(id=buyer.sponsor_id).first()
         if buyer.sponsor_id else None
     )
-    if sponsor is not None and not sponsor.is_active:
-        sponsor = None
 
-    # Load supreme sponsor — use sponsor's sponsor (or skip if inactive)
+    # Supreme sponsor = sponsor's sponsor, resolved STRUCTURALLY — independent of
+    # whether the direct sponsor is active. An inactive middle sponsor must not
+    # disinherit the (possibly active) supreme sponsor of their 30%.
     supreme: User | None = (
         db.query(User).filter_by(id=sponsor.sponsor_id).first()
         if (sponsor and sponsor.sponsor_id) else None
     )
+
+    # Now apply the inactive-skip rule independently to each recipient.
+    if sponsor is not None and not sponsor.is_active:
+        sponsor = None
     if supreme is not None and not supreme.is_active:
         supreme = None
 

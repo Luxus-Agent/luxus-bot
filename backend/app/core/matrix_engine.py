@@ -23,17 +23,17 @@ $ amounts by tier_multiplier; re-entry COUNT stays fixed across tiers):
 
   Stream Agent  L1: $2.00 wallet + $1.00 re-entry ×1
                     sponsor on completion: none
-                L2: $5.00 wallet + $1.00 re-entries ×2
+                L2: $5.00 wallet + $1.00 re-entries ×3
                     sponsor on completion: $0.90 (= 10% of $9 level gross)
-                L3: $13.00 wallet + $1.00 re-entries ×3
+                L3: $13.00 wallet + $1.00 re-entries ×9
                     sponsor on completion: $2.70 (= 10% of $27 level gross)
                 (remaining pool amount → platform profit, not distributed)
 
   Boost Agent   L1: $0.60 wallet + $0.30 re-entry ×1  (single queue, always tier 1)
                     sponsor on completion: none
-                L2: $1.50 wallet + $0.30 re-entries ×2
+                L2: $1.50 wallet + $0.30 re-entries ×3
                     sponsor on completion: $0.27 (= 10% of $2.70 level gross)
-                L3: $3.60 wallet + $0.30 re-entries ×3
+                L3: $3.60 wallet + $0.30 re-entries ×9
                     sponsor on completion: $0.81 (= 10% of $8.10 level gross)
                 (remaining pool amount → platform profit, not distributed)
 
@@ -47,11 +47,12 @@ Re-entry destination (each queue self-cycles — per the client matrix diagram
   Stream re-entries → placed back into the SAME tier's Stream queue as DUMMY slots
   Boost  re-entries → placed back into the single Boost queue as REAL slots
 
-Re-entry count (Stream): FIXED at 1 / 2 / 3 across all tiers.
+Re-entry count (Stream): FIXED at 1 / 3 / 9 across all tiers (per client doc —
+  "every 3rd income is used to get re-entries", i.e. members ÷ 3 per level).
   Only the per-re-entry $ amount scales by tier_multiplier:
-       Agent 2 (2×): each re-entry = $2  (still 1/2/3 re-entries)
-       Agent 3 (5×): each re-entry = $5  (still 1/2/3 re-entries)
-       Agent 4 (10×): each re-entry = $10 (still 1/2/3 re-entries)
+       Agent 2 (2×): each re-entry = $2  (still 1/3/9 re-entries)
+       Agent 3 (5×): each re-entry = $5  (still 1/3/9 re-entries)
+       Agent 4 (10×): each re-entry = $10 (still 1/3/9 re-entries)
 
 Sponsor share — Stream AND Boost (L2 + L3 only):
   Per the client doc, "10% of every income goes to the user's sponsor — not
@@ -108,14 +109,14 @@ PAYOUT_CONFIG: dict[SystemType, dict[int, LevelConfig]] = {
             threshold=9,
             wallet_amount=Decimal("5.00"),
             reentry_amount=Decimal("1.00"),
-            reentry_count=2,
+            reentry_count=3,
             sponsor_on_completion=Decimal("0.90"),
         ),
         3: LevelConfig(
             threshold=27,
             wallet_amount=Decimal("13.00"),
             reentry_amount=Decimal("1.00"),
-            reentry_count=3,
+            reentry_count=9,
             sponsor_on_completion=Decimal("2.70"),
         ),
     },
@@ -130,14 +131,14 @@ PAYOUT_CONFIG: dict[SystemType, dict[int, LevelConfig]] = {
             threshold=9,
             wallet_amount=Decimal("1.50"),
             reentry_amount=Decimal("0.30"),
-            reentry_count=2,
+            reentry_count=3,
             sponsor_on_completion=Decimal("0.27"),  # 10% of $2.70 level gross
         ),
         3: LevelConfig(
             threshold=27,
             wallet_amount=Decimal("3.60"),
             reentry_amount=Decimal("0.30"),
-            reentry_count=3,
+            reentry_count=9,
             sponsor_on_completion=Decimal("0.81"),  # 10% of $8.10 level gross
         ),
     },

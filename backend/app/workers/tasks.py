@@ -143,9 +143,9 @@ def process_matrix_payout(
     """
     Credit wallet for a completed matrix level, then queue re-entries.
 
-    Re-entry destination:
-      Stream → re-enters BOOST (not back into Stream)
-      Boost  → re-enters BOOST
+    Re-entry destination (each queue self-cycles — per the client diagram):
+      Stream → DUMMY re-entry back into the SAME tier's Stream queue
+      Boost  → REAL  re-entry back into the single Boost queue
     """
     from app.core.wallet_ops import credit_wallet
     from app.models.matrix import SystemType
@@ -218,7 +218,7 @@ def process_sponsor_payout(
     from app.core.wallet_ops import credit_wallet
     from app.models.user import User
     from app.models.wallet_address import WalletAddress  # noqa: F401
-    from app.models.transaction import TransactionType
+    from app.models.transaction import Transaction, TransactionType
     from app.database import SessionLocal
 
     db = SessionLocal()
@@ -228,12 +228,20 @@ def process_sponsor_payout(
             logger.error("process_sponsor_payout: owner user_id=%s not found", owner_user_id)
             return
 
-        if owner.sponsor_id:
-            beneficiary_id = owner.sponsor_id
+        # Resolve the sponsor; an inactive sponsor is skipped (consistent with
+        # Core Agent routing) and treated the same as having no sponsor.
+        sponsor = (
+            db.query(User).filter_by(id=owner.sponsor_id).first()
+            if owner.sponsor_id else None
+        )
+        if sponsor is not None and not sponsor.is_active:
+            sponsor = None
+
+        if sponsor is not None:
             notes = f"{system_type} L{level} sponsor milestone from pos #{matrix_position_id}"
             credit_wallet(
                 db=db,
-                user_id=beneficiary_id,
+                user_id=sponsor.id,
                 agent_tier=agent_tier,
                 gross_amount=Decimal(amount),
                 tx_type=TransactionType.SPONSOR_MILESTONE_INCOME,
@@ -241,10 +249,21 @@ def process_sponsor_payout(
                 notes=notes,
             )
         else:
-            # Q10 principle: no sponsor → amount retained by platform, not credited to owner
+            # No (active) sponsor → the share is retained by the platform. The
+            # level residual already excludes this amount on the assumption a
+            # sponsor receives it, so it MUST be booked as platform profit here
+            # to keep the books balanced.
+            db.add(Transaction(
+                user_id=owner_user_id,
+                agent_tier=agent_tier,
+                transaction_type=TransactionType.PLATFORM_PROFIT,
+                amount=Decimal(amount),
+                reference_id=f"sponsor_orphan_pos_{matrix_position_id}_L{level}",
+                notes=f"{system_type} L{level} sponsor share — no active sponsor, retained by platform",
+            ))
             logger.info(
-                "process_sponsor_payout: owner=%s has no sponsor — milestone amount retained by platform",
-                owner_user_id,
+                "process_sponsor_payout: owner=%s has no active sponsor — $%s retained by platform",
+                owner_user_id, amount,
             )
 
         db.commit()
@@ -438,7 +457,7 @@ def process_withdrawal(self, withdrawal_id: int) -> None:
                 user_id=withdrawal.user_id,
                 agent_tier=withdrawal.agent_tier,
                 amount=Decimal(str(withdrawal.amount)),
-                tx_type=TransactionType.TRANSFER_IN,
+                tx_type=TransactionType.WITHDRAWAL_REFUND,
                 reference_id=f"withdrawal_{withdrawal_id}_refund",
                 notes=f"Refund: withdrawal #{withdrawal_id} failed — balance restored",
             )

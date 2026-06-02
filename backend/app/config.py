@@ -12,6 +12,14 @@ class Settings(BaseSettings):
     # Environment — "development" uses NOWPayments sandbox, "production" uses live
     APP_ENV: str = "development"
 
+    # Logging verbosity: DEBUG | INFO | WARNING | ERROR
+    LOG_LEVEL: str = "INFO"
+
+    # CORS — comma-separated list of allowed frontend origins, or "*" for any.
+    # In production set this to your hosted frontend URL, e.g.
+    #   CORS_ORIGINS=https://app.yourdomain.com
+    CORS_ORIGINS: str = "*"
+
     # NOWPayments
     NOWPAYMENTS_API_KEY: str = ""
     NOWPAYMENTS_IPN_SECRET: str = ""
@@ -31,6 +39,13 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "changeme"
     ADMIN_REFERRAL_CODE: str = "ADMIN001"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS_ORIGINS into a list. '*' → allow any origin."""
+        if self.CORS_ORIGINS.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     model_config = {
         # Looks for .env one level up (project root) when running from backend/

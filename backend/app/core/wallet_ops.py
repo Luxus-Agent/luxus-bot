@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 from app.models.wallet import Wallet, WalletType
 from app.models.transaction import Transaction, TransactionType
 
-REPURCHASE_RATE = Decimal("0.10")
-SOFTWARE_FEE_RATE = Decimal("0.10")   # Platform fee — deducted before repurchase split
+REPURCHASE_RATE = Decimal("0.10")     # 10% of gross → repurchase reserve
+SOFTWARE_FEE_RATE = Decimal("0.10")   # 10% of gross → platform profit
 ACCOUNT_TIER = 0  # Sentinel agent_tier for the platform account balance wallet
 
 # Tier prices used to determine auto-repurchase threshold
@@ -40,27 +40,25 @@ def credit_wallet(
     """
     Credit gross_amount to a user's wallet for the given agent tier.
 
-    Two separate 10% deductions apply (per client spec):
-      1. Software fee (10%)  → platform profit, not distributed
-      2. Repurchase reserve (10% of net) → held in repurchase wallet
+    Two separate 10% deductions apply (per client spec) — BOTH computed off the
+    gross amount (not stacked sequentially):
+      1. Software fee (10% of gross)      → platform profit, not distributed
+      2. Repurchase reserve (10% of gross) → held in repurchase wallet
 
     Net math on gross_amount:
-      software_fee = gross × 10%          (goes to platform)
-      net          = gross × 90%
-      repurchase   = net  × 10%  = gross × 9%
-      main_credit  = net  × 90%  = gross × 81%
+      software_fee = gross × 10%   (goes to platform)
+      repurchase   = gross × 10%   (held in repurchase wallet)
+      main_credit  = gross × 80%   (withdrawable)
 
     All three movements are recorded in the transaction ledger.
     """
     four_places = Decimal("0.0001")
 
-    # 1. Deduct 10% platform software fee (not credited to any user wallet)
+    # Both 10% deductions are computed off the GROSS amount (two separate
+    # sections per client spec). Software fee → platform; repurchase → reserve.
     software_fee = (gross_amount * SOFTWARE_FEE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
-    net_after_fee = gross_amount - software_fee
-
-    # 2. Split net: 10% repurchase reserve, 90% main wallet
-    repurchase = (net_after_fee * REPURCHASE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
-    main_credit = net_after_fee - repurchase
+    repurchase = (gross_amount * REPURCHASE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
+    main_credit = gross_amount - software_fee - repurchase
 
     main_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.MAIN)
     main_wallet.balance = Decimal(str(main_wallet.balance)) + main_credit

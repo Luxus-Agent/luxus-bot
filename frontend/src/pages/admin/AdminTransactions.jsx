@@ -16,6 +16,7 @@ const TX_COLOR = {
   transfer_in: '#00D4B4', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
   repurchase_hold: '#FFB547', reentry: '#8899AA', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
   core_sent: '#8899AA', software_fee: '#8899AA', platform_profit: '#8899AA', admin_generate: '#00D4B4',
+  withdrawal_refund: '#FFB547',
 }
 const INCOME = ['core_income', 'stream_payout', 'boost_payout', 'sponsor_milestone_income', 'transfer_in', 'deposit']
 const EXPENSE = ['withdrawal', 'transfer_out', 'purchase', 'agent_purchase']

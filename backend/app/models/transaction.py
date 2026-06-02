@@ -17,6 +17,7 @@ class TransactionType(str, enum.Enum):
     REPURCHASE_HOLD = "repurchase_hold"
     SOFTWARE_FEE = "software_fee"        # 10% platform fee deducted from every wallet credit
     WITHDRAWAL = "withdrawal"
+    WITHDRAWAL_REFUND = "withdrawal_refund"  # Failed payout returned — reversal, not income
     SPONSOR_MILESTONE_INCOME = "sponsor_milestone_income"  # Matrix sponsor milestone payout
     DEPOSIT = "deposit"                  # Account balance top-up via NOWPayments
     TRANSFER_IN = "transfer_in"          # Received from another user

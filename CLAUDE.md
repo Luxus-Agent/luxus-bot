@@ -49,6 +49,7 @@ agent-revenue-sharing-platform/
 │   │   │   ├── wallet_ops.py    # credit/debit_wallet() + credit/debit_account() + withdrawable/earnings
 │   │   │   ├── platform_state.py # Freeze get/set helpers
 │   │   │   └── security.py      # JWT + password hashing
+│   │   ├── logging_config.py    # Central timestamped logging setup (LOG_LEVEL)
 │   │   ├── services/
 │   │   │   ├── nowpayments.py   # Deposit invoices, IPN verify, payout API
 │   │   │   └── email_service.py # SMTP email — OTP, activation, withdrawal notifications
@@ -156,8 +157,8 @@ The 60% is split into two equal halves (30% each):
 - **First 30%** → Buyer's direct Sponsor
 - **Second 30%** → Buyer's Supreme Sponsor (sponsor's sponsor)
 
-**Odd / Even rule at each recipient:**
-- Count how many `CORE_INCOME` transactions the recipient has already received.
+**Odd / Even rule at each recipient** (tracked by `User.core_route_count`):
+- Each recipient has a **targeting counter** incremented on every targeting — whether the amount is kept (odd) or passed up (even). Counting only kept credits (the old behaviour) left a recipient stuck on "even" forever after their first pass-up.
 - If next count is **odd** → amount goes to recipient's wallet
 - If next count is **even** → amount passes to recipient's sponsor's wallet instead
 - If no upline to pass to → stays with recipient
@@ -170,14 +171,14 @@ Locked via `MatrixCounter` (SELECT FOR UPDATE).
 | Level | Threshold | Wallet (base $10) | Re-entries | Sponsor share (base $10) |
 |-------|-----------|-------------------|------------|--------------------------|
 | L1 | 3 members | $2.00 | 1 × $1.00 | — |
-| L2 | 9 members | $5.00 | 2 × $1.00 | $0.90 on completion (10% of $9 gross) |
-| L3 | 27 members | $13.00 | 3 × $1.00 | $2.70 on completion (10% of $27 gross) |
+| L2 | 9 members | $5.00 | 3 × $1.00 | $0.90 on completion (10% of $9 gross) |
+| L3 | 27 members | $13.00 | 9 × $1.00 | $2.70 on completion (10% of $27 gross) |
 
 Remaining pool after payouts + re-entries + sponsor share → **platform profit**.
 
 **Tier multipliers:** Agent 1 = 1×, Agent 2 = 2×, Agent 3 = 5×, Agent 4 = 10×
 Wallet, per-re-entry amount, and sponsor share all scale by multiplier.
-**Re-entry COUNT is fixed at 1/2/3 across all tiers** (only the $ per re-entry scales).
+**Re-entry COUNT is fixed at 1/3/9 across all tiers** (members ÷ 3 per level, per the client doc "every 3rd income"; only the $ per re-entry scales).
 
 **Stream sponsor share:** At L2 and L3, an *extra* 10% of the level's gross is credited to the owner's sponsor on level completion — paid from the platform pool, not deducted from the owner's wallet. L1 has no sponsor share.
 
@@ -189,8 +190,8 @@ Uses the same 3x3 matrix format. **Single global queue** (no per-tier split). Al
 | Level | Threshold | Wallet | Re-entry | Sponsor share |
 |-------|-----------|--------|----------|---------------|
 | L1 | 3 members | $0.60 | 1 × $0.30 | — |
-| L2 | 9 members | $1.50 | 2 × $0.30 | $0.27 on completion (10% of $2.70 gross) |
-| L3 | 27 members | $3.60 | 3 × $0.30 | $0.81 on completion (10% of $8.10 gross) |
+| L2 | 9 members | $1.50 | 3 × $0.30 | $0.27 on completion (10% of $2.70 gross) |
+| L3 | 27 members | $3.60 | 9 × $0.30 | $0.81 on completion (10% of $8.10 gross) |
 
 Remaining pool after payouts + re-entries + sponsor share → **platform profit**.
 
@@ -201,11 +202,11 @@ Remaining pool after payouts + re-entries + sponsor share → **platform profit*
 **Re-entry rule:** Boost re-entries are real (non-dummy) positions placed back into the single Boost queue. (Stream no longer feeds Boost — each queue self-cycles its own re-entries.)
 
 ### Wallet rule
-Every income credit → two separate 10% deductions:
-1. **10% software fee** → platform profit (not credited to any user)
-2. **10% repurchase reserve** (of the remaining 90%) → held in REPURCHASE wallet per tier
+Every income credit → two separate 10% deductions, **both computed off the gross**:
+1. **10% software fee** (of gross) → platform profit (not credited to any user)
+2. **10% repurchase reserve** (of gross) → held in REPURCHASE wallet per tier
 
-Effective split of gross income: **81% main wallet** (withdrawable) + **9% repurchase** + **10% platform fee**.
+Effective split of gross income: **80% main wallet** (withdrawable) + **10% repurchase** + **10% platform fee**.
 ACCOUNT balance (deposits/transfers) is credited at **100%** — no deductions.
 
 ### Auto-repurchase
@@ -339,16 +340,21 @@ Safe to re-run — exits early if an admin already exists.
 - **Inactive sponsors are skipped** in Core Agent routing — income passes to supreme sponsor or goes to platform.
 - **Stream re-entries are dummy** — they are placed back into the **same tier's Stream queue**, fill matrix slots, do not receive wallet payouts, and spawn no further re-entries. Only one real Stream entry per user at a time.
 - **Boost re-entries are NOT dummy** — all positions in the Boost queue (including Boost's own re-entries) receive full payouts when their level fills.
-- **Stream re-entry count is FIXED at 1/2/3 for L1/L2/L3** across all tiers — only the per-re-entry $ amount scales by tier multiplier (Agent 2 = $2 per re-entry, Agent 3 = $5, Agent 4 = $10).
+- **Stream re-entry count is FIXED at 1/3/9 for L1/L2/L3** across all tiers (members ÷ 3 per level, per the client doc "every 3rd income is used to get re-entries") — only the per-re-entry $ amount scales by tier multiplier (Agent 2 = $2 per re-entry, Agent 3 = $5, Agent 4 = $10).
 - **Stream sponsor income (L2/L3) is paid on level completion as 10% × level gross × tier_multiplier** — L2 base $0.90, L3 base $2.70. Not a position-fill milestone. Paid extra from the platform pool; owner's wallet credit is unaffected.
 - **Boost sponsor income (L2/L3) uses the same completion-share model** — L2 $0.27 (10% of $2.70 gross), L3 $0.81 (10% of $8.10 gross). Boost is always tier 1, so no multiplier scaling. The old per-position milestone model (5th/4th/20th member → $0.30) is retired. Boost L3 wallet is **$3.60** (latest client spec, down from $4.90).
 - **Each queue self-cycles its own re-entries:** Stream re-entries (dummy) re-enter the same tier's Stream queue; Boost re-entries (real) re-enter the single Boost queue at agent_tier=1. Stream does not feed Boost.
 - **Auto-repurchase:** when REPURCHASE wallet >= tier price, a new purchase is auto-activated via Celery.
-- **Two separate 10% deductions** on every wallet credit: 10% software fee (platform profit) + 10% repurchase reserve. Effective user take = 81% of gross income credited.
+- **Two separate 10% deductions** on every wallet credit, **both off the gross**: 10% software fee (platform profit) + 10% repurchase reserve. Effective user take = 80% of gross income credited.
 - **`/deposit/balance` returns `{ "account_balance": float }`** — use key `account_balance`, not `balance`.
 - **Login is by username + password** (not email) — for both regular users and admin. `UserLogin` takes `username`; the frontend Login form has a Username field.
 - **Admin access:** created via `seed_admin.py`. Admin endpoints at `/admin/*`. Admin logs in through the same `/login` page and is routed to `/admin` automatically. Admin pages (including Profile) render the admin sidebar.
 - **Frontend auth:** two-step login — POST `/auth/login` (username + password) for JWT, then GET `/auth/me` for full profile (includes `is_admin`).
+- **Login 401 handling:** the axios response interceptor (`api/client.js`) only force-logs-out + reloads to `/login` for 401s on *authenticated* requests (expired session). It **skips** that for the auth endpoints (`/auth/login`, `/auth/register`, etc.) so a failed login shows the inline error toast and **keeps the typed form values** instead of reloading the page. Was previously a bug: any 401 reloaded the page, killing the error toast and wiping the form.
+- **Frontend API base URL:** `api/client.js` uses `import.meta.env.VITE_API_URL || '/api'`. Local dev / same-domain (reverse-proxy) deploys leave it unset (`/api` + Vite proxy). For split-domain hosting set `VITE_API_URL` to the backend's public URL in `frontend/.env.production`.
+- **Logging:** `app/logging_config.py` configures one timestamped handler (`time | LEVEL | logger | message`) for root + uvicorn loggers; verbosity via `LOG_LEVEL` (default INFO). `main.py` adds a request-logging middleware (method/path/status/**duration**, 4xx/5xx at WARNING) and a catch-all exception handler that logs unhandled errors with a full traceback. Use `LOG_LEVEL=DEBUG` to trace, then revert.
+- **CORS:** `main.py` reads allowed origins from `settings.cors_origins_list` (`CORS_ORIGINS` env, comma-separated or `*`). Set it to the frontend URL in production instead of `*`.
+- **NOWPayments payouts need JWT + 2FA in production:** `send_payout` currently uses only `x-api-key` (fine for deposits/invoices). Outgoing payouts require the `/v1/auth` JWT and a 2FA verify step on the live API — wire this up before go-live or withdrawals will fail (then auto-refund).
 - **Platform freeze (global kill switch):** admin can freeze all user money-movement (deposit / withdraw / transfer / purchase) via `POST /admin/platform/freeze` (reason optional, admin-only) and lift it via `POST /admin/platform/unfreeze`. While frozen, guarded user endpoints return HTTP 423; admins bypass. State lives in the single-row `platform_settings` table. Users poll `GET /platform/status` (no reason exposed); admins read `GET /admin/platform/status` (full audit). Frontend shows a red banner + a Freeze/Frozen toggle in the admin top bar.
 - **Admin Treasury (separate from user flows):** `POST /admin/generate` mints funds into the admin's own account balance (for off-platform payments — cash/GPay/cheque/crypto, NOT a deposit); `POST /admin/transfer` sends treasury funds to any user by username (no fee, instant); `GET /admin/treasury/summary` returns account_balance / total_generated / total_sent / total_invested / total_deposited / **platform_profit**. Admin nav has a Treasury group (Generate, Send to User) and no longer reuses the user Wallet/Withdraw pages.
 - **Platform profit (realized):** `platform_profit` = SUM(`SOFTWARE_FEE`) + SUM(`PLATFORM_PROFIT`). `PLATFORM_PROFIT` ledger entries are written at each realization point: matrix level-completion residual (`matrix_engine.place_in_matrix`), Core amount retained when a buyer has no sponsor (`proactive._route_half`), and the 1% transfer fee (`deposit._execute_transfer`). Software fees stay as their own `SOFTWARE_FEE` rows. The admin dashboard's "Platform Profit" card shows this. Historical events were backfilled once via `backend/backfill_platform_profit.py` (idempotent). Pending (uncompleted) matrix money is intentionally NOT counted — only realized profit.

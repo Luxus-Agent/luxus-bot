@@ -16,6 +16,7 @@ const TX_COLOR = {
   transfer_in: '#00D4B4', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
   repurchase_hold: '#FFB547', reentry: '#8899AA', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
   core_sent: '#8899AA', software_fee: '#8899AA', platform_profit: '#8899AA', admin_generate: '#00D4B4',
+  withdrawal_refund: '#FFB547',
 }
 
 // Money actually received into a wallet
@@ -23,8 +24,9 @@ const INCOME = ['core_income', 'stream_payout', 'boost_payout', 'sponsor_milesto
 // Money actually leaving a wallet
 const EXPENSE = ['withdrawal', 'transfer_out', 'purchase', 'agent_purchase']
 // Informational / internal records — not a real inflow or outflow for this user
-// (core_sent = audit of the 60% core split sent to upline at purchase)
-const SYSTEM = ['repurchase_hold', 'reentry', 'core_sent', 'software_fee', 'platform_profit', 'admin_generate']
+// (core_sent = audit of the 60% core split sent to upline at purchase;
+//  withdrawal_refund = reversal of a failed payout, not new income)
+const SYSTEM = ['repurchase_hold', 'reentry', 'core_sent', 'software_fee', 'platform_profit', 'admin_generate', 'withdrawal_refund']
 
 const TX_GROUPS = {
   Income: INCOME,

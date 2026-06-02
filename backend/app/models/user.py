@@ -22,6 +22,15 @@ class User(Base):
     # Position in sponsor's direct downline (1-based) — used by ProActive odd/even routing
     sponsor_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # How many times this user has been TARGETED as a Core recipient (sponsor or
+    # supreme). Incremented on every targeting — whether the amount is kept (odd)
+    # or passed up (even) — so the odd/even alternation is preserved. Counting
+    # only kept credits (the old behaviour) left a recipient stuck on "even"
+    # forever after their first pass-up.
+    core_route_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False)

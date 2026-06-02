@@ -13,7 +13,10 @@
       "Bash(/opt/homebrew/Caskroom/miniconda/base/envs/luxus/bin/python -c \"import ast; ast.parse\\(open\\('app/services/email_service.py'\\).read\\(\\)\\); print\\('email_service.py: syntax OK'\\)\")",
       "Bash(extract-text \"C:\\\\Users\\\\Shamlatech\\\\Downloads\\\\Luxus 2.docx\")",
       "Bash(pandoc '/c/Users/Shamlatech/Downloads/Luxus 2.docx' -o /tmp/luxus2.md)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/core/matrix_engine.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/core/wallet_ops.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(ls app/../tests)",
+      "Bash(ls test_*.py)"
     ]
   }
 }
