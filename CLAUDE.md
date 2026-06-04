@@ -171,14 +171,14 @@ Locked via `MatrixCounter` (SELECT FOR UPDATE).
 | Level | Threshold | Wallet (base $10) | Re-entries | Sponsor share (base $10) |
 |-------|-----------|-------------------|------------|--------------------------|
 | L1 | 3 members | $2.00 | 1 × $1.00 | — |
-| L2 | 9 members | $5.00 | 2 × $1.00 | $0.90 on completion (10% of $9 gross) |
-| L3 | 27 members | $13.00 | 3 × $1.00 | $2.70 on completion (10% of $27 gross) |
+| L2 | 9 members | $5.00 | 3 × $1.00 | $0.90 on completion (10% of $9 gross) |
+| L3 | 27 members | $13.00 | 9 × $1.00 | $2.70 on completion (10% of $27 gross) |
 
 Remaining pool after payouts + re-entries + sponsor share → **platform profit**.
 
 **Tier multipliers:** Agent 1 = 1×, Agent 2 = 2×, Agent 3 = 5×, Agent 4 = 10×
 Wallet, per-re-entry amount, and sponsor share all scale by multiplier.
-**Re-entry COUNT is fixed at 1/2/3 across all tiers** (L1=1, L2=2, L3=3 — total 6 per full cycle, per the client doc "every Nth income spawns a re-entry"; only the $ per re-entry scales).
+**Re-entry COUNT is fixed at 1/3/9 across all tiers** (L1=1, L2=3, L3=9 — total 13 per full cycle, per the client doc "every Nth income spawns a re-entry"; only the $ per re-entry scales).
 
 **Stream sponsor share:** At L2 and L3, an *extra* 10% of the level's gross is credited to the owner's sponsor on level completion — paid from the platform pool, not deducted from the owner's wallet. L1 has no sponsor share.
 
@@ -190,8 +190,8 @@ Uses the same 3x3 matrix format. **Single global queue** (no per-tier split). Al
 | Level | Threshold | Wallet | Re-entry | Sponsor share |
 |-------|-----------|--------|----------|---------------|
 | L1 | 3 members | $0.60 | 1 × $0.30 | — |
-| L2 | 9 members | $1.50 | 2 × $0.30 | $0.27 on completion (10% of $2.70 gross) |
-| L3 | 27 members | $3.60 | 3 × $0.30 | $0.81 on completion (10% of $8.10 gross) |
+| L2 | 9 members | $1.50 | 3 × $0.30 | $0.27 on completion (10% of $2.70 gross) |
+| L3 | 27 members | $3.60 | 9 × $0.30 | $0.81 on completion (10% of $8.10 gross) |
 
 Remaining pool after payouts + re-entries + sponsor share → **platform profit**.
 
@@ -340,7 +340,7 @@ Safe to re-run — exits early if an admin already exists.
 - **Inactive sponsors are skipped** in Core Agent routing — income passes to supreme sponsor or goes to platform.
 - **Stream re-entries are dummy** — they are placed back into the **same tier's Stream queue**, fill matrix slots, do not receive wallet payouts, and spawn no further re-entries. Only one real Stream entry per user at a time.
 - **Boost re-entries are NOT dummy** — all positions in the Boost queue (including Boost's own re-entries) receive full payouts when their level fills.
-- **Stream re-entry count is FIXED at 1/2/3 for L1/L2/L3** across all tiers (total 6 re-entries per full cycle, per the client doc "every Nth income spawns a re-entry") — only the per-re-entry $ amount scales by tier multiplier (Agent 2 = $2 per re-entry, Agent 3 = $5, Agent 4 = $10). Boost uses the same 1/2/3 counts (always tier 1, no $ scaling).
+- **Stream re-entry count is FIXED at 1/3/9 for L1/L2/L3** across all tiers (total 13 re-entries per full cycle, per the client doc "every Nth income spawns a re-entry") — only the per-re-entry $ amount scales by tier multiplier (Agent 2 = $2 per re-entry, Agent 3 = $5, Agent 4 = $10). Boost uses the same 1/3/9 counts (always tier 1, no $ scaling).
 - **Stream sponsor income (L2/L3) is paid on level completion as 10% × level gross × tier_multiplier** — L2 base $0.90, L3 base $2.70. Not a position-fill milestone. Paid extra from the platform pool; owner's wallet credit is unaffected.
 - **Boost sponsor income (L2/L3) uses the same completion-share model** — L2 $0.27 (10% of $2.70 gross), L3 $0.81 (10% of $8.10 gross). Boost is always tier 1, so no multiplier scaling. The old per-position milestone model (5th/4th/20th member → $0.30) is retired. Boost L3 wallet is **$3.60** (latest client spec, down from $4.90).
 - **Each queue self-cycles its own re-entries:** Stream re-entries (dummy) re-enter the same tier's Stream queue; Boost re-entries (real) re-enter the single Boost queue at agent_tier=1. Stream does not feed Boost.
