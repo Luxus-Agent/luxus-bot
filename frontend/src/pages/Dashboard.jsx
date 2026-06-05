@@ -77,7 +77,7 @@ export default function Dashboard() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // Build the 24h income chart series from hourly UTC buckets → local-time labels
+  // Build the 24h income chart series from 2-hour IST buckets → IST time labels
   const incomeChart = (income.buckets || []).map(b => ({
     label: formatTimeIST(b.hour, { hour: '2-digit', minute: '2-digit', hour12: false }),
     amount: Number(b.amount) || 0,
@@ -299,7 +299,8 @@ export default function Dashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#1E2A38" vertical={false} />
                   <XAxis
                     dataKey="label"
-                    interval={3}
+                    interval="preserveStartEnd"
+                    minTickGap={16}
                     tick={{ fill: '#4A5568', fontSize: 11 }}
                     axisLine={{ stroke: '#1E2A38' }}
                     tickLine={false}

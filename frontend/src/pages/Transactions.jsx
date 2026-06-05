@@ -86,7 +86,7 @@ export default function Transactions() {
         </div>
 
         {/* Totals */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
             <div className="flex items-center gap-2 mb-1">
               <Activity size={16} style={{ color: '#8899AA' }} />

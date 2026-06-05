@@ -74,32 +74,50 @@ def daily_income(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Income earned in the last 24 hours, bucketed into 24 hourly slots.
+    Income earned in the last 24 hours, bucketed into 12 two-hour slots
+    aligned to IST (Asia/Kolkata) even-hour boundaries.
     Only revenue-engine earnings count (deposits/transfers are excluded).
-    Bucket timestamps are UTC (ISO with trailing 'Z') so the client can
-    render them in the viewer's local time.
+    Bucket timestamps are emitted as UTC (ISO with trailing 'Z'); because the
+    buckets are anchored to IST 2-hour marks, the client renders them as clean
+    IST labels (00:00, 02:00, ... 22:00) instead of off-by-:30 values.
     """
-    now = datetime.utcnow()
-    start = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+    IST_OFFSET = timedelta(hours=5, minutes=30)
+    BUCKET_HOURS = 2
+    BUCKET_COUNT = 12  # 12 × 2h = 24h window
+
+    # Floor "now" (in IST) to the current even 2-hour boundary, then step back
+    # so the window covers the last 24 hours ending at the current bucket.
+    now_ist = datetime.utcnow() + IST_OFFSET
+    current_bucket_ist = now_ist.replace(
+        hour=now_ist.hour - (now_ist.hour % BUCKET_HOURS),
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    start_ist = current_bucket_ist - timedelta(hours=BUCKET_HOURS * (BUCKET_COUNT - 1))
+    start_utc = start_ist - IST_OFFSET  # back to UTC for comparison with stored timestamps
 
     rows = (
         db.query(Transaction)
         .filter(
             Transaction.user_id == current_user.id,
             Transaction.transaction_type.in_(INCOME_TYPES),
-            Transaction.created_at >= start,
+            Transaction.created_at >= start_utc,
         )
         .all()
     )
 
     buckets = [
-        {"hour": (start + timedelta(hours=i)).isoformat() + "Z", "amount": 0.0}
-        for i in range(24)
+        {
+            "hour": (start_utc + timedelta(hours=BUCKET_HOURS * i)).isoformat() + "Z",
+            "amount": 0.0,
+        }
+        for i in range(BUCKET_COUNT)
     ]
     total = Decimal("0")
     for tx in rows:
-        idx = int((tx.created_at - start).total_seconds() // 3600)
-        if 0 <= idx < 24:
+        idx = int((tx.created_at - start_utc).total_seconds() // (BUCKET_HOURS * 3600))
+        if 0 <= idx < BUCKET_COUNT:
             buckets[idx]["amount"] = round(buckets[idx]["amount"] + float(tx.amount), 4)
             total += Decimal(str(tx.amount))
 
