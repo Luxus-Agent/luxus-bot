@@ -22,7 +22,7 @@ body {
   height: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: #0E1117;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: #1E2A38;
@@ -30,6 +30,11 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #00D4B4;
+}
+/* Firefox: thin scrollbar with a transparent track (no light line on scroll) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1E2A38 transparent;
 }
 
 .glow-text {

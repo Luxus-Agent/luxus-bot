@@ -137,13 +137,13 @@ export default function Withdraw() {
   return (
     <Layout>
       <div className="space-y-6 fade-in">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
           <div>
             <h1 className="text-2xl font-bold text-white">Withdraw</h1>
             <p className="text-sm mt-1" style={{ color: '#8899AA' }}>Send USDT to your BEP-20 wallet address</p>
           </div>
           <div
-            className="flex items-start gap-2 px-3 py-2 rounded-xl flex-shrink-0"
+            className="flex items-start gap-2 px-3 py-2 rounded-xl sm:flex-shrink-0"
             style={{ background: 'rgba(255,77,106,0.07)', border: '1px solid rgba(255,77,106,0.25)' }}
           >
             <AlertCircle size={14} style={{ color: '#FF4D6A' }} className="flex-shrink-0 mt-0.5" />

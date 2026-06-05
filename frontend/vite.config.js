@@ -6,6 +6,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 3000,
+    host: true,                 // listen on all interfaces (needed for tunnels / LAN access)
+    allowedHosts: true,         // allow ngrok / external hostnames in dev
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
