@@ -66,6 +66,7 @@ agent-revenue-sharing-platform/
 │   │       ├── deposit.py       # account balance / create deposit / transfer / refund
 │   │       ├── admin.py         # admin-only: users + summary, transactions, withdrawals, freeze/unfreeze, treasury (generate/transfer), platform freeze
 │   │       ├── platform.py      # GET /platform/status (freeze state for any logged-in user)
+│   │       ├── distribution.py  # GET /distribution/wallet-map — TokenPocket/MultiSender consolidated endpoint
 │   │       └── payments.py      # NOWPayments IPN webhook
 │   ├── create_tables.py         # One-time DB table creation (run once on fresh setup)
 ├── .env                         # Local secrets (never commit)
@@ -101,8 +102,9 @@ Tables: `users`, `agent_purchases`, `matrix_positions`, `matrix_counters`, `wall
 ## Auth Flow
 
 ```
-1. POST /auth/register          → creates user (sponsor_username REQUIRED), sends OTP
-   GET  /auth/check-username    → real-time username availability check (used by register form)
+1. POST /auth/register          → creates user (sponsor_username REQUIRED, optional BEP-20 wallet_address), sends OTP
+   GET  /auth/check-username    → real-time check used for BOTH username availability (must be free)
+                                  and live sponsor validation on the register form (sponsor must exist = inverted)
 2. POST /auth/verify-email      → verifies OTP, marks email as verified
 3. POST /auth/login             → login with USERNAME + password → returns JWT (blocked until email is verified)
 
@@ -223,6 +225,38 @@ When a user's REPURCHASE wallet for a given tier accumulates >= tier price, a ne
 
 `GET /wallet/withdrawals` — lists all withdrawal history for the current user.
 
+## TokenPocket / MultiSender Distribution Endpoint
+
+A **single consolidated, read-only** endpoint the frontend/blockchain team uses to drive the
+TokenPocket DApp + MultiSender contract (per the client's "Decentralized Deposit & Distribution
+System" spec, Section 6). The backend does **not** integrate TokenPocket — it only tells the
+frontend *where the money should go*.
+
+```
+GET /distribution/wallet-map          → JWT auth. Returns, for the resolved user:
+   • their own wallet_address + profit, AND
+   • the downline subtree under them, each user with wallet_address + profit.
+   Query params:
+     username=<name>   → admin-only: build the map for another user (regular users always get their own)
+     direct_only=true  → only level-1 referrals instead of the full sponsor subtree
+     limit / offset    → pagination over the flattened downline (default/max 500)
+```
+
+- **Response is JSON** (not a bare list) so the root `user`, the paginated `downline.users[]`, and
+  metadata travel together. Each user entry: `user_id, username, level` (null for root, 1 = direct),
+  `wallet_address, wallet_address_source` (`registration` | `verified` | `null`), `has_wallet_address`,
+  `is_active`, and a `profit` block: `total_earned, main_balance, repurchase_balance, account_balance,
+  **withdrawable**` (= main + account).
+- **Distribute against `profit.withdrawable`** — it mirrors the Withdraw page's combined balance
+  (`get_withdrawable_balance`). Skip rows where `has_wallet_address` is false.
+- **Real-time, no admin approval** — amounts are summed live from the ledger/wallets on every call.
+- **Wallet address** comes from `User.wallet_address` (collected at registration); when empty it falls
+  back to the user's most recent **verified** `WalletAddress`. Pre-existing users with neither show
+  `wallet_address: null`.
+- **Performance:** wallets, lifetime income, and fallback addresses are each one batched, grouped
+  query over the page of user ids (no N+1), so it stays fast on deep trees.
+- Lives in `app/api/distribution.py`; read-only — it never moves funds.
+
 ## Email Notifications
 
 | Event | Endpoint / Task |
@@ -319,6 +353,7 @@ Safe to re-run — exits early if an admin already exists.
 | `backend/app/workers/tasks.py` | Celery chain: activate → payout → re-entry(BOOST) → withdrawal |
 | `backend/app/api/payments.py` | NOWPayments IPN webhook (deposit IPNs) |
 | `backend/app/api/wallet.py` | Per-tier balances, transactions, withdrawal request + history |
+| `backend/app/api/distribution.py` | `GET /distribution/wallet-map` — consolidated TokenPocket/MultiSender wallet+profit map (read-only) |
 
 ## Dev Notes
 
@@ -329,8 +364,10 @@ Safe to re-run — exits early if an admin already exists.
 - `POST /agents/purchase/{id}/confirm` is a dev-only endpoint (no payment needed). Remove in production.
 - `APP_ENV=development` always hits the NOWPayments sandbox — no real funds used.
 - Login requires email verification — unverified users get HTTP 403.
-- **Sponsor is identified by username** at registration (`sponsor_username` field). The register form also does a live debounced username availability check via `GET /auth/check-username`.
+- **Sponsor is identified by username** at registration (`sponsor_username` field). The register form does a live debounced username availability check via `GET /auth/check-username`, and a **live sponsor-existence check** against the *same* endpoint inverted (`available:false` = username taken = sponsor exists = valid; `available:true` = no such user = invalid). Submit is blocked on an invalid sponsor.
 - **Root/admin user has no sponsor** — created directly in DB via `seed_admin.py`.
+- **BEP-20 wallet address at registration:** `User.wallet_address` (nullable column) is collected on the register form for the TokenPocket distribution flow. The register schema validates it as `0x` + 40 hex chars; it's **optional** on the backend (so existing flows don't break) but the frontend form makes it required with live validation. Exposed via `/auth/me` and `UserOut`. Existing DBs: run `cd backend && python migrate_v14.py` (idempotent — adds the nullable `users.wallet_address` column); `create_tables.py` covers fresh installs.
+- **TokenPocket distribution map:** `GET /distribution/wallet-map` (`app/api/distribution.py`) is the single consolidated, read-only endpoint that returns a user + their downline with each one's wallet address and profit, for the frontend MultiSender. Distribute against `profit.withdrawable`. See the "TokenPocket / MultiSender Distribution Endpoint" section above.
 - **Withdrawal minimum is $10.** Minimum transfer is $1. No maximum on withdrawals.
 - **Withdrawals are instant** — payout dispatched immediately via NOWPayments.
 - **Withdrawal addresses must be pre-verified** — register via `POST /wallet/address`, confirm OTP via `POST /wallet/address/verify`.

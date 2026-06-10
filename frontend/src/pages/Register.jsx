@@ -15,12 +15,15 @@ export default function Register() {
     password: '',
     confirm_password: '',
     sponsor_username: params.get('ref') || '',
+    wallet_address: '',
   })
   const [showPw, setShowPw] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [loading, setLoading] = useState(false)
   const [usernameStatus, setUsernameStatus] = useState(null) // null | 'checking' | 'available' | 'taken'
+  const [sponsorStatus, setSponsorStatus] = useState(null)   // null | 'checking' | 'valid' | 'invalid'
   const debounceRef = useRef(null)
+  const sponsorDebounceRef = useRef(null)
 
   useEffect(() => {
     const name = form.username.trim()
@@ -38,8 +41,31 @@ export default function Register() {
     return () => clearTimeout(debounceRef.current)
   }, [form.username])
 
+  // Sponsor must be an EXISTING username — reuse check-username, inverted:
+  // available === true  → no such user → invalid sponsor
+  // available === false → username taken → the sponsor exists → valid
+  useEffect(() => {
+    const name = form.sponsor_username.trim()
+    if (!name) { setSponsorStatus(null); return }
+    setSponsorStatus('checking')
+    clearTimeout(sponsorDebounceRef.current)
+    sponsorDebounceRef.current = setTimeout(async () => {
+      try {
+        const { data } = await api.get(`/auth/check-username?username=${encodeURIComponent(name)}`)
+        setSponsorStatus(data.available ? 'invalid' : 'valid')
+      } catch {
+        setSponsorStatus(null)
+      }
+    }, 500)
+    return () => clearTimeout(sponsorDebounceRef.current)
+  }, [form.sponsor_username])
+
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (sponsorStatus === 'invalid') {
+      toast.error('Sponsor username not found — enter an existing sponsor')
+      return
+    }
     if (usernameStatus === 'taken') {
       toast.error('Username already taken — please choose another')
       return
@@ -50,6 +76,10 @@ export default function Register() {
     }
     if (form.password.length < 8) {
       toast.error('Password must be at least 8 characters')
+      return
+    }
+    if (!/^0x[a-fA-F0-9]{40}$/.test(form.wallet_address.trim())) {
+      toast.error('Enter a valid BEP-20 wallet address (0x + 40 hex characters)')
       return
     }
     setLoading(true)
@@ -79,6 +109,7 @@ export default function Register() {
   const inputClass = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all'
 
   const passwordMismatch = form.confirm_password && form.password !== form.confirm_password
+  const walletInvalid = form.wallet_address.trim() && !/^0x[a-fA-F0-9]{40}$/.test(form.wallet_address.trim())
 
   return (
     <div
@@ -105,17 +136,77 @@ export default function Register() {
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
                 Sponsor Username              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={form.sponsor_username}
+                  onChange={e => setForm(f => ({ ...f, sponsor_username: e.target.value }))}
+                  placeholder="Enter your sponsor's username"
+                  className={inputClass}
+                  style={{
+                    ...inputBase,
+                    paddingRight: '2.75rem',
+                    borderColor: sponsorStatus === 'invalid' ? '#FF4D6A' : sponsorStatus === 'valid' ? '#00D4B4' : '#1E2A38',
+                  }}
+                  onFocus={e => { if (!sponsorStatus || sponsorStatus === 'checking') e.target.style.borderColor = '#00D4B4' }}
+                  onBlur={e => { e.target.style.borderColor = sponsorStatus === 'invalid' ? '#FF4D6A' : sponsorStatus === 'valid' ? '#00D4B4' : '#1E2A38' }}
+                />
+                {sponsorStatus === 'checking' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <Loader size={16} style={{ color: '#8899AA' }} className="animate-spin" />
+                  </div>
+                )}
+                {sponsorStatus === 'valid' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <CheckCircle size={16} style={{ color: '#00D4B4' }} />
+                  </div>
+                )}
+                {sponsorStatus === 'invalid' && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <XCircle size={16} style={{ color: '#FF4D6A' }} />
+                  </div>
+                )}
+              </div>
+              {sponsorStatus === 'invalid' && (
+                <p className="text-xs mt-1" style={{ color: '#FF4D6A' }}>
+                  No user with this username — enter an existing sponsor
+                </p>
+              )}
+              {sponsorStatus === 'valid' && (
+                <p className="text-xs mt-1" style={{ color: '#00D4B4' }}>Sponsor found</p>
+              )}
+            </div>
+
+            {/* BEP-20 Wallet Address */}
+            <div>
+              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
+                BEP-20 Wallet Address
+              </label>
               <input
                 type="text"
                 required
-                value={form.sponsor_username}
-                onChange={e => setForm(f => ({ ...f, sponsor_username: e.target.value }))}
-                placeholder="Enter your sponsor's username"
+                value={form.wallet_address}
+                onChange={e => setForm(f => ({ ...f, wallet_address: e.target.value }))}
+                placeholder="0x… (your USDT BEP-20 address)"
                 className={inputClass}
-                style={inputBase}
-                onFocus={e => e.target.style.borderColor = '#00D4B4'}
-                onBlur={e => e.target.style.borderColor = '#1E2A38'}
+                style={{
+                  ...inputBase,
+                  borderColor: walletInvalid ? '#FF4D6A' : '#1E2A38',
+                  fontFamily: 'monospace',
+                }}
+                onFocus={e => { if (!walletInvalid) e.target.style.borderColor = '#00D4B4' }}
+                onBlur={e => { e.target.style.borderColor = walletInvalid ? '#FF4D6A' : '#1E2A38' }}
               />
+              {walletInvalid ? (
+                <p className="text-xs mt-1" style={{ color: '#FF4D6A' }}>
+                  Must be 0x followed by 40 hex characters
+                </p>
+              ) : (
+                <p className="text-xs mt-1" style={{ color: '#8899AA' }}>
+                  Profits and payouts are sent to this address — double-check it.
+                </p>
+              )}
             </div>
 
             {/* Email */}
@@ -244,12 +335,12 @@ export default function Register() {
 
             <button
               type="submit"
-              disabled={loading || !!passwordMismatch || usernameStatus === 'taken'}
+              disabled={loading || !!passwordMismatch || !!walletInvalid || usernameStatus === 'taken' || sponsorStatus === 'invalid'}
               className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all mt-2"
               style={{
-                background: (loading || passwordMismatch || usernameStatus === 'taken') ? 'rgba(0,212,180,0.3)' : '#00D4B4',
-                color: (loading || passwordMismatch || usernameStatus === 'taken') ? '#8899AA' : '#000',
-                cursor: (loading || passwordMismatch || usernameStatus === 'taken') ? 'not-allowed' : 'pointer',
+                background: (loading || passwordMismatch || walletInvalid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'rgba(0,212,180,0.3)' : '#00D4B4',
+                color: (loading || passwordMismatch || walletInvalid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? '#8899AA' : '#000',
+                cursor: (loading || passwordMismatch || walletInvalid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'not-allowed' : 'pointer',
               }}
             >
               {loading ? (

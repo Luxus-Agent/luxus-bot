@@ -13,6 +13,7 @@ A multi-tier passive income platform where users purchase AI Agent tiers and ear
 - [Deposit & Purchase Flow](#deposit--purchase-flow)
 - [Matrix System](#matrix-system)
 - [Withdrawal Flow](#withdrawal-flow)
+- [TokenPocket Distribution Endpoint](#tokenpocket-distribution-endpoint)
 - [Tech Stack](#tech-stack)
 - [Setup & Installation](#setup--installation)
 - [Running the Project](#running-the-project)
@@ -136,7 +137,7 @@ When the repurchase reserve for a tier accumulates ≥ tier price, a new agent p
 ## User Journey
 
 ```
-1. Register (sponsor's username required)
+1. Register (sponsor's username required + BEP-20 wallet address)
 2. Verify email via OTP
 3. Login → Dashboard
 4. Deposit USDT via NOWPayments invoice
@@ -154,7 +155,7 @@ When the repurchase reserve for a tier accumulates ≥ tier price, a new agent p
 ## Auth Flow
 
 ```
-POST /auth/register          → creates user (sponsor_username REQUIRED), sends OTP
+POST /auth/register          → creates user (sponsor_username REQUIRED, optional BEP-20 wallet_address), sends OTP
 POST /auth/verify-email      → verify OTP, mark email verified
 POST /auth/login             → login with USERNAME + password → returns JWT (blocked until email verified)
 
@@ -170,6 +171,8 @@ GET  /auth/check-username?username=<name> → { "available": true/false }
 ```
 
 **Note:** Every user must register under a sponsor — the sponsor's **username** is required. The platform admin is the root sponsor and is created directly in the database.
+
+The register form validates **live** as you type: username availability, **sponsor existence** (both via `GET /auth/check-username`), and the **BEP-20 wallet address** format (`0x` + 40 hex). An invalid sponsor or wallet address blocks submission with inline feedback. The wallet address is stored on the user and later used by the distribution endpoint below.
 
 ---
 
@@ -235,6 +238,63 @@ Celery: process_withdrawal     → POST NOWPayments /v1/payout (USDT BEP-20)
   Failure → status=failed, refunds to MAIN wallet, sends "refund" email (retries 3×)
 
 GET  /wallet/withdrawals       → full withdrawal history
+```
+
+---
+
+## TokenPocket Distribution Endpoint
+
+A **single consolidated, read-only** endpoint that powers the frontend's TokenPocket DApp +
+MultiSender contract integration (per the client's "Decentralized Deposit & Distribution System"
+spec). The backend does not integrate TokenPocket itself — it only exposes *where the money should
+go*. The frontend/blockchain team handles wallet connection and the on-chain distribution.
+
+```
+GET /distribution/wallet-map     → JWT auth. Returns the caller's wallet address + profit,
+                                   plus the downline subtree under them, each user with their
+                                   wallet address + profit.
+  Query params:
+    username=<name>   → admin-only: build the map for another user
+    direct_only=true  → only direct (level-1) referrals instead of the full subtree
+    limit / offset    → paginate the flattened downline (default/max 500)
+```
+
+**Response shape (JSON):**
+
+```json
+{
+  "user": {
+    "user_id": 12, "username": "alice", "level": null,
+    "wallet_address": "0x…", "wallet_address_source": "registration",
+    "has_wallet_address": true, "is_active": true,
+    "profit": {
+      "total_earned": 412.50, "main_balance": 318.20, "repurchase_balance": 41.25,
+      "account_balance": 60.00, "withdrawable": 378.20
+    }
+  },
+  "downline": {
+    "total": 4, "count": 4, "limit": 500, "offset": 0, "direct_only": false,
+    "users": [ { "...same shape, level: 1, 2, …": "…" } ]
+  },
+  "generated_at": "2026-06-10T11:42:08Z"
+}
+```
+
+- **Distribute against `profit.withdrawable`** (= account balance + all main-wallet earnings, mirroring
+  the Withdraw page). Skip users where `has_wallet_address` is `false`.
+- **Real-time, no admin approval** — amounts are summed live from the ledger on every call.
+- **Wallet address** is taken from the user's registration field, falling back to their most recent
+  **verified** withdrawal address (`wallet_address_source` tells you which).
+- Read-only and N+1-free (batched, grouped queries) — never moves funds.
+
+Typical frontend usage:
+
+```js
+const { user, downline } = await fetchWalletMap()
+const payouts = [user, ...downline.users]
+  .filter(u => u.has_wallet_address && u.profit.withdrawable > 0)
+  .map(u => ({ to: u.wallet_address, amount: u.profit.withdrawable }))
+// → feed `payouts` into the MultiSender contract
 ```
 
 ---
@@ -397,7 +457,9 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - **Login is by username + password** — for both users and admin.
 - Each agent tier can be purchased **once**, and tiers must be bought in order **1 → 2 → 3 → 4** (auto-repurchase is the only exception).
 - Sponsor is identified by **username** at registration (not a referral code).
-- Username availability is checked in real-time during registration; transfer forms (user + admin) validate the recipient username live (must exist).
+- Username availability is checked in real-time during registration; the **sponsor username is also validated live** (must exist) and a **BEP-20 wallet address** is collected and format-validated on the register form — both block submission when invalid. Transfer forms (user + admin) validate the recipient username live (must exist).
+- **`GET /distribution/wallet-map`** is the single consolidated, read-only endpoint for the TokenPocket / MultiSender integration — returns a user + their downline with each one's wallet address and profit. Distribute against `profit.withdrawable`; skip rows with `has_wallet_address: false`. See [TokenPocket Distribution Endpoint](#tokenpocket-distribution-endpoint).
+- The user's BEP-20 address comes from `User.wallet_address` (collected at registration, optional on the backend) and falls back to a verified withdrawal address. Existing DBs: run `cd backend && python migrate_v14.py` (idempotent — adds the nullable `users.wallet_address` column). Fresh installs are covered by `create_tables.py`.
 - Minimum withdrawal is **$10**; it draws from the user's **combined balance** (account balance + all earnings). Minimum transfer is **$1**.
 - Withdrawal addresses must be OTP-verified before a withdrawal can be submitted.
 - Transfer fee is **1%** — sender is debited the full amount; recipient receives 99%.

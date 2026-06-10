@@ -18,6 +18,13 @@ class User(Base):
     referral_code: Mapped[str] = mapped_column(
         String, unique=True, nullable=False, default=lambda: uuid.uuid4().hex[:8].upper()
     )
+
+    # Primary BEP-20 wallet address collected at registration. Used by the
+    # TokenPocket / MultiSender distribution endpoint to know where each user's
+    # credited amount should be sent. Nullable so pre-existing users (registered
+    # before this field) still load; the distribution endpoint falls back to the
+    # user's latest verified WalletAddress when this is empty.
+    wallet_address: Mapped[str | None] = mapped_column(String, nullable=True)
     sponsor_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     # Position in sponsor's direct downline (1-based) — used by ProActive odd/even routing
     sponsor_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
