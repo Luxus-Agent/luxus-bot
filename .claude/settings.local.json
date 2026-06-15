@@ -23,7 +23,8 @@
       "Bash(curl -s http://localhost:53584/)",
       "Bash(curl -s -o /dev/null -w \"preview root: %{http_code}\\\\n\" http://localhost:58608/)",
       "Bash(curl -s \"http://localhost:8000/auth/check-username?username=admin\")",
-      "Bash(curl -s \"http://localhost:8000/auth/check-username?username=zzznope123\")"
+      "Bash(curl -s \"http://localhost:8000/auth/check-username?username=zzznope123\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/core/proactive.py'\\).read\\(\\)\\); print\\('OK syntax'\\)\")"
     ]
   }
 }

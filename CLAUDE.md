@@ -155,16 +155,34 @@ Withdrawal address management (required before withdrawing):
 - **10%** → Boost Agent system (3x3 forced matrix, single global queue)
 
 ### Core Agent (60%) — formerly ProActive
-The 60% is split into two equal halves (30% each):
-- **First 30%** → Buyer's direct Sponsor
-- **Second 30%** → Buyer's Supreme Sponsor (sponsor's sponsor)
+The 60% is split into two equal halves (30% each), routed up the sponsor chain
+with **compression** (see below):
+- **First 30%** → first eligible upline
+- **Second 30%** → next eligible upline above the first
 
-**Odd / Even rule at each recipient** (tracked by `User.core_route_count`):
+Two rules apply **together** in the Core Agent (and only here): compression
+decides *who* is a valid recipient, then odd/even decides whether that recipient
+keeps the amount or passes it up.
+
+**Compression format (Core Agent only)** — tier-qualified routing:
+- An upline only **qualifies** for Core income from a purchase if their own
+  **highest active purchased tier ≥ the tier the buyer just purchased**.
+- Uplines who bought a lower tier (or own no active agent, or are frozen) are
+  **skipped** — the income compresses *past* them up the sponsor chain to the
+  next eligible upline.
+- Example (client slide "Compression format in Core Agent"): chain
+  `Admin $100 → A $100 → B $10 → C $10 → D $20 → E $100`. When **E buys $100**
+  (tier 4), uplines **D ($20), C ($10), B ($10) are all skipped** because they
+  haven't bought the $100 tier; income lands on **A ($100)** and the next
+  eligible upline (**Admin, $100**).
+- If **no eligible upline** exists for a half → goes to **company (platform profit)**
+  (not credited back to the buyer).
+
+**Odd / Even rule at each eligible recipient** (tracked by `User.core_route_count`):
 - Each recipient has a **targeting counter** incremented on every targeting — whether the amount is kept (odd) or passed up (even). Counting only kept credits (the old behaviour) left a recipient stuck on "even" forever after their first pass-up.
 - If next count is **odd** → amount goes to recipient's wallet
-- If next count is **even** → amount passes to recipient's sponsor's wallet instead
-- If no upline to pass to → stays with recipient
-- If sponsor / supreme sponsor does not exist → goes to **company (platform profit)**
+- If next count is **even** → amount passes **up to the next ELIGIBLE upline** above the recipient (the pass-up is compressed too — ineligible uplines are skipped)
+- If no eligible upline to pass to → stays with recipient
 
 ### Stream Agent (30%) — formerly Proportion
 Uses a 3x3 breadth-first matrix. Each tier has its **own separate queue**.
@@ -375,6 +393,7 @@ Safe to re-run — exits early if an admin already exists.
 - **First-time transfer to a new recipient requires email OTP.**
 - **One purchase per tier, bought in order** — each tier can be purchased only once, and tiers must be bought sequentially 1 → 2 → 3 → 4 (cannot skip ahead). Auto-repurchase is the only exception (it activates a tier directly, bypassing this gate).
 - **Inactive sponsors are skipped** in Core Agent routing — income passes to supreme sponsor or goes to platform.
+- **Core Agent compression (Core only):** an upline qualifies for Core income only if their **highest active purchased tier ≥ the buyer's purchased tier**. Lower-tier / inactive / no-agent uplines are skipped and the income compresses up the sponsor chain to the next eligible upline. The two 30% halves go to the first eligible upline and the next eligible upline above it; even-count pass-ups also compress to the next eligible upline; no eligible upline → platform profit. Implemented in `proactive.py` via `_highest_active_tier` / `_is_eligible` / `_next_eligible_upline`. Compression applies to the Core Agent ONLY — Stream and Boost matrices are unaffected.
 - **Stream re-entries are dummy** — they are placed back into the **same tier's Stream queue**, fill matrix slots, do not receive wallet payouts, and spawn no further re-entries. Only one real Stream entry per user at a time.
 - **Boost re-entries are NOT dummy** — all positions in the Boost queue (including Boost's own re-entries) receive full payouts when their level fills.
 - **Stream re-entry count is FIXED at 1/3/9 for L1/L2/L3** across all tiers (total 13 re-entries per full cycle, per the client doc "every Nth income spawns a re-entry") — only the per-re-entry $ amount scales by tier multiplier (Agent 2 = $2 per re-entry, Agent 3 = $5, Agent 4 = $10). Boost uses the same 1/3/9 counts (always tier 1, no $ scaling).
