@@ -8,6 +8,7 @@ from app.models.withdrawal import WithdrawalRequest, WithdrawalStatus
 from app.models.deposit import Deposit
 from app.models.webhook_event import WebhookEvent
 from app.models.platform_setting import PlatformSetting
+from app.models.transfer_verification import TransferVerification
 
 __all__ = [
     "User",
@@ -25,4 +26,5 @@ __all__ = [
     "WebhookEvent",
     "WalletAddress",
     "PlatformSetting",
+    "TransferVerification",
 ]
