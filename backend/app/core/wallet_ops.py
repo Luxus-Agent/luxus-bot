@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.wallet import Wallet, WalletType
 from app.models.transaction import Transaction, TransactionType
 
-REPURCHASE_RATE = Decimal("0.10")     # 10% of gross → repurchase reserve
+REPURCHASE_RATE = Decimal("0.20")     # 20% of gross → repurchase reserve
 SOFTWARE_FEE_RATE = Decimal("0.10")   # 10% of gross → platform profit
 ACCOUNT_TIER = 0  # Sentinel agent_tier for the platform account balance wallet
 
@@ -40,21 +40,21 @@ def credit_wallet(
     """
     Credit gross_amount to a user's wallet for the given agent tier.
 
-    Two separate 10% deductions apply (per client spec) — BOTH computed off the
+    Two deductions apply (per client spec) — BOTH computed off the
     gross amount (not stacked sequentially):
-      1. Software fee (10% of gross)      → platform profit, not distributed
-      2. Repurchase reserve (10% of gross) → held in repurchase wallet
+      1. Software fee (10% of gross)       → platform profit, not distributed
+      2. Repurchase reserve (20% of gross) → held in repurchase wallet
 
     Net math on gross_amount:
       software_fee = gross × 10%   (goes to platform)
-      repurchase   = gross × 10%   (held in repurchase wallet)
-      main_credit  = gross × 80%   (withdrawable)
+      repurchase   = gross × 20%   (held in repurchase wallet)
+      main_credit  = gross × 70%   (withdrawable)
 
     All three movements are recorded in the transaction ledger.
     """
     four_places = Decimal("0.0001")
 
-    # Both 10% deductions are computed off the GROSS amount (two separate
+    # Both deductions are computed off the GROSS amount (two separate
     # sections per client spec). Software fee → platform; repurchase → reserve.
     software_fee = (gross_amount * SOFTWARE_FEE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
     repurchase = (gross_amount * REPURCHASE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
@@ -91,7 +91,7 @@ def credit_wallet(
         transaction_type=TransactionType.REPURCHASE_HOLD,
         amount=repurchase,
         reference_id=reference_id,
-        notes="10% repurchase reserve",
+        notes="20% repurchase reserve",
     ))
 
     # Auto-repurchase: if repurchase wallet has enough for this tier, trigger a new purchase
@@ -139,7 +139,7 @@ def credit_main_wallet_direct(
 ) -> None:
     """
     Credit amount directly to MAIN wallet with no repurchase split.
-    Used for refunds where the 10% repurchase was already taken at earn time.
+    Used for refunds where the 20% repurchase was already taken at earn time.
     """
     four_places = Decimal("0.0001")
     amount = amount.quantize(four_places, rounding=ROUND_HALF_UP)

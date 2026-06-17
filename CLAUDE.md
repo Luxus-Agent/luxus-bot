@@ -222,11 +222,11 @@ Remaining pool after payouts + re-entries + sponsor share → **platform profit*
 **Re-entry rule:** Boost re-entries are real (non-dummy) positions placed back into the single Boost queue. (Stream no longer feeds Boost — each queue self-cycles its own re-entries.)
 
 ### Wallet rule
-Every income credit → two separate 10% deductions, **both computed off the gross**:
+Every income credit → two deductions, **both computed off the gross**:
 1. **10% software fee** (of gross) → platform profit (not credited to any user)
-2. **10% repurchase reserve** (of gross) → held in REPURCHASE wallet per tier
+2. **20% repurchase reserve** (of gross) → held in REPURCHASE wallet per tier
 
-Effective split of gross income: **80% main wallet** (withdrawable) + **10% repurchase** + **10% platform fee**.
+Effective split of gross income: **70% main wallet** (withdrawable) + **20% repurchase** + **10% platform fee**.
 ACCOUNT balance (deposits/transfers) is credited at **100%** — no deductions.
 
 ### Auto-repurchase
@@ -401,7 +401,7 @@ Safe to re-run — exits early if an admin already exists.
 - **Boost sponsor income (L2/L3) uses the same completion-share model** — L2 $0.27 (10% of $2.70 gross), L3 $0.81 (10% of $8.10 gross). Boost is always tier 1, so no multiplier scaling. The old per-position milestone model (5th/4th/20th member → $0.30) is retired. Boost L3 wallet is **$3.60** (latest client spec, down from $4.90).
 - **Each queue self-cycles its own re-entries:** Stream re-entries (dummy) re-enter the same tier's Stream queue; Boost re-entries (real) re-enter the single Boost queue at agent_tier=1. Stream does not feed Boost.
 - **Auto-repurchase:** when REPURCHASE wallet >= tier price, a new purchase is auto-activated via Celery.
-- **Two separate 10% deductions** on every wallet credit, **both off the gross**: 10% software fee (platform profit) + 10% repurchase reserve. Effective user take = 80% of gross income credited.
+- **Two deductions** on every wallet credit, **both off the gross**: 10% software fee (platform profit) + 20% repurchase reserve. Effective user take = 70% of gross income credited.
 - **`/deposit/balance` returns `{ "account_balance": float }`** — use key `account_balance`, not `balance`.
 - **Login is by username + password** (not email) — for both regular users and admin. `UserLogin` takes `username`; the frontend Login form has a Username field.
 - **Admin access:** created via `seed_admin.py`. Admin endpoints at `/admin/*`. Admin logs in through the same `/login` page and is routed to `/admin` automatically. Admin pages (including Profile) render the admin sidebar.
