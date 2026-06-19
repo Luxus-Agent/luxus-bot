@@ -55,27 +55,46 @@ Every confirmed agent purchase triggers a **60 / 30 / 10 split** across three pa
 
 | Tier    | Price | Core Agent | Stream Agent | Boost Agent |
 |---------|-------|-----------|-------------|------------|
-| Agent 1 | $10   | $6.00     | $20.00      | $7.00      |
-| Agent 2 | $20   | $12.00    | $40.00      | $7.00      |
-| Agent 3 | $50   | $30.00    | $100.00     | $7.00      |
-| Agent 4 | $100  | $60.00    | $200.00     | $7.00      |
+| Agent 1 | $10   | $6.00     | $20.00      | $5.70      |
+| Agent 2 | $20   | $12.00    | $40.00      | $5.70      |
+| Agent 3 | $50   | $30.00    | $100.00     | $5.70      |
+| Agent 4 | $100  | $60.00    | $200.00     | $5.70      |
+
+> Boost runs a **single global queue** (always tier 1), so its payout does not scale with the purchased tier — the full Boost cycle is $0.60 + $1.50 + $3.60 = **$5.70** wallet for every tier.
 
 ---
 
-### 60% — Core Agent (Upline Routing)
+### 60% — Core Agent (Upline Routing with Compression)
 
-The 60% is split equally between two upline recipients:
+The 60% is split into two equal halves (30% each), routed up the sponsor chain
+with **compression**. Two rules apply together — and **only** in the Core Agent:
+compression decides *who* is a valid recipient, then odd/even decides whether
+that recipient keeps the amount or passes it up.
 
-- **First 30%** → buyer's direct sponsor
-- **Second 30%** → buyer's supreme sponsor (sponsor's sponsor)
+**1. Compression (tier-qualified routing):**
+- An upline only **qualifies** for Core income if their own **highest active
+  purchased tier ≥ the tier the buyer just purchased**.
+- Uplines who bought a lower tier (or own no active agent, or are frozen) are
+  **skipped** — the income compresses *past* them up the chain to the next
+  eligible upline.
+- **First 30%** → first eligible upline above the buyer.
+- **Second 30%** → next eligible upline above the first.
+- If **no eligible upline** exists for a half → retained by the platform
+  (realized profit) — **not** credited back to the buyer.
 
-**Odd/Even rule** at each recipient (tracked by `User.core_route_count`):
+> Example (`Admin $100 → A $100 → B $10 → C $10 → D $20 → E $100`): when **E buys
+> $100** (tier 4), uplines **D ($20), C ($10), B ($10) are all skipped** because
+> none bought the $100 tier; income lands on **A ($100)** and **Admin ($100)**.
+
+**2. Odd/Even rule** at each eligible recipient (tracked by `User.core_route_count`):
 - Each recipient has a targeting counter, incremented **every time they are targeted** — whether they keep the amount or pass it up.
 - If the resulting count is **odd** → credited directly to their wallet.
-- If it is **even** → amount passes up to *their* sponsor instead.
-- If no sponsor exists at a pass-up point → platform profit (not credited to any user wallet).
+- If it is **even** → amount passes up to the next **eligible** upline above them (the pass-up is compressed too).
+- If no eligible upline exists for an even pass-up → the recipient keeps it.
 
-> The counter increments on every targeting (not only on kept credits) so the alternation never gets stuck on "even" after a recipient's first pass-up.
+> The counter increments on every targeting (not only on kept credits) so the alternation never gets stuck on "even" after a recipient's first pass-up. Compression applies to the Core Agent **only** — Stream and Boost matrices are unaffected.
+
+Implemented in `proactive.py` via `_highest_active_tier` / `_is_eligible` / `_next_eligible_upline`.
 
 ---
 
@@ -124,9 +143,9 @@ Higher tiers multiply wallet payouts, per-re-entry $ amounts, and sponsor share 
 Every wallet income credit applies two deductions, **both computed off the gross**:
 
 1. **10% software fee** (of gross) → platform profit (not credited to any wallet)
-2. **10% repurchase reserve** (of gross) → auto-held per tier
+2. **20% repurchase reserve** (of gross) → auto-held per tier
 
-Effective split: **80% main wallet** (withdrawable) + **10% repurchase reserve** + **10% platform fee**.
+Effective split: **70% main wallet** (withdrawable) + **20% repurchase reserve** + **10% platform fee**.
 
 When the repurchase reserve for a tier accumulates ≥ tier price, a new agent purchase is automatically created and activated (auto-repurchase).
 
