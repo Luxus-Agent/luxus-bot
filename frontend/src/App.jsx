@@ -18,7 +18,6 @@ import Profile from './pages/Profile'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminUsers from './pages/admin/AdminUsers'
 import AdminTransactions from './pages/admin/AdminTransactions'
-import AdminGenerate from './pages/admin/AdminGenerate'
 
 export default function App() {
   return (
@@ -62,7 +61,6 @@ export default function App() {
           <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
           <Route path="/admin/users" element={<AdminRoute><AdminUsers /></AdminRoute>} />
           <Route path="/admin/transactions" element={<AdminRoute><AdminTransactions /></AdminRoute>} />
-          <Route path="/admin/generate" element={<AdminRoute><AdminGenerate /></AdminRoute>} />
 
           {/* Redirects */}
           <Route path="/" element={<Navigate to="/login" replace />} />

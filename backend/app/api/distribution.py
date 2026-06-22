@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_platform_active
 from app.config import settings
 from app.database import get_db
-from app.models.agent import AGENT_TIER_PRICES
+from app.models.agent import AGENT_TIER_PRICES, AgentPurchase
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
@@ -319,6 +319,53 @@ def _resolve_bep20_address(db: Session, user: User) -> str | None:
     return addr if addr and _BEP20_RE.match(addr) else None
 
 
+def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
+    """
+    Write reporting-only Transaction rows for a settled on-chain pack purchase so
+    the internal transaction history and dashboard analytics reflect it:
+      • the buyer's outgoing purchase (agent_purchase, an expense), and
+      • each upline's commission (core_income), paid directly to their wallet on-chain.
+
+    NO Wallet rows are touched — the money moved on-chain, not through internal
+    wallets — so these rows are purely informational (they intentionally do not
+    affect withdrawable/account balances).
+    """
+    try:
+        recipients = json.loads(record.recipients_json or "[]")
+    except (ValueError, TypeError):
+        recipients = []
+
+    tx_short = (record.tx_hash or "")[:12]
+    tx_suffix = f" (tx {tx_short}…)" if tx_short else ""
+
+    # Buyer's outgoing purchase.
+    db.add(Transaction(
+        user_id=record.buyer_id,
+        agent_tier=record.agent_tier,
+        transaction_type=TransactionType.AGENT_PURCHASE,
+        amount=record.amount,
+        reference_id=record.order_id,
+        notes=f"On-chain purchase — {record.pack_name}, paid from your wallet{tx_suffix}",
+    ))
+
+    # Upline commissions (paid directly to each upline's on-chain wallet).
+    for r in recipients:
+        if r.get("role") != "upline":
+            continue
+        uid = r.get("user_id")
+        amount = r.get("amount") or 0
+        if not uid or Decimal(str(amount)) <= 0:
+            continue
+        db.add(Transaction(
+            user_id=uid,
+            agent_tier=record.agent_tier,
+            transaction_type=TransactionType.CORE_INCOME,
+            amount=Decimal(str(amount)),
+            reference_id=record.order_id,
+            notes=f"On-chain Core commission — {record.pack_name}, paid to your wallet{tx_suffix}",
+        ))
+
+
 def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> bool:
     """
     Placeholder for on-chain verification (amount / recipients / confirmations).
@@ -482,6 +529,37 @@ def pack_status(
         record.status = PackPurchaseStatus.SUCCESS
         record.tx_hash = payload.tx_hash
         record.failure_reason = None
+
+        # Reflect ownership so the rest of the app (purchase page "OWNED", the
+        # sequential-unlock gate, and Core-eligibility / compression for future
+        # on-chain splits) sees this agent as active. We do NOT queue the Celery
+        # revenue engine. Guarded against a duplicate tier row in case ownership
+        # already exists (e.g. from the deposit-first rail).
+        already_owned = (
+            db.query(AgentPurchase.id)
+            .filter(
+                AgentPurchase.user_id == record.buyer_id,
+                AgentPurchase.agent_tier == record.agent_tier,
+            )
+            .first()
+        )
+        if not already_owned:
+            db.add(AgentPurchase(
+                user_id=record.buyer_id,
+                agent_tier=record.agent_tier,
+                price=record.amount,
+                status="active",
+                payment_id=record.order_id,
+                activated_at=datetime.utcnow(),
+            ))
+
+        # Mirror the on-chain money movement into the internal ledger for
+        # REPORTING ONLY (transaction history + dashboard analytics). These rows
+        # carry NO wallet balance: the funds live on-chain in users' own wallets,
+        # never in internal wallets — so we write Transaction rows directly and
+        # never credit/debit a Wallet. pack/status is idempotent (PENDING-guarded),
+        # so this mirror runs exactly once per order.
+        _mirror_onchain_ledger(db, record)
     else:
         record.status = PackPurchaseStatus.FAILED
         record.failure_reason = (payload.failure_reason or "Unspecified failure")[:500]

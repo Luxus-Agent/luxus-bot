@@ -32,7 +32,13 @@
       "Bash(LOG_LEVEL=CRITICAL PYTHONPATH=. python -c ' *)",
       "Bash(LOG_LEVEL=CRITICAL PYTHONPATH=. python -c \"from app.config import settings; print\\(settings.PLATFORM_FEE_WALLET\\)\")",
       "Bash(python -)",
-      "Bash(cd /e/LUXUS-gitlab/agent-revenue-sharing-platform && grep -n \"purchase-split\\\\|purchase_split\\\\|Per-purchase split\\\\|SAVEPOINT\\\\|auto_repurchase_disabled\\\\|purchase-split simulated\" CLAUDE.md README.md)"
+      "Bash(cd /e/LUXUS-gitlab/agent-revenue-sharing-platform && grep -n \"purchase-split\\\\|purchase_split\\\\|Per-purchase split\\\\|SAVEPOINT\\\\|auto_repurchase_disabled\\\\|purchase-split simulated\" CLAUDE.md README.md)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/api/distribution.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(mkdir -p frontend/src/hooks)",
+      "Bash(mv backend/frontend/src/hooks/useUsdtBalance.js frontend/src/hooks/useUsdtBalance.js)",
+      "Bash(rm -rf backend/frontend)",
+      "Read(//e/e/LUXUS-gitlab/agent-revenue-sharing-platform/frontend/src/**)",
+      "Bash(npx vite *)"
     ]
   }
 }

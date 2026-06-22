@@ -8,7 +8,7 @@ import { useAppKitAccount, useDisconnect } from '@reown/appkit/react'
 import {
   LayoutDashboard, Wallet,
   Users, BarChart3, History, Bot, Network, LogOut, Menu, X,
-  ChevronRight, ShieldCheck, User, ShieldAlert, Lock, Unlock, AlertTriangle, Coins
+  ChevronRight, ShieldCheck, User, ShieldAlert, Lock, Unlock, AlertTriangle
 } from 'lucide-react'
 
 const userNav = [
@@ -23,8 +23,6 @@ const adminNav = [
   { path: '/admin',              label: 'Overview',     icon: LayoutDashboard },
   { path: '/admin/users',        label: 'Users',        icon: Users },
   { path: '/admin/transactions', label: 'Transactions', icon: BarChart3 },
-  { divider: 'Treasury' },
-  { path: '/admin/generate', label: 'Generate',    icon: Coins },
 ]
 
 function SidebarNav({ nav, onClose }) {

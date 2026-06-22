@@ -41,7 +41,6 @@ from app.models.user import User
 from app.models.wallet import Wallet
 from app.models.withdrawal import WithdrawalRequest
 from app.schemas.agent import (
-    AdminGenerateIn,
     AdminTransferIn,
     AdminUserOut,
     AdminWalletCreditIn,
@@ -294,12 +293,11 @@ def unfreeze_platform(
     return setting
 
 
-# ── Treasury (admin generate + transfer) ────────────────────────────────────────
+# ── Treasury (admin transfer) ────────────────────────────────────────────────────
 #
-# These are admin-only flows, fully separate from the user deposit/transfer/
-# withdraw endpoints. The admin "generates" funds (e.g. after receiving payment
-# off-platform via cash, GPay, cheque, or crypto) into their own account balance,
-# then sends that balance to any user by username. No fees, no OTP — instant.
+# Admin-only flow, fully separate from the user deposit/transfer/withdraw
+# endpoints. The admin sends treasury balance (their own account balance) to any
+# user by username. No fees, no OTP — credited in full instantly.
 
 @router.get("/treasury/balance")
 def treasury_balance(
@@ -355,41 +353,6 @@ def treasury_summary(
         "total_invested": _sum_all(TransactionType.AGENT_PURCHASE),
         "total_deposited": _sum_all(TransactionType.DEPOSIT),
         "platform_profit": platform_profit,
-    }
-
-
-@router.post("/generate")
-def generate_funds(
-    body: AdminGenerateIn,
-    db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user),
-):
-    """
-    Generate (mint) funds into the admin's own account balance.
-
-    Use this after a user has paid the platform off-platform (cash, GPay, cheque,
-    crypto). The generated balance can then be sent to users via POST /admin/transfer.
-    This is NOT a deposit — no NOWPayments invoice is created.
-    """
-    amount = Decimal(str(body.amount))
-    credit_account(
-        db=db,
-        user_id=admin.id,
-        amount=amount,
-        tx_type=TransactionType.ADMIN_GENERATE,
-        reference_id=f"admin_generate_{admin.id}",
-        notes=f"Admin generated ${float(amount):.2f}",
-    )
-    db.commit()
-
-    logger.warning(
-        "TREASURY generate: admin_id=%d username=%s amount=$%.2f",
-        admin.id, admin.username, float(amount),
-    )
-    return {
-        "message": f"${float(amount):.2f} generated into treasury",
-        "amount": float(amount),
-        "account_balance": float(get_account_balance(db, admin.id)),
     }
 
 

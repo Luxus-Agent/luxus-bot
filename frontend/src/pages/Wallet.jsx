@@ -3,22 +3,25 @@ import { UserLayout, AdminLayout } from '../components/Layout'
 import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 import toast from 'react-hot-toast'
-import { Wallet as WalletIcon, TrendingUp, Lock, Activity } from 'lucide-react'
+import { Wallet as WalletIcon, TrendingUp, Lock, Activity, Coins } from 'lucide-react'
 import Pagination from '../components/Pagination'
 import { formatDateTimeIST } from '../utils/datetime'
+import { useUsdtBalance } from '../hooks/useUsdtBalance'
 
 const PAGE_SIZE = 10
 
 const TIER_PRICES = { 1: 10, 2: 20, 3: 50, 4: 100 }
 
+// Transaction types are lowercase enum values from the API (e.g. "core_income",
+// "agent_purchase") — keys here MUST be lowercase to match.
 const TX_COLOR = {
-  DEPOSIT: '#00D4B4', CORE_INCOME: '#00D4B4', STREAM_PAYOUT: '#00D4B4',
-  BOOST_PAYOUT: '#00D4B4', SPONSOR_MILESTONE_INCOME: '#00D4B4',
-  TRANSFER_IN: '#00D4B4', WITHDRAWAL: '#FF4D6A', TRANSFER_OUT: '#FF4D6A',
-  REPURCHASE_HOLD: '#FFB547', REENTRY: '#8899AA', PURCHASE: '#FF4D6A', AGENT_PURCHASE: '#FF4D6A',
+  deposit: '#00D4B4', core_income: '#00D4B4', stream_payout: '#00D4B4',
+  boost_payout: '#00D4B4', sponsor_milestone_income: '#00D4B4',
+  transfer_in: '#00D4B4', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
+  repurchase_hold: '#FFB547', reentry: '#8899AA', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
 }
 
-const NEGATIVE = ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE', 'REPURCHASE_HOLD']
+const NEGATIVE = ['withdrawal', 'transfer_out', 'purchase', 'agent_purchase', 'repurchase_hold']
 
 export default function Wallet() {
   const { isAdmin } = useAuth()
@@ -29,6 +32,7 @@ export default function Wallet() {
   const [filterTier, setFilterTier] = useState('all')
   const [filterType, setFilterType] = useState('all')
   const [page, setPage] = useState(1)
+  const { balance: usdtBalance, loading: usdtLoading, isConnected, configured } = useUsdtBalance()
 
   useEffect(() => {
     Promise.all([
@@ -72,11 +76,37 @@ export default function Wallet() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Live on-chain wallet balance (USDT on BSC). This is the user's real
+              spendable balance — on-chain purchases & commissions move here. */}
+          <div className="rounded-xl p-5" style={{ background: '#141922', border: '1px solid #00D4B433' }}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: '#00D4B418' }}>
+                <Coins size={18} style={{ color: '#00D4B4' }} />
+              </div>
+              <div>
+                <p className="text-xs" style={{ color: '#8899AA' }}>Wallet Balance</p>
+                <p className="text-xs" style={{ color: '#4A5568' }}>On-chain USDT (BSC)</p>
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-white">
+              {!configured ? (
+                <span className="text-sm" style={{ color: '#FFB547' }}>Not configured</span>
+              ) : !isConnected ? (
+                <span className="text-sm" style={{ color: '#8899AA' }}>Connect wallet</span>
+              ) : usdtLoading ? (
+                <span className="text-sm" style={{ color: '#8899AA' }}>Loading…</span>
+              ) : usdtBalance == null ? (
+                <span className="text-sm" style={{ color: '#8899AA' }}>—</span>
+              ) : (
+                `$${usdtBalance.toFixed(2)}`
+              )}
+            </p>
+          </div>
           {[
-            { label: 'Account Balance', val: accountWallet?.balance || 0, icon: WalletIcon, color: '#00D4B4', sub: 'Spendable balance' },
-            { label: 'Total Earnings', val: totalMain, icon: TrendingUp, color: '#00FFD4', sub: 'Main wallet sum' },
-            { label: 'Repurchase Reserve', val: totalRep, icon: Lock, color: '#FFB547', sub: 'Auto-hold 10%' },
+            { label: 'Account Balance', val: accountWallet?.balance || 0, icon: WalletIcon, color: '#00D4B4', sub: 'Internal spendable' },
+            { label: 'Total Earnings', val: totalMain, icon: TrendingUp, color: '#00FFD4', sub: 'Internal main wallet' },
+            { label: 'Repurchase Reserve', val: totalRep, icon: Lock, color: '#FFB547', sub: 'Auto-hold (internal)' },
           ].map(({ label, val, icon: Icon, color, sub }) => (
             <div key={label} className="rounded-xl p-5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
               <div className="flex items-center gap-3 mb-3">

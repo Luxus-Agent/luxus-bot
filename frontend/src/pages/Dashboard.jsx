@@ -4,9 +4,10 @@ import { useAuth } from '../context/AuthContext'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import {
-  Wallet, TrendingUp, Bot,
+  Coins, TrendingUp, Bot,
   Copy, Check, Users, ChevronRight
 } from 'lucide-react'
+import { useUsdtBalance } from '../hooks/useUsdtBalance'
 import toast from 'react-hot-toast'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -47,6 +48,7 @@ export default function Dashboard() {
   const [referralCount, setReferralCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
+  const { balance: usdtBalance, loading: usdtLoading, isConnected, configured } = useUsdtBalance()
 
   useEffect(() => {
     Promise.all([
@@ -63,7 +65,6 @@ export default function Dashboard() {
   }, [])
 
   const mainWallets = wallets.filter(w => w.wallet_type === 'main')
-  const accountWallet = wallets.find(w => w.wallet_type === 'account' && w.agent_tier === 0)
   const totalMain = mainWallets.reduce((s, w) => s + parseFloat(w.balance), 0)
   const activePurchases = purchases.filter(p => p.status === 'active')
   const highestTier = purchases.length ? Math.max(...purchases.map(p => p.agent_tier)) : 0
@@ -123,10 +124,16 @@ export default function Dashboard() {
         {/* Key Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            icon={Wallet}
-            label="Account Balance"
-            value={`$${parseFloat(accountWallet?.balance || 0).toFixed(2)}`}
-            sub="Available to spend"
+            icon={Coins}
+            label="Wallet Balance"
+            value={
+              !configured ? 'Not set'
+                : !isConnected ? 'Connect'
+                : usdtLoading ? '…'
+                : usdtBalance == null ? '—'
+                : `$${usdtBalance.toFixed(2)}`
+            }
+            sub="On-chain USDT (BSC)"
             color="#00D4B4"
           />
           <StatCard

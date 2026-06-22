@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { Users, TrendingUp, DollarSign, Wallet } from 'lucide-react'
+import { Users, TrendingUp, DollarSign } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { formatDateTimeIST } from '../../utils/datetime'
 
@@ -57,10 +57,9 @@ export default function AdminDashboard() {
         </div>
 
         {/* Key Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {[
             { label: 'Total Users', val: users.length, sub: `${activeUsers} active`, icon: Users, color: '#3498DB' },
-            { label: 'Treasury Balance', val: `$${treasury.account_balance.toFixed(2)}`, sub: 'In admin account', icon: Wallet, color: '#00D4B4' },
             { label: 'Platform Profit', val: `$${(treasury.platform_profit || 0).toFixed(2)}`, sub: 'Fees + residuals + retained', icon: DollarSign, color: '#FFB547' },
             { label: 'Total Invested', val: `$${treasury.total_invested.toFixed(2)}`, sub: 'By users in the platform', icon: TrendingUp, color: '#00FFD4' },
           ].map(({ label, val, sub, icon: Icon, color }) => (

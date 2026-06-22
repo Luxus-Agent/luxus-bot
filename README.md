@@ -324,8 +324,14 @@ const payouts = [user, ...downline.users]
 A **separate on-chain rail** (BEP-20 USDT) from the deposit-first + matrix engine. When a user
 buys a pack, the frontend pays the upline split **directly on-chain** from the buyer's connected
 wallet (one batched MultiSender call). The backend (1) returns the validated recipient split and
-(2) records the outcome — it writes **no internal wallet/ledger rows** on this rail (the on-chain
-transfer *is* the payout).
+(2) records the outcome — it **credits no internal wallet balances** on this rail (the on-chain
+transfer *is* the payout). On success it does reflect the purchase internally so the app stays
+consistent: it creates an **active `AgentPurchase` ownership row** (so the agent shows as OWNED,
+the sequential-unlock gate works, and the buyer becomes Core-eligible for future on-chain splits)
+and writes **reporting-only ledger rows** (buyer `agent_purchase` expense + each upline
+`core_income`) so transaction history and the dashboard income chart reflect the activity. These
+rows carry no wallet balance — main / repurchase / withdrawable stay `$0` on this rail, and
+Stream / Boost / repurchase mechanics do not run here.
 
 ```
 POST /distribution/pack/purchase   → JWT. Body: { "pack_name": "Agent 1", "amount"?: 10 }
@@ -376,6 +382,14 @@ price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app
 - `buyer` is informational (`amount: 0`) so the frontend can confirm it matches the connected wallet.
 - Send on-chain to every recipient where `has_wallet_address` is `true`; skip the rest.
 - `status: "success"` requires a valid `tx_hash` (0x + 64 hex); re-recording a finalized order → 400.
+- **On success the backend also reflects the purchase internally** (idempotent, runs once): an active
+  `AgentPurchase` ownership row (no Celery revenue engine, dup-tier guarded) + reporting-only
+  `Transaction` rows (buyer `agent_purchase`, each upline `core_income`). No internal wallet balances
+  are credited.
+- **Live wallet balance:** the "Wallet Balance" card on the Dashboard, Wallet, and Buy Agents pages
+  shows the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an
+  internal balance. It requires `VITE_USDT_ADDRESS` to **match the backend `USDT_CONTRACT`** (else it
+  reads a different token and shows `$0`); restart the Vite dev server after editing `.env`.
 - Order records live in `pack_purchases` (`app/models/pack_purchase.py`). Run `python migrate_v15.py`
   once on existing DBs; `create_tables.py` covers fresh installs.
 - Config (`.env`): `USDT_CONTRACT`, `USDT_DECIMALS`, `PAYOUT_CURRENCY`, `PAYOUT_NETWORK`,
@@ -486,9 +500,9 @@ python seed_admin.py
 Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`.
 
 **Admin capabilities:**
-- Platform-wide stats (treasury balance, total deposited by users, total invested by users) and transaction history (resolved to usernames)
+- Platform-wide stats (platform profit, total deposited by users, total invested by users) and transaction history (resolved to usernames)
 - View per-user details (agents bought, account balance, revenue generated); freeze / unfreeze individual users
-- **Treasury** — *Generate* funds into the admin account (for off-platform payments: cash / GPay / cheque / crypto) and *Send to User* by username, instantly and fee-free (kept fully separate from the user deposit/transfer/withdraw flows)
+- **Treasury** — *Send to User* by username, instantly and fee-free (kept fully separate from the user deposit/transfer/withdraw flows). *(The *Generate* / fund-minting feature and the "Treasury Balance" dashboard card were removed; the `ADMIN_GENERATE` ledger type is retained only for historical reporting.)*
 - **Global freeze (kill switch)** — one click pauses all user deposits, withdrawals, transfers, and purchases platform-wide; only an admin can lift it
 - Review and manage all withdrawal requests
 
@@ -525,11 +539,17 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 
 ### Frontend (Vite, build-time)
 
-| Variable        | Description                                                                 |
-|-----------------|-----------------------------------------------------------------------------|
-| `VITE_API_URL`  | Backend API base URL. **Leave unset for local dev** (uses `/api` + Vite proxy) and for same-domain hosting behind a reverse proxy. **Set it only when the frontend and backend are on different domains** (e.g. `https://api.yourdomain.com`). Place in `frontend/.env.production` or `.env.local`. |
+| Variable                   | Description                                                                 |
+|----------------------------|-----------------------------------------------------------------------------|
+| `VITE_API_URL`             | Backend API base URL. **Leave unset for local dev** (uses `/api` + Vite proxy) and for same-domain hosting behind a reverse proxy. **Set it only when the frontend and backend are on different domains** (e.g. `https://api.yourdomain.com`). Place in `frontend/.env.production` or `.env.local`. |
+| `VITE_REOWN_PROJECT_ID`    | WalletConnect / Reown AppKit project ID (free at [cloud.reown.com](https://cloud.reown.com)) — required for wallet connection. |
+| `VITE_MULTISENDER_ADDRESS` | MultiSender contract that batches the on-chain pack-purchase payout. |
+| `VITE_USDT_ADDRESS`        | USDT token contract for the on-chain rail. **Must match the backend `USDT_CONTRACT`** so the live "Wallet Balance" card reads the same token used for purchases (a mismatch shows `$0`). |
+| `VITE_USDT_DECIMALS`       | USDT token decimals fallback (the balance hook also reads decimals on-chain). |
 
 > **Hosting note:** the backend's `FRONTEND_URL` / `CORS_ORIGINS` point at the frontend; the frontend's `VITE_API_URL` (if needed) points at the backend. Same-domain deploys behind a reverse proxy that routes `/api → backend` need no `VITE_API_URL`.
+
+> **Vite reads `.env` only at startup** — restart `npm run dev` after editing any `VITE_*` variable.
 
 ---
 
@@ -553,6 +573,7 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - Withdrawal addresses must be OTP-verified before a withdrawal can be submitted.
 - Transfer fee is **1%** — sender is debited the full amount; recipient receives 99%.
 - First transfer to a new recipient requires email OTP confirmation.
-- **Admin Treasury** (Generate / Send to User) and the **global freeze** kill switch are admin-only and separate from user flows.
+- **Admin Treasury** (*Send to User*) and the **global freeze** kill switch are admin-only and separate from user flows. *(The Treasury *Generate* feature + dashboard "Treasury Balance" card were removed; `POST /admin/generate` no longer exists, though the `admin_generate` ledger type stays for historical data.)*
 - **All timestamps are displayed in IST (`Asia/Kolkata`).** The backend stores naive UTC; the frontend converts via `frontend/src/utils/datetime.js` (`formatDateTimeIST` / `formatDateIST` / `formatTimeIST`). Storage stays UTC — only the display is localized to Indian time.
-- **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views classify them into Income / Expense / System groups; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income.
+- **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views (`Transactions.jsx`, `Wallet.jsx`, `admin/AdminTransactions.jsx`) classify them into Income / Expense / System groups using **lowercase** keys; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income. *(`Wallet.jsx` previously used UPPERCASE keys, which matched nothing and rendered every row as a green "+" — fixed to lowercase.)*
+- **On-chain "Wallet Balance"** shown on the Dashboard, Wallet, and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases credit no internal wallets, so the internal main / repurchase / withdrawable balances stay `$0` on that rail — on-chain activity shows in transaction history and the income chart instead (mirrored on `pack/status` success).

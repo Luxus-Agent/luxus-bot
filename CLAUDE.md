@@ -64,7 +64,7 @@ agent-revenue-sharing-platform/
 │   │       ├── agents.py        # purchase (from balance, one per tier, sequential 1→2→3→4) / matrix view
 │   │       ├── wallet.py        # balances / transactions / income-daily / withdraw (combined balance) / withdrawals
 │   │       ├── deposit.py       # account balance / create deposit / transfer / refund
-│   │       ├── admin.py         # admin-only: users + summary, transactions, withdrawals, freeze/unfreeze, treasury (generate/transfer), platform freeze
+│   │       ├── admin.py         # admin-only: users + summary, transactions, withdrawals, freeze/unfreeze, treasury (transfer), platform freeze
 │   │       ├── platform.py      # GET /platform/status (freeze state for any logged-in user)
 │   │       ├── distribution.py  # GET /distribution/wallet-map — TokenPocket/MultiSender consolidated endpoint
 │   │       └── payments.py      # NOWPayments IPN webhook
@@ -280,9 +280,14 @@ GET /distribution/wallet-map          → JWT auth. Returns, for the resolved us
 A **separate on-chain rail** from the deposit-first + Core/Stream/Boost matrix engine. The
 frontend pays the upline split **directly on-chain** from the buyer's connected wallet (one
 batched MultiSender call); the backend (1) returns the validated recipient split and (2)
-records the outcome. **No internal Wallet/Transaction ledger rows are written on this rail**
-— the on-chain transfer *is* the payout. (Lives in `app/api/distribution.py`; split logic in
-`app/core/pack_payout.py`; record in `app/models/pack_purchase.py` → table `pack_purchases`.)
+records the outcome. **No internal Wallet balances are credited/debited on this rail** — the
+on-chain transfer *is* the payout. On success it DOES, however, (a) create an **active
+`AgentPurchase` ownership row** so the rest of the app (purchase-page "OWNED", the
+sequential-unlock gate, and Core-eligibility for future on-chain splits) recognizes the
+buyer, and (b) write **reporting-only `Transaction` rows** (buyer `agent_purchase` expense +
+each upline's `core_income`) so transaction history and the dashboard analytics reflect the
+activity. These rows carry no wallet balance. (Lives in `app/api/distribution.py`; split logic
+in `app/core/pack_payout.py`; record in `app/models/pack_purchase.py` → table `pack_purchases`.)
 
 ```
 POST /distribution/pack/purchase   → JWT. Body: { "pack_name": "Agent 1", "amount"?: 10 }
@@ -311,11 +316,23 @@ POST /distribution/pack/status     → JWT. Body: { purchase_id, status:"success
 - **API 2** marks the `pack_purchases` row `success` (stores `tx_hash`) or `failed` (stores
   `failure_reason`); it is idempotent-guarded (re-recording a finalized order → 400). Optional
   on-chain `tx_hash` verification is stubbed behind `settings.VERIFY_ONCHAIN_TX` (off by default).
+- **On success, API 2 also reflects the purchase internally** (`_mirror_onchain_ledger` +
+  ownership row, both PENDING-guarded so they run once): an active `AgentPurchase` row (no Celery
+  revenue engine queued, dup-tier guarded) + reporting-only `Transaction` rows (buyer
+  `agent_purchase`, each upline `core_income`). **No Wallet rows are touched** — funds live
+  on-chain in users' own wallets, so the internal main/repurchase wallets and withdrawable
+  balance stay $0 on this rail. Stream/Boost/repurchase/software-fee mechanics do not run here.
 - **Config** (`config.py`, override in `.env`): `PAYOUT_CURRENCY` (USDT), `PAYOUT_NETWORK` (BEP-20),
   `USDT_CONTRACT` (default `0xb2681F1CA80e080827d5f275648D2d2e2684f0C8`), `USDT_DECIMALS` (18),
   `PLATFORM_FEE_WALLET` (**set before go-live** — null until then), `VERIFY_ONCHAIN_TX`.
 - **Schema setup:** `cd backend && python migrate_v15.py` (idempotent — creates `pack_purchases`);
   `create_tables.py` covers fresh installs.
+- **Frontend live on-chain balance:** `frontend/src/hooks/useUsdtBalance.js` reads the connected
+  wallet's live USDT balance (BSC, via wagmi `balanceOf`, reading decimals on-chain). Shown as the
+  **"Wallet Balance"** card on the Dashboard, Wallet, and Buy Agents pages. Requires
+  `VITE_USDT_ADDRESS` (frontend `.env`) to **match the backend `USDT_CONTRACT`** — otherwise the
+  card reads a different token and shows $0. Other frontend on-chain envs: `VITE_MULTISENDER_ADDRESS`,
+  `VITE_USDT_DECIMALS`, `VITE_REOWN_PROJECT_ID` (WalletConnect).
 
 ## Email Notifications
 
@@ -430,7 +447,8 @@ Safe to re-run — exits early if an admin already exists.
 - **Root/admin user has no sponsor** — created directly in DB via `seed_admin.py`.
 - **BEP-20 wallet address at registration:** `User.wallet_address` (nullable column) is collected on the register form for the TokenPocket distribution flow. The register schema validates it as `0x` + 40 hex chars; it's **optional** on the backend (so existing flows don't break) but the frontend form makes it required with live validation. Exposed via `/auth/me` and `UserOut`. Existing DBs: run `cd backend && python migrate_v14.py` (idempotent — adds the nullable `users.wallet_address` column); `create_tables.py` covers fresh installs.
 - **TokenPocket distribution map:** `GET /distribution/wallet-map` (`app/api/distribution.py`) is the single consolidated, read-only endpoint that returns a user + their downline with each one's wallet address and profit, for the frontend MultiSender. Distribute against `profit.withdrawable`. See the "TokenPocket / MultiSender Distribution Endpoint" section above.
-- **On-chain pack purchase:** `POST /distribution/pack/purchase` + `POST /distribution/pack/status` (`app/api/distribution.py`) are a **separate on-chain (BEP-20 USDT) rail** — the frontend pays the upline split directly from the buyer's wallet; the backend returns the validated split and records the outcome (no internal Wallet/Transaction rows). Split = **Core rule only** (60% → two 30% halves to the first two eligible uplines via `app/core/pack_payout.py`, 40% → platform fee; missing/ineligible upline → platform, so it sums to the pack price). Order record in `pack_purchases` (`app/models/pack_purchase.py`). Migration: `python migrate_v15.py`. See the "On-chain pack purchase" subsection above.
+- **On-chain pack purchase:** `POST /distribution/pack/purchase` + `POST /distribution/pack/status` (`app/api/distribution.py`) are a **separate on-chain (BEP-20 USDT) rail** — the frontend pays the upline split directly from the buyer's wallet; the backend returns the validated split and records the outcome. Split = **Core rule only** (60% → two 30% halves to the first two eligible uplines via `app/core/pack_payout.py`, 40% → platform fee; missing/ineligible upline → platform, so it sums to the pack price). Order record in `pack_purchases` (`app/models/pack_purchase.py`). On success it also creates an **active `AgentPurchase` ownership row** (no Celery, dup-tier guarded) and **reporting-only `Transaction` rows** (buyer `agent_purchase` + each upline `core_income`) via `_mirror_onchain_ledger` so the purchase shows as OWNED and appears in transaction history + the dashboard income chart — but **no internal Wallet balances are credited** (the on-chain transfer is the payout; main/repurchase/withdrawable stay $0, and Stream/Boost/repurchase don't run on this rail). Migration: `python migrate_v15.py`. See the "On-chain pack purchase" subsection above.
+- **On-chain wallet balance display:** the "Wallet Balance" card on Dashboard / Wallet / Buy Agents pages shows the connected wallet's **live on-chain USDT** (via `frontend/src/hooks/useUsdtBalance.js`, wagmi `balanceOf`), not an internal balance. It needs `VITE_USDT_ADDRESS` (frontend `.env`) to **match the backend `USDT_CONTRACT`**; a mismatch makes the card read a different token and show $0. Restart the Vite dev server after changing `.env`.
 - **Withdrawal minimum is $10.** Minimum transfer is $1. No maximum on withdrawals.
 - **Withdrawals are instant** — payout dispatched immediately via NOWPayments.
 - **Withdrawal addresses must be pre-verified** — register via `POST /wallet/address`, confirm OTP via `POST /wallet/address/verify`.
@@ -457,14 +475,14 @@ Safe to re-run — exits early if an admin already exists.
 - **CORS:** `main.py` reads allowed origins from `settings.cors_origins_list` (`CORS_ORIGINS` env, comma-separated or `*`). Set it to the frontend URL in production instead of `*`.
 - **NOWPayments payouts need JWT + 2FA in production:** `send_payout` currently uses only `x-api-key` (fine for deposits/invoices). Outgoing payouts require the `/v1/auth` JWT and a 2FA verify step on the live API — wire this up before go-live or withdrawals will fail (then auto-refund).
 - **Platform freeze (global kill switch):** admin can freeze all user money-movement (deposit / withdraw / transfer / purchase) via `POST /admin/platform/freeze` (reason optional, admin-only) and lift it via `POST /admin/platform/unfreeze`. While frozen, guarded user endpoints return HTTP 423; admins bypass. State lives in the single-row `platform_settings` table. Users poll `GET /platform/status` (no reason exposed); admins read `GET /admin/platform/status` (full audit). Frontend shows a red banner + a Freeze/Frozen toggle in the admin top bar.
-- **Admin Treasury (separate from user flows):** `POST /admin/generate` mints funds into the admin's own account balance (for off-platform payments — cash/GPay/cheque/crypto, NOT a deposit); `POST /admin/transfer` sends treasury funds to any user by username (no fee, instant); `GET /admin/treasury/summary` returns account_balance / total_generated / total_sent / total_invested / total_deposited / **platform_profit**. Admin nav has a Treasury group (Generate, Send to User) and no longer reuses the user Wallet/Withdraw pages.
+- **Admin Treasury (separate from user flows):** the **Generate feature was removed** (frontend page/route/nav + backend `POST /admin/generate` endpoint + `AdminGenerateIn` schema), and the **"Treasury Balance" card was removed** from the admin dashboard. `POST /admin/transfer` still sends treasury funds to any user by username (no fee, instant). The `TransactionType.ADMIN_GENERATE` enum and `GET /admin/treasury/summary` (`total_generated`, `total_sent`, etc.) are **kept for historical-data integrity** — no new generate rows can be created, but existing ones still report and serialize correctly.
 - **Platform profit (realized):** `platform_profit` = SUM(`SOFTWARE_FEE`) + SUM(`PLATFORM_PROFIT`). `PLATFORM_PROFIT` ledger entries are written at each realization point: matrix level-completion residual (`matrix_engine.place_in_matrix`), Core amount retained when a buyer has no sponsor (`proactive._route_half`), and the 1% transfer fee (`deposit._execute_transfer`). Software fees stay as their own `SOFTWARE_FEE` rows. The admin dashboard's "Platform Profit" card shows this. Historical events were backfilled once via `backend/backfill_platform_profit.py` (idempotent). Pending (uncompleted) matrix money is intentionally NOT counted — only realized profit.
 - **Admin user management:** per-user expandable summary (agents bought, account balance, revenue generated) via `GET /admin/users/{id}/summary`; freeze/unfreeze per user; **delete user** via `DELETE /admin/users/{id}` (trash button next to freeze); no credit/debit wallet UI; admin's own row shows no controls. `GET /admin/transactions` resolves each transaction's owner username.
 - **Delete user (HARD delete):** `DELETE /admin/users/{id}` permanently removes the user and ALL their rows (wallets, transactions, purchases, matrix positions, withdrawals, deposits, addresses, transfer verifications) in one transaction. Downline users are re-parented to the deleted user's sponsor (`sponsor_position` cleared). Guards: cannot delete self or any admin. Frontend shows a strong confirm dialog. Note: this erases financial history — intended for cleanup, not routine ops.
 - **Transfer recipient validation:** both user and admin transfer forms validate the recipient username live (debounced, via `GET /auth/check-username`) — the recipient must exist; self-transfer is blocked client-side.
 - **bcrypt pinned to 4.0.1** — bcrypt 5.x breaks passlib's 72-byte wrap detection; do not upgrade.
 - `ACCOUNT_TIER = 0` is the sentinel agent_tier used for the account balance wallet.
-- **Transaction types are lowercase enum *values*** (`agent_purchase`, `core_sent`, `deposit`, …) — the API serializes `TransactionType.value`, not the member name. Frontend transaction views (`Transactions.jsx`, `admin/AdminTransactions.jsx`) classify them with lowercase `INCOME` / `EXPENSE` / `SYSTEM` sets. **Do not use UPPERCASE keys** to match transaction types client-side — that was a real bug where "Total In" summed every row (income + expenses + audit records) because nothing matched the uppercase `NEGATIVE` list.
+- **Transaction types are lowercase enum *values*** (`agent_purchase`, `core_sent`, `deposit`, …) — the API serializes `TransactionType.value`, not the member name. Frontend transaction views (`Transactions.jsx`, `Wallet.jsx`, `admin/AdminTransactions.jsx`) classify them with lowercase `INCOME` / `EXPENSE` / `SYSTEM` sets. **Do not use UPPERCASE keys** to match transaction types client-side — that was a real bug where "Total In" summed every row (income + expenses + audit records) because nothing matched the uppercase `NEGATIVE` list. (`Wallet.jsx` had the same UPPERCASE bug — every row rendered as a green "+" — fixed to lowercase keys.)
 - **`core_sent` is an informational/audit record**, not a wallet inflow — it records the 60% Core split routed to the upline at purchase time. It is classified as `SYSTEM` (excluded from Total In / Total Out, shown with a neutral marker), not as income.
 - **All timestamps display in IST (`Asia/Kolkata`).** The backend stores naive UTC (`datetime.utcnow()`) and serializes it *without* a tz suffix, so JS would otherwise parse it as local time and show it ~5h30m early. `frontend/src/utils/datetime.js` exposes `formatDateTimeIST` / `formatDateIST` / `formatTimeIST` — they mark the value as UTC then format in IST. Use these helpers for any `created_at` rendering; do **not** call `new Date(x).toLocaleString()` directly on backend timestamps. Storage stays UTC (correct convention) — this is display-only.
 - **Dashboard "Daily Income" chart uses 2-hour IST-aligned buckets.** `GET /wallet/income/daily` returns **12 two-hour buckets** (not 24 hourly) for the last 24h, anchored to IST even-hour boundaries. Bucket `hour` is still emitted as UTC ISO (`…Z`); because the anchors are IST 2-hour marks, the client renders clean IST labels (`00:00, 02:00, … 22:00`) instead of off-by-:30 values. The chart X-axis (`Dashboard.jsx`) labels every 2-hour mark (`interval="preserveStartEnd"`, thins on mobile); the Y-axis auto-scales in $1 increments (Recharts default — no fixed domain).

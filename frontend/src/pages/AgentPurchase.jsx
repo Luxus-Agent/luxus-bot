@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
-import { Bot, Zap, TrendingUp, Activity, CheckCircle, ShoppingCart } from 'lucide-react'
+import { Bot, Zap, TrendingUp, Activity, CheckCircle, ShoppingCart, Coins } from 'lucide-react'
 import { useAppKitAccount } from '@reown/appkit/react'
+import { useUsdtBalance } from '../hooks/useUsdtBalance'
 import { readContract, writeContract, waitForTransactionReceipt, switchChain } from '@wagmi/core'
 import { erc20Abi, parseUnits, isAddress } from 'viem'
 import { bscTestnet } from '@reown/appkit/networks'
@@ -40,6 +41,7 @@ export default function AgentPurchase() {
   const [purchasing, setPurchasing] = useState(null)
   const [confirmTier, setConfirmTier] = useState(null)  // tier awaiting confirm-modal approval
   const { address, isConnected } = useAppKitAccount()
+  const { balance: usdtBalance, loading: usdtLoading, configured: usdtConfigured } = useUsdtBalance()
 
   // Account (spendable) balance lives in the 'account' wallet from /wallet/balances.
   const accountBalanceFrom = (wallets) =>
@@ -206,11 +208,29 @@ export default function AgentPurchase() {
             </p>
           </div>
           <div
-            className="px-4 py-3 rounded-xl"
-            style={{ background: '#141922', border: '1px solid #1E2A38' }}
+            className="px-4 py-3 rounded-xl flex items-center gap-3"
+            style={{ background: '#141922', border: '1px solid #00D4B433' }}
           >
-            <p className="text-xs" style={{ color: '#8899AA' }}>Account Balance</p>
-            <p className="text-xl font-bold" style={{ color: '#00D4B4' }}>${accountBalance.toFixed(2)}</p>
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: '#00D4B418' }}>
+              <Coins size={18} style={{ color: '#00D4B4' }} />
+            </div>
+            <div>
+              <p className="text-xs" style={{ color: '#8899AA' }}>Wallet Balance</p>
+              <p className="text-xl font-bold" style={{ color: '#00D4B4' }}>
+                {!usdtConfigured ? (
+                  <span className="text-sm" style={{ color: '#FFB547' }}>Not configured</span>
+                ) : !isConnected ? (
+                  <span className="text-sm" style={{ color: '#8899AA' }}>Connect wallet</span>
+                ) : usdtLoading ? (
+                  <span className="text-sm" style={{ color: '#8899AA' }}>Loading…</span>
+                ) : usdtBalance == null ? (
+                  <span className="text-sm" style={{ color: '#8899AA' }}>—</span>
+                ) : (
+                  `$${usdtBalance.toFixed(2)}`
+                )}
+              </p>
+              <p className="text-xs" style={{ color: '#4A5568' }}>On-chain USDT (BSC)</p>
+            </div>
           </div>
         </div>
 

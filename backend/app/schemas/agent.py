@@ -244,17 +244,6 @@ class AdminWalletDebitIn(BaseModel):
         return v
 
 
-class AdminGenerateIn(BaseModel):
-    amount: Decimal
-
-    @field_validator("amount")
-    @classmethod
-    def amount_positive(cls, v: Decimal) -> Decimal:
-        if v <= 0:
-            raise ValueError("amount must be greater than zero")
-        return v
-
-
 class AdminTransferIn(BaseModel):
     to_username: str
     amount: Decimal
