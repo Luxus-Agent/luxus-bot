@@ -13,17 +13,12 @@ import Dashboard from './pages/Dashboard'
 import AgentPurchase from './pages/AgentPurchase'
 import Matrix from './pages/Matrix'
 import Wallet from './pages/Wallet'
-import Deposit from './pages/Deposit'
-import Transfer from './pages/Transfer'
-import Withdraw from './pages/Withdraw'
 import Transactions from './pages/Transactions'
 import Profile from './pages/Profile'
 import AdminDashboard from './pages/admin/AdminDashboard'
 import AdminUsers from './pages/admin/AdminUsers'
 import AdminTransactions from './pages/admin/AdminTransactions'
-import AdminWithdrawals from './pages/admin/AdminWithdrawals'
 import AdminGenerate from './pages/admin/AdminGenerate'
-import AdminTransfer from './pages/admin/AdminTransfer'
 
 export default function App() {
   return (
@@ -60,9 +55,6 @@ export default function App() {
           <Route path="/agents" element={<ProtectedRoute><AgentPurchase /></ProtectedRoute>} />
           <Route path="/matrix" element={<ProtectedRoute><Matrix /></ProtectedRoute>} />
           <Route path="/wallet" element={<ProtectedRoute><Wallet /></ProtectedRoute>} />
-          <Route path="/deposit" element={<ProtectedRoute><Deposit /></ProtectedRoute>} />
-          <Route path="/transfer" element={<ProtectedRoute><Transfer /></ProtectedRoute>} />
-          <Route path="/withdraw" element={<ProtectedRoute><Withdraw /></ProtectedRoute>} />
           <Route path="/transactions" element={<ProtectedRoute><Transactions /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
@@ -70,9 +62,7 @@ export default function App() {
           <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
           <Route path="/admin/users" element={<AdminRoute><AdminUsers /></AdminRoute>} />
           <Route path="/admin/transactions" element={<AdminRoute><AdminTransactions /></AdminRoute>} />
-          <Route path="/admin/withdrawals" element={<AdminRoute><AdminWithdrawals /></AdminRoute>} />
           <Route path="/admin/generate" element={<AdminRoute><AdminGenerate /></AdminRoute>} />
-          <Route path="/admin/transfer" element={<AdminRoute><AdminTransfer /></AdminRoute>} />
 
           {/* Redirects */}
           <Route path="/" element={<Navigate to="/login" replace />} />

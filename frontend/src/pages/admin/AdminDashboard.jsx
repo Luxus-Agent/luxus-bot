@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { Users, BarChart3, ArrowUpFromLine, ArrowDownToLine, Activity, TrendingUp, DollarSign, Wallet, Coins } from 'lucide-react'
+import { Users, TrendingUp, DollarSign, Wallet } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { formatDateTimeIST, formatDateIST } from '../../utils/datetime'
+import { formatDateTimeIST } from '../../utils/datetime'
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState([])
   const [transactions, setTransactions] = useState([])
-  const [withdrawals, setWithdrawals] = useState([])
   const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0, platform_profit: 0 })
   const [loading, setLoading] = useState(true)
 
@@ -17,25 +16,18 @@ export default function AdminDashboard() {
     Promise.all([
       api.get('/admin/users'),
       api.get('/admin/transactions'),
-      api.get('/admin/withdrawals'),
       api.get('/admin/treasury/summary'),
-    ]).then(([u, t, w, s]) => {
+    ]).then(([u, t, s]) => {
       setUsers(u.data)
       setTransactions(t.data)
-      setWithdrawals(w.data)
       setTreasury(s.data)
     }).catch(() => toast.error('Failed to load admin data')).finally(() => setLoading(false))
   }, [])
 
   const activeUsers = users.filter(u => u.is_active).length
   const frozenUsers = users.filter(u => !u.is_active).length
-  const pendingWithdrawals = withdrawals.filter(w => w.status === 'PENDING').length
-  const totalWithdrawn = withdrawals
-    .filter(w => w.status === 'SENT')
-    .reduce((s, w) => s + parseFloat(w.amount), 0)
 
   const recentTx = transactions.slice(0, 8)
-  const recentWithdrawals = withdrawals.slice(0, 5)
 
   const txTypeBreakdown = transactions.reduce((acc, t) => {
     acc[t.transaction_type] = (acc[t.transaction_type] || 0) + 1
@@ -143,47 +135,6 @@ export default function AdminDashboard() {
                 )
               })}
             </div>
-          </div>
-        </div>
-
-        {/* Pending Withdrawals */}
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-white">Recent Withdrawals</h2>
-            <Link to="/admin/withdrawals" className="text-xs" style={{ color: '#00D4B4' }}>View All →</Link>
-          </div>
-          <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-            {recentWithdrawals.length === 0 ? (
-              <div className="p-6 text-center text-sm" style={{ color: '#8899AA' }}>No withdrawals</div>
-            ) : (
-              <div className="row-divide">
-                {recentWithdrawals.map(w => {
-                  const statusColor = { PENDING: '#FFB547', PROCESSING: '#3498DB', SENT: '#00D4B4', FAILED: '#FF4D6A' }
-                  const color = statusColor[w.status] || '#8899AA'
-                  return (
-                    <div key={w.id} className="flex items-center gap-3 px-5 py-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white">${parseFloat(w.amount).toFixed(2)} USDT</p>
-                        <p className="text-xs font-mono" style={{ color: '#4A5568' }}>
-                          User #{w.user_id} · {w.wallet_address.slice(0, 10)}...
-                        </p>
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <span
-                          className="text-xs px-2 py-0.5 rounded-full font-medium"
-                          style={{ background: `${color}18`, color }}
-                        >
-                          {w.status}
-                        </span>
-                        <p className="text-xs mt-0.5" style={{ color: '#4A5568' }}>
-                          {formatDateIST(w.created_at)}
-                        </p>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
           </div>
         </div>
 

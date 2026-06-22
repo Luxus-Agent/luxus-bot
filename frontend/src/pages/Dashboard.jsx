@@ -4,8 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import {
-  Wallet, TrendingUp, Bot, ArrowDownToLine, ArrowUpFromLine,
-  Copy, Check, Users, Zap, ChevronRight
+  Wallet, TrendingUp, Bot,
+  Copy, Check, Users, ChevronRight
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
@@ -244,9 +244,7 @@ export default function Dashboard() {
             <h2 className="font-semibold text-white mb-4">Quick Actions</h2>
             <div className="space-y-2">
               {[
-                { to: '/deposit', icon: ArrowDownToLine, label: 'Deposit USDT', sub: 'Top up account', color: '#00D4B4' },
                 { to: '/agents', icon: Bot, label: 'Buy Agent', sub: 'Purchase a tier', color: '#9B59B6' },
-                { to: '/withdraw', icon: ArrowUpFromLine, label: 'Withdraw', sub: 'Send to wallet', color: '#FFB547' },
                 { to: '/matrix', icon: Users, label: 'View Queue', sub: 'Track progress', color: '#3498DB' },
               ].map(({ to, icon: Icon, label, sub, color }) => (
                 <Link key={to} to={to}>

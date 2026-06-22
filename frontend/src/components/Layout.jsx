@@ -4,10 +4,11 @@ import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import Logo from './Logo'
+import { useAppKitAccount, useDisconnect } from '@reown/appkit/react'
 import {
-  LayoutDashboard, Wallet, ArrowDownToLine, ArrowUpFromLine,
+  LayoutDashboard, Wallet,
   Users, BarChart3, History, Bot, Network, LogOut, Menu, X,
-  ChevronRight, Send, ShieldCheck, User, ShieldAlert, Lock, Unlock, AlertTriangle, Coins
+  ChevronRight, ShieldCheck, User, ShieldAlert, Lock, Unlock, AlertTriangle, Coins
 } from 'lucide-react'
 
 const userNav = [
@@ -15,9 +16,6 @@ const userNav = [
   { path: '/agents',    label: 'Buy Agents', icon: Bot },
   { path: '/matrix',   label: 'Queue',       icon: Network },
   { path: '/wallet',   label: 'Wallet',      icon: Wallet },
-  { path: '/deposit',  label: 'Deposit',     icon: ArrowDownToLine },
-  { path: '/transfer', label: 'Transfer',    icon: Send },
-  { path: '/withdraw', label: 'Withdraw',    icon: ArrowUpFromLine },
   { path: '/transactions', label: 'Transactions', icon: History },
 ]
 
@@ -25,10 +23,8 @@ const adminNav = [
   { path: '/admin',              label: 'Overview',     icon: LayoutDashboard },
   { path: '/admin/users',        label: 'Users',        icon: Users },
   { path: '/admin/transactions', label: 'Transactions', icon: BarChart3 },
-  { path: '/admin/withdrawals',  label: 'Withdrawals',  icon: ArrowUpFromLine },
   { divider: 'Treasury' },
   { path: '/admin/generate', label: 'Generate',    icon: Coins },
-  { path: '/admin/transfer', label: 'Send to User', icon: Send },
 ]
 
 function SidebarNav({ nav, onClose }) {
@@ -189,8 +185,8 @@ function FrozenBanner({ reason, isAdmin }) {
       <p className="text-xs sm:text-sm" style={{ color: '#FF8095' }}>
         <span className="font-semibold" style={{ color: '#FF4D6A' }}>Platform frozen.</span>{' '}
         {isAdmin
-          ? 'All user deposits, withdrawals, transfers, and purchases are paused. Use the “Frozen” button to resume.'
-          : 'Deposits, withdrawals, transfers, and purchases are temporarily paused. Please try again later.'}
+          ? 'All user agent purchases are paused. Use the “Frozen” button to resume.'
+          : 'Agent purchases are temporarily paused. Please try again later.'}
         {/* Reason is admin-only — the public status endpoint never sends it to users. */}
         {reason ? <span style={{ color: '#8899AA' }}> — {reason}</span> : null}
       </p>
@@ -262,8 +258,8 @@ function PlatformFreezeControl({ frozen, onChanged }) {
 
             <p className="text-sm mb-4" style={{ color: '#8899AA' }}>
               {frozen
-                ? 'This will immediately re-enable deposits, withdrawals, transfers, and agent purchases for all users.'
-                : 'This is an emergency stop. While frozen, all users are blocked from deposits, withdrawals, transfers, and agent purchases. Read-only access stays available. Only you can resume.'}
+                ? 'This will immediately re-enable agent purchases for all users.'
+                : 'This is an emergency stop. While frozen, all users are blocked from agent purchases. Read-only access stays available. Only you can resume.'}
             </p>
 
             {!frozen && (
@@ -314,6 +310,32 @@ function PlatformFreezeControl({ frozen, onChanged }) {
   )
 }
 
+/**
+ * Enforces that the wallet connected in-app matches the address the user
+ * registered with (from /auth/me). A matching wallet stays connected; any other
+ * wallet is disconnected with a clear prompt to reconnect the registered one.
+ */
+function WalletGuard() {
+  const { user } = useAuth()
+  const { address, isConnected } = useAppKitAccount()
+  const { disconnect } = useDisconnect()
+  const registered = user?.wallet_address
+
+  useEffect(() => {
+    if (!isConnected || !address || !registered) return
+    if (address.toLowerCase() !== registered.toLowerCase()) {
+      disconnect()
+      const short = `${registered.slice(0, 6)}…${registered.slice(-4)}`
+      toast.error(
+        `This isn't the wallet linked to your account. Please connect the wallet you registered with (${short}).`,
+        { duration: 6000 },
+      )
+    }
+  }, [address, isConnected, registered, disconnect])
+
+  return null
+}
+
 function AppShell({ nav, children, badge }) {
   const { user, logout, isAdmin } = useAuth()
   const navigate = useNavigate()
@@ -337,6 +359,9 @@ function AppShell({ nav, children, badge }) {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: '#080B10' }}>
+      {/* Disconnect any wallet that isn't the user's registered address */}
+      <WalletGuard />
+
       {/* Desktop sidebar */}
       <aside
         className="hidden lg:flex flex-col w-60 flex-shrink-0"
@@ -388,6 +413,8 @@ function AppShell({ nav, children, badge }) {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            {/* Reown AppKit wallet widget — Connect when disconnected, account when connected */}
+            <appkit-button balance="hide" size="sm" />
             {isAdmin && (
               <PlatformFreezeControl frozen={platform.is_frozen} onChanged={refreshPlatform} />
             )}

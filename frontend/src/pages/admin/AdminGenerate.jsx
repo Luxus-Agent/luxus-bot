@@ -46,7 +46,7 @@ export default function AdminGenerate() {
           <h1 className="text-2xl font-bold text-white">Generate Funds</h1>
           <p className="text-sm mt-1" style={{ color: '#8899AA' }}>
             Mint funds into your treasury after receiving payment off-platform (cash, GPay,
-            cheque, crypto). Send them to users from the Transfer page.
+            cheque, crypto).
           </p>
         </div>
 

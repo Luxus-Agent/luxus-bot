@@ -3,7 +3,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../api/client'
 import Logo from '../components/Logo'
 import toast from 'react-hot-toast'
-import { Eye, EyeOff, UserPlus, CheckCircle, XCircle, Loader } from 'lucide-react'
+import { Eye, EyeOff, UserPlus, CheckCircle, XCircle, Loader, Wallet, Link2 } from 'lucide-react'
+import { useAppKit, useAppKitAccount, useDisconnect } from '@reown/appkit/react'
 
 
 export default function Register() {
@@ -24,6 +25,19 @@ export default function Register() {
   const [sponsorStatus, setSponsorStatus] = useState(null)   // null | 'checking' | 'valid' | 'invalid'
   const debounceRef = useRef(null)
   const sponsorDebounceRef = useRef(null)
+
+  // ── Wallet connect (Reown AppKit) ──────────────────────────────────────────
+  // Works on web and inside in-app dApp browsers (TokenPocket, MetaMask, etc.).
+  // When a wallet is connected, its address takes over the field (read-only);
+  // otherwise the user can paste an address manually.
+  const { open: openWallet } = useAppKit()
+  const { address, isConnected } = useAppKitAccount()
+  const { disconnect } = useDisconnect()
+
+  // The address we actually register with: connected wallet wins, else the
+  // manually pasted value.
+  const effectiveWallet = (isConnected && address ? address : form.wallet_address).trim()
+  const walletValid = /^0x[a-fA-F0-9]{40}$/.test(effectiveWallet)
 
   useEffect(() => {
     const name = form.username.trim()
@@ -78,13 +92,19 @@ export default function Register() {
       toast.error('Password must be at least 8 characters')
       return
     }
-    if (!/^0x[a-fA-F0-9]{40}$/.test(form.wallet_address.trim())) {
-      toast.error('Enter a valid BEP-20 wallet address (0x + 40 hex characters)')
+    if (!walletValid) {
+      toast.error('Connect a wallet or enter a valid BEP-20 address (0x + 40 hex characters)')
       return
     }
     setLoading(true)
     try {
-      const { confirm_password, ...payload } = form  // sponsor_username sent as-is
+      const payload = {
+        email: form.email,
+        username: form.username,
+        password: form.password,
+        sponsor_username: form.sponsor_username,
+        wallet_address: effectiveWallet,
+      }
       await api.post('/auth/register', payload)
       toast.success('Account created! Check your email for OTP.')
       navigate(`/verify-email?email=${encodeURIComponent(form.email)}`)
@@ -109,7 +129,8 @@ export default function Register() {
   const inputClass = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all'
 
   const passwordMismatch = form.confirm_password && form.password !== form.confirm_password
-  const walletInvalid = form.wallet_address.trim() && !/^0x[a-fA-F0-9]{40}$/.test(form.wallet_address.trim())
+  // Red-border feedback for the manual paste field (only when not connected).
+  const walletInvalid = !isConnected && form.wallet_address.trim() && !walletValid
 
   return (
     <div
@@ -183,21 +204,71 @@ export default function Register() {
               <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
                 BEP-20 Wallet Address
               </label>
-              <input
-                type="text"
-                required
-                value={form.wallet_address}
-                onChange={e => setForm(f => ({ ...f, wallet_address: e.target.value }))}
-                placeholder="0x… (your USDT BEP-20 address)"
-                className={inputClass}
-                style={{
-                  ...inputBase,
-                  borderColor: walletInvalid ? '#FF4D6A' : '#1E2A38',
-                  fontFamily: 'monospace',
-                }}
-                onFocus={e => { if (!walletInvalid) e.target.style.borderColor = '#00D4B4' }}
-                onBlur={e => { e.target.style.borderColor = walletInvalid ? '#FF4D6A' : '#1E2A38' }}
-              />
+
+              {isConnected && address ? (
+                /* Connected: show the address read-only with a disconnect option */
+                <div
+                  className="rounded-xl px-4 py-3 flex items-center gap-3"
+                  style={{ ...inputBase, borderColor: 'rgba(0,212,180,0.45)' }}
+                >
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'rgba(0,212,180,0.12)' }}
+                  >
+                    <Wallet size={16} style={{ color: '#00D4B4' }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs" style={{ color: '#00D4B4' }}>Wallet connected</p>
+                    <p
+                      className="text-sm truncate"
+                      style={{ color: '#fff', fontFamily: 'monospace' }}
+                      title={address}
+                    >
+                      {address}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => disconnect()}
+                    className="text-xs font-medium flex-shrink-0 px-2 py-1 rounded-lg"
+                    style={{ color: '#FF4D6A', background: 'rgba(255,77,106,0.08)' }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                /* Not connected: paste manually OR connect a wallet */
+                <>
+                  <input
+                    type="text"
+                    value={form.wallet_address}
+                    onChange={e => setForm(f => ({ ...f, wallet_address: e.target.value }))}
+                    placeholder="0x… (paste your USDT BEP-20 address)"
+                    className={inputClass}
+                    style={{
+                      ...inputBase,
+                      borderColor: walletInvalid ? '#FF4D6A' : '#1E2A38',
+                      fontFamily: 'monospace',
+                    }}
+                    onFocus={e => { if (!walletInvalid) e.target.style.borderColor = '#00D4B4' }}
+                    onBlur={e => { e.target.style.borderColor = walletInvalid ? '#FF4D6A' : '#1E2A38' }}
+                  />
+                  <div className="flex items-center gap-3 my-2">
+                    <div className="flex-1 h-px" style={{ background: '#1E2A38' }} />
+                    <span className="text-xs" style={{ color: '#4A5568' }}>or</span>
+                    <div className="flex-1 h-px" style={{ background: '#1E2A38' }} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openWallet()}
+                    className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
+                    style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4', border: '1px solid rgba(0,212,180,0.35)' }}
+                  >
+                    <Link2 size={16} /> Connect Wallet
+                  </button>
+                </>
+              )}
+
               {walletInvalid ? (
                 <p className="text-xs mt-1" style={{ color: '#FF4D6A' }}>
                   Must be 0x followed by 40 hex characters
@@ -335,12 +406,12 @@ export default function Register() {
 
             <button
               type="submit"
-              disabled={loading || !!passwordMismatch || !!walletInvalid || usernameStatus === 'taken' || sponsorStatus === 'invalid'}
+              disabled={loading || !!passwordMismatch || !walletValid || usernameStatus === 'taken' || sponsorStatus === 'invalid'}
               className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all mt-2"
               style={{
-                background: (loading || passwordMismatch || walletInvalid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'rgba(0,212,180,0.3)' : '#00D4B4',
-                color: (loading || passwordMismatch || walletInvalid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? '#8899AA' : '#000',
-                cursor: (loading || passwordMismatch || walletInvalid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'not-allowed' : 'pointer',
+                background: (loading || passwordMismatch || !walletValid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'rgba(0,212,180,0.3)' : '#00D4B4',
+                color: (loading || passwordMismatch || !walletValid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? '#8899AA' : '#000',
+                cursor: (loading || passwordMismatch || !walletValid || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'not-allowed' : 'pointer',
               }}
             >
               {loading ? (

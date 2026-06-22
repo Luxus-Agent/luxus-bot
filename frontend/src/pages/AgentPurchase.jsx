@@ -3,6 +3,12 @@ import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import { Bot, Zap, TrendingUp, Activity, CheckCircle, ShoppingCart } from 'lucide-react'
+import { useAppKitAccount } from '@reown/appkit/react'
+import { readContract, writeContract, waitForTransactionReceipt, switchChain } from '@wagmi/core'
+import { erc20Abi, parseUnits, isAddress } from 'viem'
+import { bscTestnet } from '@reown/appkit/networks'
+import { wagmiConfig } from '../config/appkit'
+import { MULTISENDER_ADDRESS, USDT_ADDRESS, USDT_DECIMALS, multisenderAbi } from '../config/contracts'
 
 const TIERS = [
   {
@@ -32,40 +38,143 @@ export default function AgentPurchase() {
   const [accountBalance, setAccountBalance] = useState(0)
   const [loading, setLoading] = useState(true)
   const [purchasing, setPurchasing] = useState(null)
+  const [confirmTier, setConfirmTier] = useState(null)  // tier awaiting confirm-modal approval
+  const { address, isConnected } = useAppKitAccount()
+
+  // Account (spendable) balance lives in the 'account' wallet from /wallet/balances.
+  const accountBalanceFrom = (wallets) =>
+    parseFloat((wallets || []).find(w => w.wallet_type === 'account' && w.agent_tier === 0)?.balance || 0) || 0
 
   useEffect(() => {
     Promise.all([
       api.get('/agents/purchases'),
-      api.get('/deposit/balance'),
+      api.get('/wallet/balances'),
     ]).then(([p, b]) => {
       setPurchases(p.data)
-      setAccountBalance(parseFloat(b.data.account_balance) || 0)
+      setAccountBalance(accountBalanceFrom(b.data))
     }).catch(() => toast.error('Failed to load')).finally(() => setLoading(false))
   }, [])
 
-  const handlePurchase = async (tierId, price) => {
-    if (isOwned(tierId)) {
-      toast.error(`You already own Agent ${tierId}. Each agent can be purchased once.`)
+  // Pre-flight checks, then open the in-app confirm modal.
+  const requestPurchase = (tier) => {
+    if (isOwned(tier.id)) {
+      toast.error(`You already own Agent ${tier.id}. Each agent can be purchased once.`)
       return
     }
-    if (!isUnlocked(tierId)) {
-      toast.error(`Purchase Agent ${tierId - 1} before Agent ${tierId}.`)
+    if (!isUnlocked(tier.id)) {
+      toast.error(`Purchase Agent ${tier.id - 1} before Agent ${tier.id}.`)
       return
     }
-    if (accountBalance < price) {
-      toast.error(`Insufficient balance. You need $${price} but have $${accountBalance.toFixed(2)}`)
+    if (!isConnected || !address) {
+      toast.error('Connect your wallet to purchase.')
       return
     }
-    if (!window.confirm(`Purchase Agent ${tierId} for $${price}? This will deduct from your account balance.`)) return
+    if (!MULTISENDER_ADDRESS || !isAddress(MULTISENDER_ADDRESS)) {
+      toast.error('Payout contract is not configured. Set VITE_MULTISENDER_ADDRESS.')
+      return
+    }
+    setConfirmTier(tier)
+  }
+
+  // Runs the on-chain payment once the user confirms in the modal.
+  const executePurchase = async (tier) => {
+    const tierId = tier.id
+    const price = tier.price
     setPurchasing(tierId)
+    let purchaseId
+    let txHash
+    let txConfirmed = false
     try {
-      await api.post('/agents/purchase', { agent_tier: tierId })
-      toast.success(`Agent ${tierId} purchased and activating!`)
-      const [p, b] = await Promise.all([api.get('/agents/purchases'), api.get('/deposit/balance')])
+      // 1) Ask the backend for the payout split (recipients + amounts).
+      const { data } = await api.post('/distribution/pack/purchase', {
+        pack_name: tier?.name,
+        agent_tier: tierId,
+        amount: price,
+      })
+      purchaseId = data.purchase_id ?? data.id
+      const decimals = Number(data.decimals ?? USDT_DECIMALS)
+      const token = data.token_contract || data.token_address || USDT_ADDRESS
+      if (!token || !isAddress(token)) {
+        throw new Error('No valid USDT token address from server (set VITE_USDT_ADDRESS).')
+      }
+
+      // Recipients to pay = everyone except the buyer, with a positive amount.
+      const recipients = (data.recipients || []).filter(
+        r => r.role !== 'buyer' && Number(r.amount) > 0 && isAddress(r.wallet_address),
+      )
+      if (recipients.length === 0) throw new Error('No payout recipients returned by server.')
+
+      const to = recipients.map(r => r.wallet_address)
+      const values = recipients.map(r => parseUnits(String(r.amount), decimals))
+      const total = values.reduce((sum, v) => sum + v, 0n)
+
+      // 2) Make sure the wallet is on BNB testnet.
+      try {
+        await switchChain(wagmiConfig, { chainId: bscTestnet.id })
+      } catch {
+        throw new Error('Switch your wallet to BNB Smart Chain Testnet and try again.')
+      }
+
+      // 3) Approve the MultiSender to pull `total` USDT, only if needed.
+      const allowance = await readContract(wagmiConfig, {
+        address: token,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [address, MULTISENDER_ADDRESS],
+      })
+      if (allowance < total) {
+        toast.loading('Approve USDT spending in your wallet…', { id: 'approve' })
+        const approveHash = await writeContract(wagmiConfig, {
+          address: token,
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [MULTISENDER_ADDRESS, total],
+        })
+        await waitForTransactionReceipt(wagmiConfig, { hash: approveHash })
+        toast.dismiss('approve')
+      }
+
+      // 4) Batch the payout in a single transaction.
+      toast.loading('Confirm the payment in your wallet…', { id: 'send' })
+      txHash = await writeContract(wagmiConfig, {
+        address: MULTISENDER_ADDRESS,
+        abi: multisenderAbi,
+        functionName: 'sendERC20DifferentValue',
+        args: [token, to, values],
+      })
+      const receipt = await waitForTransactionReceipt(wagmiConfig, { hash: txHash })
+      toast.dismiss('send')
+      // waitForTransactionReceipt resolves even when a tx reverts — verify it succeeded.
+      if (receipt.status !== 'success') {
+        throw new Error('Transaction reverted on-chain.')
+      }
+      txConfirmed = true
+
+      // 5) Mark the purchase as paid — send the on-chain tx hash to the backend.
+      await api.post('/distribution/pack/status', {
+        purchase_id: purchaseId,
+        status: 'success',
+        tx_hash: txHash,
+      })
+
+      toast.success(`Agent ${tierId} purchased!`)
+      const [p, b] = await Promise.all([api.get('/agents/purchases'), api.get('/wallet/balances')])
       setPurchases(p.data)
-      setAccountBalance(parseFloat(b.data.account_balance) || 0)
+      setAccountBalance(accountBalanceFrom(b.data))
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Purchase failed')
+      toast.dismiss('approve')
+      toast.dismiss('send')
+      // If the on-chain payment didn't go through, tell the backend it failed.
+      if (purchaseId && !txConfirmed) {
+        api.post('/distribution/pack/status', {
+          purchase_id: purchaseId,
+          status: 'failed',
+          tx_hash: txHash || null,
+          failure_reason: (err?.shortMessage || err?.message || 'Payment failed').slice(0, 200),
+        }).catch(() => {})
+      }
+      const msg = err?.shortMessage || err?.response?.data?.detail || err?.message || 'Purchase failed'
+      toast.error(msg)
     } finally {
       setPurchasing(null)
     }
@@ -128,9 +237,8 @@ export default function AgentPurchase() {
           {TIERS.map(tier => {
             const owned = isOwned(tier.id)
             const unlocked = isUnlocked(tier.id)
-            const canAfford = accountBalance >= tier.price
             const isBuying = purchasing === tier.id
-            const disabled = owned || !unlocked || !canAfford || isBuying
+            const disabled = owned || !unlocked || !isConnected || isBuying
             return (
               <div
                 key={tier.id}
@@ -185,12 +293,12 @@ export default function AgentPurchase() {
                 {/* Button */}
                 <div className="px-4 pb-4">
                   <button
-                    onClick={() => handlePurchase(tier.id, tier.price)}
+                    onClick={() => requestPurchase(tier)}
                     disabled={disabled}
                     className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
                     style={{
-                      background: isBuying ? `${tier.color}40` : (owned ? `${tier.color}20` : (unlocked && canAfford ? tier.color : '#1E2A38')),
-                      color: owned ? tier.color : (unlocked && canAfford && !isBuying ? '#000' : '#4A5568'),
+                      background: isBuying ? `${tier.color}40` : (owned ? `${tier.color}20` : (unlocked && isConnected ? tier.color : '#1E2A38')),
+                      color: owned ? tier.color : (unlocked && isConnected && !isBuying ? '#000' : '#4A5568'),
                       cursor: disabled ? 'not-allowed' : 'pointer',
                     }}
                   >
@@ -200,15 +308,15 @@ export default function AgentPurchase() {
                       <><CheckCircle size={14} /> Owned</>
                     ) : !unlocked ? (
                       <>Buy Agent {tier.id - 1} first</>
-                    ) : !canAfford ? (
-                      <>Insufficient Balance</>
+                    ) : !isConnected ? (
+                      <>Connect Wallet</>
                     ) : (
                       <><ShoppingCart size={14} /> Purchase</>
                     )}
                   </button>
-                  {!owned && unlocked && !canAfford && (
+                  {!owned && unlocked && !isConnected && (
                     <p className="text-xs mt-1.5 text-center" style={{ color: '#4A5568' }}>
-                      Need ${(tier.price - accountBalance).toFixed(2)} more
+                      Connect your wallet to purchase
                     </p>
                   )}
                 </div>
@@ -216,6 +324,54 @@ export default function AgentPurchase() {
             )
           })}
         </div>
+
+        {/* Purchase confirmation modal */}
+        {confirmTier && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0"
+              style={{ background: 'rgba(0,0,0,0.75)' }}
+              onClick={() => setConfirmTier(null)}
+            />
+            <div
+              className="relative w-full max-w-sm rounded-2xl p-6"
+              style={{ background: '#141922', border: '1px solid #1E2A38', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }}
+                >
+                  <ShoppingCart size={20} />
+                </div>
+                <h2 className="text-lg font-bold text-white">Confirm purchase</h2>
+              </div>
+              <p className="text-sm mb-5" style={{ color: '#8899AA' }}>
+                Buy <span className="text-white font-semibold">{confirmTier.name}</span> for{' '}
+                <span className="text-white font-semibold">${confirmTier.price}</span>? Payment is sent
+                on-chain in USDT from your connected wallet to the referral payout addresses.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmTier(null)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all"
+                  style={{ background: '#1E2A38', color: '#8899AA' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { const t = confirmTier; setConfirmTier(null); executePurchase(t) }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
+                  style={{ background: '#00D4B4', color: '#000' }}
+                >
+                  <ShoppingCart size={14} /> Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   )

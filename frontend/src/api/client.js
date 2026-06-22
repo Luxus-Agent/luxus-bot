@@ -6,7 +6,13 @@ import axios from 'axios'
 // backend are served from different domains (no reverse proxy in front).
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    // Bypass the ngrok free-tier browser interstitial. Without this, ngrok
+    // returns its HTML warning page (no CORS headers) on browser GET requests,
+    // which breaks JSON API calls like /auth/me when tunneling the backend.
+    'ngrok-skip-browser-warning': 'true',
+  },
 })
 
 api.interceptors.request.use((config) => {
