@@ -275,6 +275,48 @@ GET /distribution/wallet-map          → JWT auth. Returns, for the resolved us
   query over the page of user ids (no N+1), so it stays fast on deep trees.
 - Lives in `app/api/distribution.py`; read-only — it never moves funds.
 
+### On-chain pack purchase (BEP-20 USDT) — `POST /distribution/pack/purchase` + `/pack/status`
+
+A **separate on-chain rail** from the deposit-first + Core/Stream/Boost matrix engine. The
+frontend pays the upline split **directly on-chain** from the buyer's connected wallet (one
+batched MultiSender call); the backend (1) returns the validated recipient split and (2)
+records the outcome. **No internal Wallet/Transaction ledger rows are written on this rail**
+— the on-chain transfer *is* the payout. (Lives in `app/api/distribution.py`; split logic in
+`app/core/pack_payout.py`; record in `app/models/pack_purchase.py` → table `pack_purchases`.)
+
+```
+POST /distribution/pack/purchase   → JWT. Body: { "pack_name": "Agent 1", "amount"?: 10 }
+   Returns { purchase_id, currency, network, token_contract, decimals, recipients[] }
+   recipients: { role: "buyer"|"upline"|"platform_fee", level, wallet_address,
+                 has_wallet_address, amount, (user_id, username for buyer/upline) }
+POST /distribution/pack/status     → JWT. Body: { purchase_id, status:"success"|"failed",
+                                                   tx_hash?, failure_reason? }
+   Returns { purchase_id, status, recorded_at }
+```
+
+- **Split rule = Core Agent rule ONLY** (client decision): 60% of the price → two 30% halves
+  to the **first two ELIGIBLE uplines** (eligible = active **and** highest active tier ≥ buyer's
+  tier; compression + odd/even via `User.core_route_count`). The remaining **40% → platform fee**.
+  Stream/Boost matrix mechanics are **not** used on this rail.
+- **Amounts sum to the pack price** and are the FULL on-chain amounts (the internal 70/20/10
+  wallet deductions do **not** apply here — nothing hits internal wallets). Example $10 pack with
+  two eligible uplines: `upline L1 $3 + upline L2 $3 + platform_fee $4`.
+- **Missing/ineligible upline → platform** (client decision): a half with no eligible recipient
+  (or whose recipient has no valid BEP-20 address) is folded into the `platform_fee` amount, so
+  the split always sums to the price. `buyer` entry is informational (`amount: 0`, address returned
+  so the FE can confirm it matches the connected wallet).
+- **Odd/even counter** is `User.core_route_count` (shared with the Core Agent) and is advanced at
+  **purchase-creation** time (API 1). A later on-chain failure leaves it slightly advanced — a
+  harmless alternation drift. To isolate the rails, give it a dedicated counter column.
+- **API 2** marks the `pack_purchases` row `success` (stores `tx_hash`) or `failed` (stores
+  `failure_reason`); it is idempotent-guarded (re-recording a finalized order → 400). Optional
+  on-chain `tx_hash` verification is stubbed behind `settings.VERIFY_ONCHAIN_TX` (off by default).
+- **Config** (`config.py`, override in `.env`): `PAYOUT_CURRENCY` (USDT), `PAYOUT_NETWORK` (BEP-20),
+  `USDT_CONTRACT` (default `0xb2681F1CA80e080827d5f275648D2d2e2684f0C8`), `USDT_DECIMALS` (18),
+  `PLATFORM_FEE_WALLET` (**set before go-live** — null until then), `VERIFY_ONCHAIN_TX`.
+- **Schema setup:** `cd backend && python migrate_v15.py` (idempotent — creates `pack_purchases`);
+  `create_tables.py` covers fresh installs.
+
 ## Email Notifications
 
 | Event | Endpoint / Task |
@@ -371,7 +413,9 @@ Safe to re-run — exits early if an admin already exists.
 | `backend/app/workers/tasks.py` | Celery chain: activate → payout → re-entry(BOOST) → withdrawal |
 | `backend/app/api/payments.py` | NOWPayments IPN webhook (deposit IPNs) |
 | `backend/app/api/wallet.py` | Per-tier balances, transactions, withdrawal request + history |
-| `backend/app/api/distribution.py` | `GET /distribution/wallet-map` — consolidated TokenPocket/MultiSender wallet+profit map (read-only) |
+| `backend/app/api/distribution.py` | `GET /distribution/wallet-map` (accrued wallet+profit map) + `POST /distribution/pack/purchase` & `/pack/status` (on-chain BEP-20 pack rail) |
+| `backend/app/core/pack_payout.py` | On-chain pack split (Core rule: 60% → 2 eligible uplines, 40% → platform; missing→platform). No wallet writes |
+| `backend/app/models/pack_purchase.py` | `PackPurchase` — on-chain pack order record (pending/success/failed + tx_hash + recipients snapshot) |
 
 ## Dev Notes
 
@@ -386,6 +430,7 @@ Safe to re-run — exits early if an admin already exists.
 - **Root/admin user has no sponsor** — created directly in DB via `seed_admin.py`.
 - **BEP-20 wallet address at registration:** `User.wallet_address` (nullable column) is collected on the register form for the TokenPocket distribution flow. The register schema validates it as `0x` + 40 hex chars; it's **optional** on the backend (so existing flows don't break) but the frontend form makes it required with live validation. Exposed via `/auth/me` and `UserOut`. Existing DBs: run `cd backend && python migrate_v14.py` (idempotent — adds the nullable `users.wallet_address` column); `create_tables.py` covers fresh installs.
 - **TokenPocket distribution map:** `GET /distribution/wallet-map` (`app/api/distribution.py`) is the single consolidated, read-only endpoint that returns a user + their downline with each one's wallet address and profit, for the frontend MultiSender. Distribute against `profit.withdrawable`. See the "TokenPocket / MultiSender Distribution Endpoint" section above.
+- **On-chain pack purchase:** `POST /distribution/pack/purchase` + `POST /distribution/pack/status` (`app/api/distribution.py`) are a **separate on-chain (BEP-20 USDT) rail** — the frontend pays the upline split directly from the buyer's wallet; the backend returns the validated split and records the outcome (no internal Wallet/Transaction rows). Split = **Core rule only** (60% → two 30% halves to the first two eligible uplines via `app/core/pack_payout.py`, 40% → platform fee; missing/ineligible upline → platform, so it sums to the pack price). Order record in `pack_purchases` (`app/models/pack_purchase.py`). Migration: `python migrate_v15.py`. See the "On-chain pack purchase" subsection above.
 - **Withdrawal minimum is $10.** Minimum transfer is $1. No maximum on withdrawals.
 - **Withdrawals are instant** — payout dispatched immediately via NOWPayments.
 - **Withdrawal addresses must be pre-verified** — register via `POST /wallet/address`, confirm OTP via `POST /wallet/address/verify`.

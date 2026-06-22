@@ -14,6 +14,7 @@ A multi-tier passive income platform where users purchase AI Agent tiers and ear
 - [Matrix System](#matrix-system)
 - [Withdrawal Flow](#withdrawal-flow)
 - [TokenPocket Distribution Endpoint](#tokenpocket-distribution-endpoint)
+- [On-Chain Pack Purchase](#on-chain-pack-purchase)
 - [Tech Stack](#tech-stack)
 - [Setup & Installation](#setup--installation)
 - [Running the Project](#running-the-project)
@@ -318,6 +319,70 @@ const payouts = [user, ...downline.users]
 
 ---
 
+## On-Chain Pack Purchase
+
+A **separate on-chain rail** (BEP-20 USDT) from the deposit-first + matrix engine. When a user
+buys a pack, the frontend pays the upline split **directly on-chain** from the buyer's connected
+wallet (one batched MultiSender call). The backend (1) returns the validated recipient split and
+(2) records the outcome — it writes **no internal wallet/ledger rows** on this rail (the on-chain
+transfer *is* the payout).
+
+```
+POST /distribution/pack/purchase   → JWT. Body: { "pack_name": "Agent 1", "amount"?: 10 }
+   → returns purchase_id + the recipient split (buyer, upline levels, platform_fee)
+POST /distribution/pack/status     → JWT. Body: { purchase_id, status, tx_hash?, failure_reason? }
+   → records the on-chain result (success/failed)
+```
+
+**Split rule — Core Agent rule only:** 60% of the price → two 30% halves to the **first two
+eligible uplines** (eligible = active **and** highest active tier ≥ buyer's tier; compression +
+odd/even). The remaining **40% → platform fee**. A half with no eligible upline (or whose recipient
+has no valid BEP-20 address) is folded into the platform fee, so **the split always sums to the pack
+price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app/core/pack_payout.py`.)
+
+**API 1 — request:**
+
+```json
+{ "pack_name": "Agent 1", "amount": 10 }
+```
+
+**API 1 — response** (example, $10 pack with two eligible uplines):
+
+```json
+{
+  "purchase_id": "ord_07f33afb8fdd",
+  "currency": "USDT",
+  "network": "BEP-20",
+  "token_contract": "0xb2681F1CA80e080827d5f275648D2d2e2684f0C8",
+  "decimals": 18,
+  "recipients": [
+    { "role": "buyer",        "level": 0,    "wallet_address": "0x…", "has_wallet_address": true,  "amount": 0.0 },
+    { "role": "upline",       "level": 1,    "wallet_address": "0x…", "has_wallet_address": true,  "amount": 3.0 },
+    { "role": "upline",       "level": 2,    "wallet_address": "0x…", "has_wallet_address": true,  "amount": 3.0 },
+    { "role": "platform_fee", "level": null, "wallet_address": "0x…", "has_wallet_address": true,  "amount": 4.0 }
+  ]
+}
+```
+
+**API 2 — request / response:**
+
+```json
+// request
+{ "purchase_id": "ord_07f33afb8fdd", "status": "success", "tx_hash": "0x…", "failure_reason": null }
+// response
+{ "purchase_id": "ord_07f33afb8fdd", "status": "success", "recorded_at": "2026-06-22T08:52:45Z" }
+```
+
+- `buyer` is informational (`amount: 0`) so the frontend can confirm it matches the connected wallet.
+- Send on-chain to every recipient where `has_wallet_address` is `true`; skip the rest.
+- `status: "success"` requires a valid `tx_hash` (0x + 64 hex); re-recording a finalized order → 400.
+- Order records live in `pack_purchases` (`app/models/pack_purchase.py`). Run `python migrate_v15.py`
+  once on existing DBs; `create_tables.py` covers fresh installs.
+- Config (`.env`): `USDT_CONTRACT`, `USDT_DECIMALS`, `PAYOUT_CURRENCY`, `PAYOUT_NETWORK`,
+  `PLATFORM_FEE_WALLET` (**set before go-live**), `VERIFY_ONCHAIN_TX` (optional tx verification, off by default).
+
+---
+
 ## Tech Stack
 
 | Layer        | Technology                                     |
@@ -442,6 +507,11 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 | `NOWPAYMENTS_API_KEY`       | NOWPayments API key                                           |
 | `NOWPAYMENTS_IPN_SECRET`    | NOWPayments IPN secret for HMAC-SHA512 verification           |
 | `NOWPAYMENTS_CALLBACK_BASE` | Public URL of **backend** for IPN callbacks (use ngrok locally; live backend URL in prod) |
+| `PLATFORM_FEE_WALLET`       | BEP-20 wallet that receives the pack-purchase platform fee (**set before go-live**) |
+| `USDT_CONTRACT`             | USDT token contract on the active chain (returned by `pack/purchase`)         |
+| `USDT_DECIMALS`             | USDT token decimals (e.g. 18)                                                  |
+| `PAYOUT_CURRENCY` / `PAYOUT_NETWORK` | Currency / network labels returned by `pack/purchase` (USDT / BEP-20) |
+| `VERIFY_ONCHAIN_TX`         | If true, `pack/status` verifies the tx_hash on-chain before recording success (off by default) |
 | `FRONTEND_URL`              | Public URL of **frontend** — used in payment redirects + email links |
 | `SMTP_SERVER`               | SMTP host (e.g. `smtp.gmail.com`)                             |
 | `SMTP_PORT`                 | SMTP port (587 for TLS)                                       |

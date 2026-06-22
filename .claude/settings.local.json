@@ -24,7 +24,15 @@
       "Bash(curl -s -o /dev/null -w \"preview root: %{http_code}\\\\n\" http://localhost:58608/)",
       "Bash(curl -s \"http://localhost:8000/auth/check-username?username=admin\")",
       "Bash(curl -s \"http://localhost:8000/auth/check-username?username=zzznope123\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('app/core/proactive.py'\\).read\\(\\)\\); print\\('OK syntax'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/core/proactive.py'\\).read\\(\\)\\); print\\('OK syntax'\\)\")",
+      "Bash(PYTHONPATH=. python migrate_v15.py)",
+      "Bash(PYTHONPATH=. python -c ' *)",
+      "Bash(PYTHONPATH=. python /tmp/pack_test.py)",
+      "Bash(echo \"---exit $?---\")",
+      "Bash(LOG_LEVEL=CRITICAL PYTHONPATH=. python -c ' *)",
+      "Bash(LOG_LEVEL=CRITICAL PYTHONPATH=. python -c \"from app.config import settings; print\\(settings.PLATFORM_FEE_WALLET\\)\")",
+      "Bash(python -)",
+      "Bash(cd /e/LUXUS-gitlab/agent-revenue-sharing-platform && grep -n \"purchase-split\\\\|purchase_split\\\\|Per-purchase split\\\\|SAVEPOINT\\\\|auto_repurchase_disabled\\\\|purchase-split simulated\" CLAUDE.md README.md)"
     ]
   }
 }

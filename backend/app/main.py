@@ -10,6 +10,7 @@ from app.logging_config import configure_logging
 from app.api import auth, agents, wallet, payments, deposit, admin, platform, distribution
 from app.models import webhook_event  # noqa: F401 — registers table with SQLAlchemy metadata
 from app.models import platform_setting  # noqa: F401 — registers table with SQLAlchemy metadata
+from app.models import pack_purchase  # noqa: F401 — registers table with SQLAlchemy metadata
 from app.workers.celery_app import celery_app  # noqa: F401
 
 # Configure logging before anything else so all startup logs are formatted.

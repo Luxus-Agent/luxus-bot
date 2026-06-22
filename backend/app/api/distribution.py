@@ -11,22 +11,36 @@ they reflect distribution updates in real time with no admin-approval step.
 This module only *reads* — it never moves funds. The actual on-chain payout is
 performed by the frontend MultiSender contract using the figures returned here.
 """
+import json
 import logging
+import re
+import uuid
 from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_platform_active
+from app.config import settings
 from app.database import get_db
+from app.models.agent import AGENT_TIER_PRICES
+from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
 from app.models.wallet import Wallet, WalletType
 from app.models.wallet_address import WalletAddress
 
 logger = logging.getLogger(__name__)
+
+# BEP-20 address: 0x + 40 hex. Tx hash: 0x + 64 hex.
+_BEP20_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+_TXHASH_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
+# Pack name → agent tier. Packs are named "Agent 1".."Agent 4".
+_PACK_NAME_TO_TIER = {f"Agent {tier}": tier for tier in AGENT_TIER_PRICES}
 
 router = APIRouter(prefix="/distribution", tags=["distribution"])
 
@@ -264,4 +278,224 @@ def wallet_map(
             "users": downline_entries,
         },
         "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+# ── On-chain pack purchase (BEP-20 USDT) — API 1 & API 2 ──────────────────────
+#
+# A SEPARATE on-chain rail from the deposit-first matrix engine. The frontend pays
+# the upline split directly from the buyer's connected wallet (single batched
+# MultiSender call); the backend (1) returns the validated recipient split and
+# (2) records the outcome. NO internal Wallet/Transaction ledger rows are written
+# on this rail — the on-chain transfer IS the payout.
+#
+# Split rule (client decision): Core Agent rule only.
+#   • 60% → two 30% halves to the first two ELIGIBLE uplines
+#     (eligible = active + highest active tier >= buyer tier; compression + odd/even).
+#   • 40% → platform fee.
+#   • A half with no eligible upline (or whose recipient has no valid BEP-20
+#     address) is folded into the platform fee — so the split always sums to the
+#     pack amount.
+
+
+class PackPurchaseRequest(BaseModel):
+    pack_name: str = Field(..., description='Pack name, e.g. "Agent 1".')
+    amount: float | None = Field(
+        None, description="Optional; if sent it must match the pack's price (anti-tamper)."
+    )
+
+
+class PackStatusRequest(BaseModel):
+    purchase_id: str = Field(..., description='The order id returned by API 1 ("ord_...").')
+    status: str = Field(..., description='"success" or "failed".')
+    tx_hash: str | None = Field(None, description="Blockchain tx hash (required on success).")
+    failure_reason: str | None = Field(None, description="Optional, when status='failed'.")
+
+
+def _resolve_bep20_address(db: Session, user: User) -> str | None:
+    """User's payout address: registration address, else latest verified, else None.
+    Only returns it if it is a valid BEP-20 address."""
+    addr = user.wallet_address or _verified_addresses(db, [user.id]).get(user.id)
+    return addr if addr and _BEP20_RE.match(addr) else None
+
+
+def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> bool:
+    """
+    Placeholder for on-chain verification (amount / recipients / confirmations).
+    Wire up a BSC RPC check here and flip settings.VERIFY_ONCHAIN_TX to enable.
+    Returns True (accept) until implemented.
+    """
+    return True
+
+
+@router.post("/pack/purchase")
+def pack_purchase(
+    payload: PackPurchaseRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_platform_active),
+):
+    """
+    API 1 — create a pack purchase and return the validated on-chain payout split.
+
+    The buyer is the authenticated user. Returns `purchase_id` plus the list of
+    recipients (buyer = informational, a dynamic number of upline levels, and an
+    optional platform_fee), each with a validated BEP-20 address and the USDT
+    amount to send. Amounts sum to the pack price.
+    """
+    from app.core.pack_payout import compute_pack_split
+
+    tier = _PACK_NAME_TO_TIER.get(payload.pack_name.strip())
+    if tier is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown pack_name. Valid packs: {list(_PACK_NAME_TO_TIER)}",
+        )
+
+    price = Decimal(str(AGENT_TIER_PRICES[tier]))
+    if payload.amount is not None and Decimal(str(payload.amount)) != price:
+        raise HTTPException(
+            status_code=400,
+            detail=f"amount {payload.amount} does not match {payload.pack_name} price {price}.",
+        )
+
+    buyer = current_user
+    # Advance the Core odd/even counter at purchase-creation time (mutate_counter=True).
+    split = compute_pack_split(db, buyer, tier, price, mutate_counter=True)
+
+    recipients: list[dict] = []
+
+    # Buyer entry (informational — frontend confirms it matches the connected wallet).
+    buyer_addr = _resolve_bep20_address(db, buyer)
+    recipients.append({
+        "role": "buyer",
+        "level": 0,
+        "user_id": buyer.id,
+        "username": buyer.username,
+        "wallet_address": buyer_addr,
+        "has_wallet_address": buyer_addr is not None,
+        "amount": 0.0,
+    })
+
+    # Upline recipients — merge duplicates (same user across both halves), keep order.
+    platform_amount = split.platform_amount
+    merged: dict[int, list] = {}   # user_id -> [user, amount, address]
+    order: list[int] = []
+    for user, amount in split.uplines:
+        addr = _resolve_bep20_address(db, user)
+        if addr is None:
+            platform_amount += amount   # no valid address → platform (missing-upline rule)
+            continue
+        if user.id in merged:
+            merged[user.id][1] += amount
+        else:
+            merged[user.id] = [user, amount, addr]
+            order.append(user.id)
+
+    for level, uid in enumerate(order, start=1):
+        user, amount, addr = merged[uid]
+        recipients.append({
+            "role": "upline",
+            "level": level,
+            "user_id": user.id,
+            "username": user.username,
+            "wallet_address": addr,
+            "has_wallet_address": True,
+            "amount": _two_places(amount),
+        })
+
+    # Platform fee (always > 0 here = 40% + any folded halves).
+    if platform_amount > 0:
+        pf_wallet = settings.PLATFORM_FEE_WALLET or None
+        if pf_wallet and not _BEP20_RE.match(pf_wallet):
+            pf_wallet = None
+        recipients.append({
+            "role": "platform_fee",
+            "level": None,
+            "wallet_address": pf_wallet,
+            "has_wallet_address": pf_wallet is not None,
+            "amount": _two_places(platform_amount),
+        })
+
+    order_id = f"ord_{uuid.uuid4().hex[:12]}"
+    record = PackPurchase(
+        order_id=order_id,
+        buyer_id=buyer.id,
+        pack_name=payload.pack_name,
+        agent_tier=tier,
+        amount=price,
+        status=PackPurchaseStatus.PENDING,
+        recipients_json=json.dumps(recipients),
+    )
+    db.add(record)
+    db.commit()
+
+    logger.info(
+        "PACK purchase: order=%s buyer=%s pack=%s price=$%s uplines=%d platform=$%s",
+        order_id, buyer.username, payload.pack_name, price, len(order), _two_places(platform_amount),
+    )
+
+    return {
+        "purchase_id": order_id,
+        "currency": settings.PAYOUT_CURRENCY,
+        "network": settings.PAYOUT_NETWORK,
+        "token_contract": settings.USDT_CONTRACT,
+        "decimals": settings.USDT_DECIMALS,
+        "recipients": recipients,
+    }
+
+
+@router.post("/pack/status")
+def pack_status(
+    payload: PackStatusRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    API 2 — record the outcome of the on-chain transfer for a pack purchase.
+
+    On success: marks the purchase active, stores the tx_hash (optionally verified
+    on-chain when settings.VERIFY_ONCHAIN_TX is on). On failure: marks it failed
+    with the reason. No payout/ledger is written on this rail.
+    """
+    status_val = (payload.status or "").strip().lower()
+    if status_val not in ("success", "failed"):
+        raise HTTPException(status_code=400, detail="status must be 'success' or 'failed'.")
+
+    record = db.query(PackPurchase).filter_by(order_id=payload.purchase_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="purchase_id not found.")
+    if record.buyer_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your purchase.")
+    if record.status != PackPurchaseStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Purchase already recorded as '{record.status.value}'.",
+        )
+
+    if status_val == "success":
+        if not payload.tx_hash or not _TXHASH_RE.match(payload.tx_hash):
+            raise HTTPException(
+                status_code=400, detail="A valid tx_hash (0x + 64 hex) is required on success."
+            )
+        if settings.VERIFY_ONCHAIN_TX and not _verify_tx_onchain(record, payload.tx_hash):
+            raise HTTPException(status_code=400, detail="On-chain verification failed for tx_hash.")
+        record.status = PackPurchaseStatus.SUCCESS
+        record.tx_hash = payload.tx_hash
+        record.failure_reason = None
+    else:
+        record.status = PackPurchaseStatus.FAILED
+        record.failure_reason = (payload.failure_reason or "Unspecified failure")[:500]
+
+    record.recorded_at = datetime.utcnow()
+    db.commit()
+
+    logger.info(
+        "PACK status: order=%s buyer_id=%s → %s tx=%s",
+        record.order_id, record.buyer_id, record.status.value, record.tx_hash,
+    )
+
+    return {
+        "purchase_id": record.order_id,
+        "status": record.status.value,
+        "recorded_at": record.recorded_at.isoformat() + "Z",
     }

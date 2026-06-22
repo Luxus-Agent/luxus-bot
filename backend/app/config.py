@@ -20,6 +20,21 @@ class Settings(BaseSettings):
     #   CORS_ORIGINS=https://app.yourdomain.com
     CORS_ORIGINS: str = "*"
 
+    # On-chain pack-purchase payout (TokenPocket / MultiSender, BEP-20 USDT).
+    # These describe WHERE the frontend sends funds; the backend only computes the
+    # split and records the result. Override in .env for the live chain/token.
+    PAYOUT_CURRENCY: str = "USDT"
+    PAYOUT_NETWORK: str = "BEP-20"
+    # USDT token contract on the active chain (decimals as given by the client).
+    USDT_CONTRACT: str = "0xb2681F1CA80e080827d5f275648D2d2e2684f0C8"
+    USDT_DECIMALS: int = 18
+    # Wallet that receives the platform-fee portion of each pack purchase. Set this
+    # in .env before go-live; when empty the platform_fee recipient address is null.
+    PLATFORM_FEE_WALLET: str = ""
+    # When true, API 2 (mark status) verifies the tx_hash on-chain before recording
+    # success. Left off by default — wire up an RPC check before enabling.
+    VERIFY_ONCHAIN_TX: bool = False
+
     # NOWPayments
     NOWPAYMENTS_API_KEY: str = ""
     NOWPAYMENTS_IPN_SECRET: str = ""
