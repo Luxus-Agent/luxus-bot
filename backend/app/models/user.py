@@ -26,7 +26,7 @@ class User(Base):
     # user's latest verified WalletAddress when this is empty.
     wallet_address: Mapped[str | None] = mapped_column(String, nullable=True)
     sponsor_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
-    # Position in sponsor's direct downline (1-based) — used by ProActive odd/even routing
+    # Position in sponsor's direct downline (1-based) — used by Core odd/even routing
     sponsor_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # How many times this user has been TARGETED as a Core recipient (sponsor or

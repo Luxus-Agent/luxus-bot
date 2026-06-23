@@ -4,13 +4,13 @@
 
 A multi-tier passive income platform. Users make a one-time purchase of an AI agent tier ($10 / $20 / $50 / $100). Each purchase automatically activates three revenue mechanisms that run in parallel.
 
-**Payment model:** On-chain (TokenPocket / MultiSender DApp, USDT BEP-20). Users buy agent tiers by paying the upline split **directly from their own connected wallet** on-chain; the backend computes the split and records the outcome (`POST /distribution/pack/purchase` + `/pack/status`). Income lands directly in users' on-chain wallets — no internal balances move.
+**Payment model:** On-chain (TokenPocket / MultiSender DApp, USDT BEP-20). Users buy agent tiers by paying the upline split **directly from their own connected wallet** on-chain; the backend computes the split and records the outcome (`POST /distribution/pack/purchase` + `/pack/status`). Income lands directly in users' on-chain wallets — the **spendable money never moves through internal balances**. For DISPLAY, each on-chain commission is also mirrored into the internal wallets as a **virtual 80% main / 20% repurchase-reserve** split (bookkeeping only — see "On-chain pack purchase").
 
 > **Removed (on-chain migration):** the legacy **deposit-first money rail is gone** — NOWPayments (deposit invoices + IPN webhooks + payout/withdrawal), the `/deposit` endpoints, user-to-user `/deposit/transfer`, the `/wallet/withdraw(+withdrawals)` endpoints, the account-balance `/agents/purchase` path, and the `deposit` / `withdrawal_requests` / `webhook_events` / `transfer_verifications` models/tables.
 >
 > The internal **Core/Stream/Boost revenue engine has also been removed** — `app/workers/` (Celery app + tasks), `core/matrix_engine.py`, `core/revenue_split.py`, the `matrix_positions` / `matrix_counters` models, the `/agents/matrix` endpoint, and the frontend Matrix/"Queue" page. **Celery and Redis are no longer used or required** (removed from `requirements.txt` and config). The on-chain pack split uses the **Core rule only** via `core/pack_payout.py` + the eligibility/compression helpers kept in `core/proactive.py`.
 >
-> **Kept:** the internal `Wallet` model + `/wallet/balances` + the Wallet page (still read by `/distribution/wallet-map` and the admin views; balances simply stay $0 on the on-chain rail), and the admin manual wallet credit/debit endpoints. The old DB tables (`deposits`, `withdrawal_requests`, `webhook_events`, `transfer_verifications`, `matrix_positions`, `matrix_counters`) are left in the database untouched (no data dropped); they're simply no longer created or read.
+> **Kept:** the internal `Wallet` model + `/wallet/balances` + the Wallet page (read by `/distribution/wallet-map` and the admin views). On the on-chain rail these wallets are populated as a **virtual 80/20 display split** of each commission (not movable funds — the real balance is on-chain); the new `GET /wallet/earnings` is the source of truth for "Total Earnings". Also kept: the admin manual wallet credit/debit endpoints. The old DB tables (`deposits`, `withdrawal_requests`, `webhook_events`, `transfer_verifications`, `matrix_positions`, `matrix_counters`) are left in the database untouched (no data dropped); they're simply no longer created or read.
 
 ## Directory Structure
 
@@ -44,7 +44,7 @@ agent-revenue-sharing-platform/
 │   │   ├── models/
 │   │   │   ├── user.py          # User + OTP fields (email verify, password reset) + wallet_address
 │   │   │   ├── agent.py         # AgentPurchase
-│   │   │   ├── wallet.py        # Wallet (MAIN + REPURCHASE + ACCOUNT types — internal, $0 on-chain)
+│   │   │   ├── wallet.py        # Wallet (MAIN + REPURCHASE + ACCOUNT types — internal, virtual 80/20 display split on-chain)
 │   │   │   ├── wallet_address.py # Verified BEP-20 payout addresses
 │   │   │   ├── transaction.py   # Transaction ledger (TransactionType enum)
 │   │   │   ├── pack_purchase.py # On-chain pack order record (pending/success/failed + tx_hash)
@@ -64,7 +64,7 @@ agent-revenue-sharing-platform/
 │   │   └── api/
 │   │       ├── auth.py          # register / check-username / verify-email / login (username) / forgot & reset
 │   │       ├── agents.py        # GET purchases (read-only ownership list)
-│   │       ├── wallet.py        # balances / transactions / income-daily / BEP-20 address management
+│   │       ├── wallet.py        # balances / transactions / earnings / income-daily / BEP-20 address management
 │   │       ├── admin.py         # admin-only: users + summary, transactions, freeze/unfreeze, treasury (transfer), platform freeze
 │   │       ├── platform.py      # GET /platform/status (freeze state for any logged-in user)
 │   │       └── distribution.py  # /distribution/wallet-map + on-chain pack rail (/pack/purchase, /pack/status)
@@ -154,9 +154,13 @@ Wallet address management (BEP-20 payout target, used by the distribution map):
 > (30%) and Boost (10%) matrix systems, the 60/30/10 split, and auto-repurchase were
 > REMOVED** with the deposit-first engine. The internal-wallet 70/20/10 deduction
 > logic (`credit_wallet`) still exists but is now only reachable via the admin
-> manual wallet-credit tool — no automatic income flows through it. The
-> Stream/Boost/Wallet-rule subsections below are retained as **historical
-> reference** for the original business model — they no longer run.
+> manual wallet-credit tool — no automatic income flows through it. (Separately,
+> the on-chain rail mirrors each commission into the internal wallets as a
+> **virtual 80/20 main/repurchase display split** via
+> `wallet_ops.mirror_onchain_earning_split` — bookkeeping only, distinct from
+> `credit_wallet`'s 70/20/10.) The Stream/Boost/Wallet-rule subsections below are
+> retained as **historical reference** for the original business model — they no
+> longer run.
 
 ### Split (historical — deposit-first model, removed)
 - **60%** → Core Agent system
@@ -242,8 +246,13 @@ Effective split of gross income: **70% main wallet** + **20% repurchase** + **10
 
 > **Status:** `credit_wallet()` (the 70/20/10 logic above) still exists but is now only
 > reachable via the **admin manual wallet-credit** endpoint. No automatic income flows
-> through the internal wallets anymore — the on-chain rail pays users directly on-chain
-> and never touches `Wallet` balances (they stay $0).
+> through this path anymore. The on-chain rail pays users directly on-chain (the real
+> spendable money), and **separately** mirrors each commission into the internal
+> wallets as a **virtual 80% main / 20% repurchase-reserve** display split (no software
+> fee) via `wallet_ops.mirror_onchain_earning_split` — so per-tier balances and the
+> Repurchase Reserve populate for display. These wallet figures are bookkeeping only,
+> not movable funds. "Total Earnings" reads the **gross** from the ledger
+> (`GET /wallet/earnings`), which equals main + reserve.
 
 ### Auto-repurchase  *(REMOVED)*
 The auto-repurchase trigger (and its `auto_repurchase` Celery task) were removed with the
@@ -292,14 +301,17 @@ GET /distribution/wallet-map          → JWT auth. Returns, for the resolved us
 A **separate on-chain rail** from the deposit-first + Core/Stream/Boost matrix engine. The
 frontend pays the upline split **directly on-chain** from the buyer's connected wallet (one
 batched MultiSender call); the backend (1) returns the validated recipient split and (2)
-records the outcome. **No internal Wallet balances are credited/debited on this rail** — the
-on-chain transfer *is* the payout. On success it DOES, however, (a) create an **active
-`AgentPurchase` ownership row** so the rest of the app (purchase-page "OWNED", the
-sequential-unlock gate, and Core-eligibility for future on-chain splits) recognizes the
-buyer, and (b) write **reporting-only `Transaction` rows** (buyer `agent_purchase` expense +
-each upline's `core_income`) so transaction history and the dashboard analytics reflect the
-activity. These rows carry no wallet balance. (Lives in `app/api/distribution.py`; split logic
-in `app/core/pack_payout.py`; record in `app/models/pack_purchase.py` → table `pack_purchases`.)
+records the outcome. The on-chain transfer *is* the payout (no real money moves through
+internal wallets). On success it (a) creates an **active `AgentPurchase` ownership row** so
+the rest of the app (purchase-page "OWNED", the sequential-unlock gate, and Core-eligibility
+for future on-chain splits) recognizes the buyer, (b) writes **reporting `Transaction` rows**
+(buyer `agent_purchase` expense + each upline's `core_income`) so transaction history and the
+dashboard analytics reflect the activity, and (c) mirrors each upline's commission into their
+internal per-tier wallets as a **virtual 80% main / 20% repurchase-reserve display split**
+(via `wallet_ops.mirror_onchain_earning_split`) so the per-tier balances and Repurchase
+Reserve populate — these wallet figures are bookkeeping only, NOT movable funds. (Lives in
+`app/api/distribution.py`; split logic in `app/core/pack_payout.py`; record in
+`app/models/pack_purchase.py` → table `pack_purchases`.)
 
 ```
 POST /distribution/pack/purchase   → JWT. Body: { "pack_name": "Agent 1", "amount"?: 10 }
@@ -316,8 +328,9 @@ POST /distribution/pack/status     → JWT. Body: { purchase_id, status:"success
   tier; compression + odd/even via `User.core_route_count`). The remaining **40% → platform fee**.
   Stream/Boost matrix mechanics are **not** used on this rail.
 - **Amounts sum to the pack price** and are the FULL on-chain amounts (the internal 70/20/10
-  wallet deductions do **not** apply here — nothing hits internal wallets). Example $10 pack with
-  two eligible uplines: `upline L1 $3 + upline L2 $3 + platform_fee $4`.
+  `credit_wallet` deductions do **not** apply here). Example $10 pack with two eligible uplines:
+  `upline L1 $3 + upline L2 $3 + platform_fee $4`. (The recipient's $3 lands in full on-chain;
+  the internal wallets separately record a virtual $2.40 main / $0.60 reserve for display.)
 - **Missing/ineligible upline → platform** (client decision): a half with no eligible recipient
   (or whose recipient has no valid BEP-20 address) is folded into the `platform_fee` amount, so
   the split always sums to the price. `buyer` entry is informational (`amount: 0`, address returned
@@ -330,10 +343,13 @@ POST /distribution/pack/status     → JWT. Body: { purchase_id, status:"success
   on-chain `tx_hash` verification is stubbed behind `settings.VERIFY_ONCHAIN_TX` (off by default).
 - **On success, API 2 also reflects the purchase internally** (`_mirror_onchain_ledger` +
   ownership row, both PENDING-guarded so they run once): an active `AgentPurchase` row (no Celery
-  revenue engine queued, dup-tier guarded) + reporting-only `Transaction` rows (buyer
-  `agent_purchase`, each upline `core_income`). **No Wallet rows are touched** — funds live
-  on-chain in users' own wallets, so the internal main/repurchase wallets and withdrawable
-  balance stay $0 on this rail. Stream/Boost/repurchase/software-fee mechanics do not run here.
+  revenue engine queued, dup-tier guarded) + reporting `Transaction` rows (buyer
+  `agent_purchase`, each upline `core_income`) + the **virtual 80/20 wallet display split** for
+  each upline (via `mirror_onchain_earning_split`). The wallet balances are bookkeeping/display
+  only — the real spendable money is on-chain. The software-fee path and Stream/Boost matrix
+  mechanics do not run here; there is no auto-repurchase (the reserve just accumulates).
+  To backfill internal wallets for purchases recorded before the 80/20 mirror existed, run
+  `python backfill_repurchase_reserve.py` (idempotent — recomputes wallets from `core_income`).
 - **Config** (`config.py`, override in `.env`): `PAYOUT_CURRENCY` (USDT), `PAYOUT_NETWORK` (BEP-20),
   `USDT_CONTRACT` (default `0xb2681F1CA80e080827d5f275648D2d2e2684f0C8`), `USDT_DECIMALS` (18),
   `PLATFORM_FEE_WALLET` (**set before go-live** — null until then), `VERIFY_ONCHAIN_TX`.
@@ -355,9 +371,10 @@ POST /distribution/pack/status     → JWT. Body: { purchase_id, status:"success
 | Password reset OTP | `POST /auth/forgot-password` |
 | BEP-20 address verification OTP | `POST /wallet/address` |
 
-> The deposit / agent-activation / withdrawal / transfer emails were removed with the
-> deposit-first engine. (Their template functions still exist in `email_service.py` but
-> are no longer called.)
+> These four OTP emails are the **only** emails the platform sends. The deposit /
+> agent-activation / withdrawal / transfer email templates were **deleted** from
+> `email_service.py` (along with the `_send_sync` helper they used) — they belonged to the
+> removed deposit-first + NOWPayments rails.
 
 SMTP config keys: `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SENDER_EMAIL`
 
@@ -429,10 +446,10 @@ Safe to re-run — exits early if an admin already exists.
 | `backend/app/core/pack_payout.py` | On-chain pack split (Core rule: 60% → 2 eligible uplines, 40% → platform; missing→platform). No wallet writes |
 | `backend/app/core/proactive.py` | Core eligibility/compression helpers (`_is_eligible`, `_next_eligible_upline`) used by `pack_payout` |
 | `backend/app/models/pack_purchase.py` | `PackPurchase` — on-chain pack order record (pending/success/failed + tx_hash + recipients snapshot) |
-| `backend/app/core/wallet_ops.py` | credit/debit wallet + account balance helpers (internal wallets; admin-credit + distribution reads) |
+| `backend/app/core/wallet_ops.py` | credit/debit wallet + account balance helpers; `get_ledger_earnings` (lifetime income from the ledger — source of truth for "Total Earnings"); `mirror_onchain_earning_split` (virtual 80/20 main/repurchase display split for on-chain commissions) |
 | `backend/app/models/transaction.py` | `TransactionType` enum (CORE_INCOME, AGENT_PURCHASE, SOFTWARE_FEE, PLATFORM_PROFIT, …) |
 | `backend/app/api/auth.py` | Register (sponsor_username), check-username, email verify, password reset |
-| `backend/app/api/wallet.py` | Balances, transactions, daily income, BEP-20 address management |
+| `backend/app/api/wallet.py` | Balances, transactions, **earnings** (`GET /wallet/earnings` — lifetime income from the ledger), daily income, BEP-20 address management |
 | `backend/app/api/agents.py` | `GET /agents/purchases` — read-only ownership list |
 | `backend/app/api/admin.py` | Admin: users, transactions, freeze/unfreeze, treasury transfer, platform freeze, manual wallet credit/debit |
 | `backend/app/services/email_service.py` | Transactional email templates + SMTP send (OTP / verification) |
@@ -451,7 +468,7 @@ Safe to re-run — exits early if an admin already exists.
 - **Root/admin user has no sponsor** — created directly in DB via `seed_admin.py`.
 - **BEP-20 wallet address at registration:** `User.wallet_address` (nullable column) is collected on the register form for the TokenPocket distribution flow. The register schema validates it as `0x` + 40 hex chars; it's **optional** on the backend (so existing flows don't break) but the frontend form makes it required with live validation. Exposed via `/auth/me` and `UserOut`. Existing DBs: run `cd backend && python migrate_v14.py` (idempotent — adds the nullable `users.wallet_address` column); `create_tables.py` covers fresh installs.
 - **TokenPocket distribution map:** `GET /distribution/wallet-map` (`app/api/distribution.py`) is the single consolidated, read-only endpoint that returns a user + their downline with each one's wallet address and profit, for the frontend MultiSender. Distribute against `profit.withdrawable`. See the "TokenPocket / MultiSender Distribution Endpoint" section above.
-- **On-chain pack purchase:** `POST /distribution/pack/purchase` + `POST /distribution/pack/status` (`app/api/distribution.py`) are a **separate on-chain (BEP-20 USDT) rail** — the frontend pays the upline split directly from the buyer's wallet; the backend returns the validated split and records the outcome. Split = **Core rule only** (60% → two 30% halves to the first two eligible uplines via `app/core/pack_payout.py`, 40% → platform fee; missing/ineligible upline → platform, so it sums to the pack price). Order record in `pack_purchases` (`app/models/pack_purchase.py`). On success it also creates an **active `AgentPurchase` ownership row** (no Celery, dup-tier guarded) and **reporting-only `Transaction` rows** (buyer `agent_purchase` + each upline `core_income`) via `_mirror_onchain_ledger` so the purchase shows as OWNED and appears in transaction history + the dashboard income chart — but **no internal Wallet balances are credited** (the on-chain transfer is the payout; main/repurchase/withdrawable stay $0, and Stream/Boost/repurchase don't run on this rail). Migration: `python migrate_v15.py`. See the "On-chain pack purchase" subsection above.
+- **On-chain pack purchase:** `POST /distribution/pack/purchase` + `POST /distribution/pack/status` (`app/api/distribution.py`) are a **separate on-chain (BEP-20 USDT) rail** — the frontend pays the upline split directly from the buyer's wallet; the backend returns the validated split and records the outcome. Split = **Core rule only** (60% → two 30% halves to the first two eligible uplines via `app/core/pack_payout.py`, 40% → platform fee; missing/ineligible upline → platform, so it sums to the pack price). Order record in `pack_purchases` (`app/models/pack_purchase.py`). On success it also creates an **active `AgentPurchase` ownership row** (no Celery, dup-tier guarded), **reporting `Transaction` rows** (buyer `agent_purchase` + each upline `core_income`), and a **virtual 80% main / 20% repurchase-reserve display split** into each upline's internal wallets (`mirror_onchain_earning_split`) so the purchase shows as OWNED, appears in transaction history + the dashboard income chart, and populates the per-tier balances + Repurchase Reserve. These internal wallet figures are **bookkeeping/display only — not movable funds** (the real spendable money is on-chain). "Total Earnings" is read from the ledger via `GET /wallet/earnings`, not from wallet balances. Migration: `python migrate_v15.py`; backfill older internal wallets with `python backfill_repurchase_reserve.py`. See the "On-chain pack purchase" subsection above.
 - **On-chain wallet balance display:** the "Wallet Balance" card on Dashboard / Wallet / Buy Agents pages shows the connected wallet's **live on-chain USDT** (via `frontend/src/hooks/useUsdtBalance.js`, wagmi `balanceOf`), not an internal balance. It needs `VITE_USDT_ADDRESS` (frontend `.env`) to **match the backend `USDT_CONTRACT`**; a mismatch makes the card read a different token and show $0. Restart the Vite dev server after changing `.env`.
 - **BEP-20 address management is kept** — register via `POST /wallet/address`, confirm OTP via `POST /wallet/address/verify`. It's the payout target used by the distribution map (not a withdrawal address anymore).
 - *(REMOVED)* Deposits, user-to-user transfers (1% fee / OTP), and withdrawals — gone with NOWPayments.
@@ -460,7 +477,10 @@ Safe to re-run — exits early if an admin already exists.
 - **Core Agent compression + odd/even (LIVE — the on-chain pack split rule):** an upline qualifies for Core income only if their **highest active purchased tier ≥ the buyer's purchased tier**. Lower-tier / inactive / no-agent uplines are skipped and the income compresses up the sponsor chain to the next eligible upline. The two 30% halves go to the first eligible upline and the next eligible upline above it; even-count pass-ups (via `User.core_route_count`) also compress to the next eligible upline. On the on-chain rail, a half with no eligible recipient (or no valid BEP-20 address) folds into the 40% platform fee. Implemented in `pack_payout.py` + `proactive.py` (`_highest_active_tier` / `_is_eligible` / `_next_eligible_upline`).
 - *(REMOVED)* Stream / Boost matrix mechanics (3×3 queues, dummy/real re-entries, sponsor completion-share, re-entry counts) — the entire matrix engine is gone.
 - *(REMOVED)* Auto-repurchase (REPURCHASE wallet ≥ tier price → new purchase).
-- **Internal wallet deductions** (10% software fee + 20% repurchase = 70% main) still live in `credit_wallet`, but it's only reached via the **admin manual wallet-credit** tool now — no automatic income flows through it.
+- **Internal wallet deductions** (10% software fee + 20% repurchase = 70% main) still live in `credit_wallet`, but it's only reached via the **admin manual wallet-credit** tool now — no automatic income flows through it. The on-chain rail uses a **different, virtual 80/20 split** (`mirror_onchain_earning_split`, no software fee) purely for display.
+- **Total Earnings = ledger, not wallets.** `GET /wallet/earnings` (`wallet_ops.get_ledger_earnings`) sums lifetime income (`core_income` + stream/boost/sponsor types) from the transaction ledger — live, no admin approval, not capped at the 200-row tx listing. Dashboard, Wallet, and the admin per-user "revenue_generated" all read this (NOT `sum(MAIN wallet balances)`, which previously read $0 because on-chain commissions never credit internal wallets as real funds). The earnings fetch on Dashboard/Wallet is **non-fatal** (falls back to $0) so a failing endpoint can't blank the page. Earnings show even with the wallet disconnected (they come from the DB, not the chain).
+- **No auto-repurchase.** The virtual repurchase reserve just accumulates; reaching a tier price does nothing (auto-repurchase was removed with the deposit-first engine and was not re-added).
+- **Wallet page** has no "Account Balance" card (removed — always $0 on-chain); it shows Wallet Balance (on-chain USDT) + Total Earnings (ledger) + Repurchase Reserve (virtual).
 - **Login is by username + password** (not email) — for both regular users and admin. `UserLogin` takes `username`; the frontend Login form has a Username field.
 - **Admin access:** created via `seed_admin.py`. Admin endpoints at `/admin/*`. Admin logs in through the same `/login` page and is routed to `/admin` automatically. Admin pages (including Profile) render the admin sidebar.
 - **Frontend auth:** two-step login — POST `/auth/login` (username + password) for JWT, then GET `/auth/me` for full profile (includes `is_admin`).

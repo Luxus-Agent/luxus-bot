@@ -17,7 +17,7 @@ logger = logging.getLogger("app.request")
 
 app = FastAPI(
     title="Agent Revenue Sharing Platform",
-    description="Multi-tier AI agent revenue sharing with ProActive, Proportion, and Speculation systems",
+    description="Multi-tier AI agent revenue sharing with Core, Stream, and Boost systems",
     version="1.0.0",
 )
 #uvicorn app.main:app --reload

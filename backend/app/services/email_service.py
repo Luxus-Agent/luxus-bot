@@ -1,6 +1,8 @@
 # backend/app/services/email_service.py
 """
-SMTP email service — OTP verification, password reset, and platform event notifications.
+SMTP email service — OTP emails only: email verification, password reset, and
+BEP-20 address verification. (Deposit/withdrawal/transfer/agent-activation emails
+were removed with the deposit-first + NOWPayments rails.)
 Runs blocking SMTP calls in a thread pool so the event loop is not blocked.
 
 Config keys (set in .env):
@@ -46,16 +48,6 @@ async def send_email(to_email: str, subject: str, body: str) -> bool:
         return True
     except Exception as exc:
         logger.error("Failed to send email to %s: %s", to_email, exc)
-        return False
-
-
-def _send_sync(to_email: str, subject: str, body: str) -> bool:
-    """Sync wrapper around the async send_email for non-async call sites."""
-    try:
-        asyncio.run(send_email(to_email, subject, body))
-        return True
-    except Exception as exc:
-        logger.error("Sync email send failed to %s: %s", to_email, exc)
         return False
 
 
@@ -124,65 +116,15 @@ async def send_password_reset_email(email: str, otp: str) -> bool:
     return await send_email(email, subject, body)
 
 
-# ── Agent activated ───────────────────────────────────────────────────────────
-
-def send_agent_activated_email(email: str, username: str, agent_tier: int, price: float) -> bool:
-    subject = f"Agent {agent_tier} Activated — PresZ"
-    tier_label = f"Agent {agent_tier} (${price:.0f})"
-    body = _card(f"""
-        <h2 style="color: #1a1a2e; margin-top: 0;">Your Agent is Active!</h2>
-        <p>Hi <strong>{username}</strong>,</p>
-        <p>Your payment was confirmed and <strong>{tier_label}</strong> is now active.</p>
-        <p>Log in to your dashboard to track your matrix position, wallet balance,
-           and incoming payouts.</p>
-    """)
-    return _send_sync(email, subject, body)
-
-
-# ── Transfer verification OTP ─────────────────────────────────────────────────
-
-async def send_transfer_verification_email(
-    email: str, otp: str, recipient_username: str, amount: float
-) -> bool:
-    subject = "Confirm Your Transfer — PresZ"
-    body = _card(f"""
-        <h2 style="color: #1a1a2e; margin-top: 0;">Transfer Verification</h2>
-        <p>You are about to transfer funds to <strong>@{recipient_username}</strong>
-           for the first time.</p>
-        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-            <tr>
-                <td style="padding: 10px; background: #f9fafb; border-radius: 4px;
-                            color: #6b7280; font-size: 13px; width: 40%;">Recipient</td>
-                <td style="padding: 10px; font-weight: bold;">@{recipient_username}</td>
-            </tr>
-            <tr>
-                <td style="padding: 10px; color: #6b7280; font-size: 13px;">Amount</td>
-                <td style="padding: 10px; font-weight: bold;">${amount:.2f}</td>
-            </tr>
-        </table>
-        <p>Your one-time verification code is:</p>
-        <p style="font-size: 36px; font-weight: bold; color: {_ACCENT};
-                   letter-spacing: 10px; text-align: center; margin: 24px 0;">{otp}</p>
-        <p>Use <code>POST /deposit/transfer/verify</code> with this code to confirm.
-           It expires in <strong>30 minutes</strong>.</p>
-        <p>After this, transfers to @{recipient_username} will not require verification.</p>
-        <p style="color: #6b7280; font-size: 13px;">
-            If you did not initiate this transfer, please contact support immediately.
-        </p>
-    """)
-    return await send_email(email, subject, body)
-
-
-# ── Withdrawal address verification OTP ──────────────────────────────────────
+# ── BEP-20 address verification OTP ──────────────────────────────────────────
 
 async def send_address_verification_email(
     email: str, otp: str, wallet_address: str
 ) -> bool:
-    subject = "Verify Withdrawal Address — PresZ"
-    short_address = f"{wallet_address[:6]}…{wallet_address[-4:]}"
+    subject = "Verify BEP-20 Address — PresZ"
     body = _card(f"""
-        <h2 style="color: #1a1a2e; margin-top: 0;">Withdrawal Address Verification</h2>
-        <p>You are registering a new BEP-20 withdrawal address:</p>
+        <h2 style="color: #1a1a2e; margin-top: 0;">BEP-20 Address Verification</h2>
+        <p>You are registering a new BEP-20 payout address:</p>
         <p style="font-family: monospace; background: #f9fafb; padding: 12px;
                    border-radius: 6px; word-break: break-all; margin: 16px 0;">
             {wallet_address}
@@ -193,100 +135,11 @@ async def send_address_verification_email(
         <p>Use <code>POST /wallet/address/verify</code> with this code to confirm.
            It expires in <strong>30 minutes</strong>.</p>
         <p style="color: #ef4444; font-size: 13px; font-weight: bold;">
-            ⚠ Only verify an address that belongs to you. Withdrawals sent to a wrong address
-            cannot be reversed.
+            ⚠ Only verify an address that belongs to you. On-chain payouts sent to a
+            wrong address cannot be reversed.
         </p>
         <p style="color: #6b7280; font-size: 13px;">
             If you did not request this, please ignore this email.
         </p>
     """)
     return await send_email(email, subject, body)
-
-
-# ── Withdrawal requested ──────────────────────────────────────────────────────
-
-async def send_withdrawal_requested_email(
-    email: str, username: str, amount: float, wallet_address: str, scheduled_for: str
-) -> bool:
-    subject = "Withdrawal Requested — PresZ"
-    short_address = f"{wallet_address[:6]}…{wallet_address[-4:]}"
-    body = _card(f"""
-        <h2 style="color: #1a1a2e; margin-top: 0;">Withdrawal Scheduled</h2>
-        <p>Hi <strong>{username}</strong>,</p>
-        <p>Your withdrawal request has been received and funds have been reserved.</p>
-        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-            <tr>
-                <td style="padding: 10px; background: #f9fafb; border-radius: 4px;
-                            color: #6b7280; font-size: 13px; width: 40%;">Amount</td>
-                <td style="padding: 10px; font-weight: bold;">${amount:.4f} USDT</td>
-            </tr>
-            <tr>
-                <td style="padding: 10px; color: #6b7280; font-size: 13px;">Network</td>
-                <td style="padding: 10px;">BEP-20 (BNB Smart Chain)</td>
-            </tr>
-            <tr>
-                <td style="padding: 10px; background: #f9fafb; border-radius: 4px;
-                            color: #6b7280; font-size: 13px;">To Address</td>
-                <td style="padding: 10px; font-family: monospace;">{short_address}</td>
-            </tr>
-            <tr>
-                <td style="padding: 10px; color: #6b7280; font-size: 13px;">Scheduled For</td>
-                <td style="padding: 10px; font-weight: bold;">{scheduled_for} UTC</td>
-            </tr>
-        </table>
-        <p style="color: #6b7280; font-size: 13px;">
-            Your payout is being processed now and will be dispatched automatically to your BEP-20 address.
-        </p>
-    """)
-    return await send_email(email, subject, body)
-
-
-# ── Withdrawal sent ───────────────────────────────────────────────────────────
-
-def send_withdrawal_sent_email(
-    email: str, username: str, amount: float, wallet_address: str, payout_id: str
-) -> bool:
-    subject = "Withdrawal Sent — PresZ"
-    short_address = f"{wallet_address[:6]}…{wallet_address[-4:]}"
-    body = _card(f"""
-        <h2 style="color: #1a1a2e; margin-top: 0;">Withdrawal Dispatched</h2>
-        <p>Hi <strong>{username}</strong>,</p>
-        <p>Your USDT withdrawal has been sent successfully.</p>
-        <div style="background-color: #f0fdf4; border-left: 4px solid #10B981;
-                    padding: 16px; margin: 24px 0; border-radius: 4px;">
-            <p style="margin: 0; color: #065f46; font-weight: bold;">
-                ${amount:.4f} USDT dispatched on BEP-20
-            </p>
-            <p style="margin: 8px 0 0; color: #065f46;">To: {short_address}</p>
-        </div>
-        <p style="color: #6b7280; font-size: 13px;">
-            NOWPayments reference: <code>{payout_id}</code><br>
-            Funds typically arrive within a few minutes. Check your BEP-20 wallet.
-        </p>
-    """)
-    return _send_sync(email, subject, body)
-
-
-# ── Withdrawal failed ─────────────────────────────────────────────────────────
-
-def send_withdrawal_failed_email(
-    email: str, username: str, amount: float, reason: str
-) -> bool:
-    subject = "Withdrawal Failed — Funds Refunded — PresZ"
-    body = _card(f"""
-        <h2 style="color: #1a1a2e; margin-top: 0;">Withdrawal Failed</h2>
-        <p>Hi <strong>{username}</strong>,</p>
-        <p>Unfortunately your withdrawal of <strong>${amount:.4f} USDT</strong> could not
-           be processed.</p>
-        <div style="background-color: #fef2f2; border-left: 4px solid #ef4444;
-                    padding: 16px; margin: 24px 0; border-radius: 4px;">
-            <p style="margin: 0; color: #991b1b; font-weight: bold;">Reason</p>
-            <p style="margin: 8px 0 0; color: #991b1b;">{reason}</p>
-        </div>
-        <p>The full amount of <strong>${amount:.4f} USDT</strong> has been
-           <strong>refunded to your wallet</strong> and is available to withdraw again.</p>
-        <p style="color: #6b7280; font-size: 13px;">
-            If this keeps happening please contact support.
-        </p>
-    """)
-    return _send_sync(email, subject, body)

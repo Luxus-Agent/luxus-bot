@@ -134,7 +134,7 @@ def freeze_user(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user),
 ):
-    """Deactivate a user account (blocks login and ProActive income routing)."""
+    """Deactivate a user account (blocks login and Core income routing)."""
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="Cannot freeze your own admin account.")
     user = db.query(User).filter_by(id=user_id).first()
