@@ -41,7 +41,11 @@
       "Bash(npx vite *)",
       "Bash(python C:/Users/Shamlatech/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/17e3c3e0-8811-4b35-aae4-c76b9b24c5c9/79227e8f-7243-450e-8121-e90bb7b52a25/skills/docx/scripts/office/unpack.py 'C:/Users/Shamlatech/Downloads/Luxus/Luxus 3.docx' /tmp/luxus3_unpacked/)",
       "Bash(cygpath -w /tmp/luxus3_unpacked/word/document.xml)",
-      "Bash(PYTHONPATH=E:/LUXUS-gitlab/agent-revenue-sharing-platform/backend C:/Users/Shamlatech/miniconda3/envs/luxus/python.exe /tmp/_verify.py)"
+      "Bash(PYTHONPATH=E:/LUXUS-gitlab/agent-revenue-sharing-platform/backend C:/Users/Shamlatech/miniconda3/envs/luxus/python.exe /tmp/_verify.py)",
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['app/api/wallet.py','app/api/admin.py','app/core/wallet_ops.py','app/api/distribution.py']]; print\\('syntax OK'\\)\")",
+      "Bash(python -c \"import app.api.wallet, app.api.admin, app.core.wallet_ops; print\\('import OK'\\)\")",
+      "Bash(python -c \"import app.models; from app.models.user import User; print\\('seed_admin imports OK'\\)\")",
+      "Bash(python -c \"import app.api.distribution, app.core.wallet_ops; from app.core.wallet_ops import mirror_onchain_earning_split; print\\('imports OK'\\)\")"
     ]
   }
 }

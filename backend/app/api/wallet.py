@@ -6,6 +6,7 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -55,13 +56,65 @@ def get_transactions(
     )
 
 
-# Earnings credited to the user's MAIN wallet by the revenue engine
-INCOME_TYPES = [
-    TransactionType.CORE_INCOME,
-    TransactionType.STREAM_PAYOUT,
-    TransactionType.BOOST_PAYOUT,
-    TransactionType.SPONSOR_MILESTONE_INCOME,
+# Earnings the user has *received* (Core/Stream/Boost commissions). On the on-chain
+# rail these are recorded as CORE_INCOME transactions paid to the user's own wallet
+# on-chain — they are NOT credited to an internal Wallet, so internal wallet
+# balances stay $0. The correct "Total Earnings" figure therefore comes from the
+# ledger (these rows), not from Wallet balances. Sourced from wallet_ops so the
+# definition of "income" stays in one place across the codebase.
+from app.core.wallet_ops import LEDGER_INCOME_TYPES as INCOME_TYPES
+
+# Money that has left the user (real outflows). agent_purchase covers the on-chain
+# pack buys; the rest are legacy deposit-first flows kept for historical rows.
+EXPENSE_TYPES = [
+    TransactionType.AGENT_PURCHASE,
+    TransactionType.PURCHASE,
+    TransactionType.WITHDRAWAL,
+    TransactionType.TRANSFER_OUT,
 ]
+
+
+@router.get("/earnings")
+def earnings_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Lifetime earnings + spend, summed live from the transaction ledger — no admin
+    approval, and not capped at the 200-row transaction listing.
+
+    "Total Earnings" must be read from here (the ledger), NOT from internal Wallet
+    balances: on the on-chain rail commissions are paid to users' own wallets
+    on-chain and the internal wallets stay $0, so a wallet-balance figure would
+    always read $0 even after real income.
+    """
+    income_rows = (
+        db.query(Transaction.transaction_type, func.coalesce(func.sum(Transaction.amount), 0))
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type.in_(INCOME_TYPES),
+        )
+        .group_by(Transaction.transaction_type)
+        .all()
+    )
+    expense_rows = (
+        db.query(func.coalesce(func.sum(Transaction.amount), 0))
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type.in_(EXPENSE_TYPES),
+        )
+        .scalar()
+    )
+
+    by_type = {ttype.value: float(round(Decimal(str(amount)), 4)) for ttype, amount in income_rows}
+    total_earned = float(round(sum((Decimal(str(a)) for _, a in income_rows), Decimal("0")), 4))
+    total_spent = float(round(Decimal(str(expense_rows or 0)), 4))
+
+    return {
+        "total_earned": total_earned,   # lifetime Core/Stream/Boost income
+        "total_spent": total_spent,     # lifetime outflows (agent purchases, etc.)
+        "by_type": by_type,             # income broken down by transaction type
+    }
 
 
 @router.get("/income/daily")

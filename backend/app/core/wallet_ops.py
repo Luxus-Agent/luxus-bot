@@ -1,6 +1,7 @@
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.wallet import Wallet, WalletType
@@ -9,6 +10,65 @@ from app.models.transaction import Transaction, TransactionType
 REPURCHASE_RATE = Decimal("0.20")     # 20% of gross → repurchase reserve
 SOFTWARE_FEE_RATE = Decimal("0.10")   # 10% of gross → platform profit
 ACCOUNT_TIER = 0  # Sentinel agent_tier for the platform account balance wallet
+
+# Income the user has *received* (Core/Stream/Boost commissions). On the on-chain
+# rail these are recorded as CORE_INCOME transactions paid to the user's own wallet
+# on-chain and are NEVER credited to an internal Wallet — so MAIN-wallet balances
+# stay $0 and the real earnings figure must be summed from the ledger.
+LEDGER_INCOME_TYPES = (
+    TransactionType.CORE_INCOME,
+    TransactionType.STREAM_PAYOUT,
+    TransactionType.BOOST_PAYOUT,
+    TransactionType.SPONSOR_MILESTONE_INCOME,
+)
+
+
+def get_ledger_earnings(db: Session, user_id: int) -> Decimal:
+    """Lifetime income the user has received, summed from the transaction ledger.
+    Use this (not MAIN-wallet balances) for any "total earnings" figure on the
+    on-chain rail."""
+    total = (
+        db.query(func.coalesce(func.sum(Transaction.amount), 0))
+        .filter(
+            Transaction.user_id == user_id,
+            Transaction.transaction_type.in_(LEDGER_INCOME_TYPES),
+        )
+        .scalar()
+    )
+    return Decimal(str(total or 0))
+
+
+def mirror_onchain_earning_split(
+    db: Session,
+    user_id: int,
+    agent_tier: int,
+    gross_amount: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """
+    VIRTUAL internal tracking for an on-chain commission.
+
+    The commission was paid to the user's own wallet ON-CHAIN — no real money
+    flows through internal wallets. For display only, we mirror the earning into
+    the internal per-tier wallets as an 80% main / 20% repurchase-reserve split so
+    the per-tier balances and the "Repurchase Reserve" populate in the UI. These
+    balances are display/bookkeeping figures, NOT movable funds (the spendable
+    money lives on-chain). No Transaction rows are written here — the reporting
+    CORE_INCOME row is written by the caller; this only adjusts wallet balances.
+
+    Returns (main_credit, repurchase) for logging.
+    """
+    four_places = Decimal("0.0001")
+    gross = Decimal(str(gross_amount)).quantize(four_places, rounding=ROUND_HALF_UP)
+    repurchase = (gross * REPURCHASE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
+    main_credit = gross - repurchase
+
+    main_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.MAIN)
+    main_wallet.balance = Decimal(str(main_wallet.balance)) + main_credit
+
+    repurchase_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.REPURCHASE)
+    repurchase_wallet.balance = Decimal(str(repurchase_wallet.balance)) + repurchase
+
+    return main_credit, repurchase
 
 
 def get_or_create_wallet(db: Session, user_id: int, agent_tier: int, wallet_type: WalletType) -> Wallet:

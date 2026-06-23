@@ -1,5 +1,7 @@
 import { createContext, useContext, useState } from 'react'
+import { disconnect as disconnectWallet } from '@wagmi/core'
 import api from '../api/client'
+import { wagmiConfig } from '../config/appkit'
 
 const AuthContext = createContext(null)
 
@@ -30,6 +32,11 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
     setUser(null)
+    // Also drop the wallet connection. It lives in wagmi/AppKit's own
+    // localStorage-backed store, independent of our auth, so without this it
+    // survives logout and reappears as a "connected" wallet on the next
+    // user's Login/Register page.
+    disconnectWallet(wagmiConfig).catch(() => {})
   }
 
   const isAdmin = user?.is_admin === true

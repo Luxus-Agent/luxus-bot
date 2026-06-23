@@ -45,6 +45,7 @@ export default function Dashboard() {
   const [wallets, setWallets] = useState([])
   const [purchases, setPurchases] = useState([])
   const [income, setIncome] = useState({ total: 0, buckets: [] })
+  const [earnings, setEarnings] = useState({ total_earned: 0 })
   const [referralCount, setReferralCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
@@ -56,16 +57,22 @@ export default function Dashboard() {
       api.get('/agents/purchases'),
       api.get('/auth/referrals'),
       api.get('/wallet/income/daily'),
-    ]).then(([wb, pb, rb, ib]) => {
+      // Non-fatal: a missing/failing earnings endpoint must not blank the whole
+      // dashboard (agents, wallets, etc.) — fall back to $0.
+      api.get('/wallet/earnings').catch(() => ({ data: { total_earned: 0 } })),
+    ]).then(([wb, pb, rb, ib, eb]) => {
       setWallets(wb.data)
       setPurchases(pb.data)
       setReferralCount(rb.data.count || 0)
       setIncome(ib.data || { total: 0, buckets: [] })
+      setEarnings(eb.data || { total_earned: 0 })
     }).catch(() => toast.error('Failed to load dashboard')).finally(() => setLoading(false))
   }, [])
 
-  const mainWallets = wallets.filter(w => w.wallet_type === 'main')
-  const totalMain = mainWallets.reduce((s, w) => s + parseFloat(w.balance), 0)
+  // Total earnings come from the ledger (Core/Stream/Boost income), NOT internal
+  // wallet balances — on the on-chain rail commissions are paid to users' own
+  // wallets on-chain, so internal wallets stay $0.
+  const totalEarned = Number(earnings.total_earned || 0)
   const activePurchases = purchases.filter(p => p.status === 'active')
   const highestTier = purchases.length ? Math.max(...purchases.map(p => p.agent_tier)) : 0
 
@@ -139,8 +146,8 @@ export default function Dashboard() {
           <StatCard
             icon={TrendingUp}
             label="Total Earnings"
-            value={`$${totalMain.toFixed(2)}`}
-            sub="Across all wallets"
+            value={`$${totalEarned.toFixed(2)}`}
+            sub="Commissions paid on-chain"
             color="#00FFD4"
           />
           <StatCard

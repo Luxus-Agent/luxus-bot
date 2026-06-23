@@ -32,7 +32,7 @@ from app.core.wallet_ops import (
     debit_account,
     debit_wallet,
     get_account_balance,
-    get_total_earnings,
+    get_ledger_earnings,
 )
 from app.database import get_db
 from app.models.agent import AgentPurchase
@@ -109,7 +109,7 @@ def user_summary(
     Compact per-user snapshot for the admin user-management dropdown:
       - agents_count: how many agent tiers the user has bought
       - account_balance: spendable account balance
-      - revenue_generated: total earnings across all MAIN wallets
+      - revenue_generated: lifetime income from the ledger (Core/Stream/Boost)
     """
     user = db.query(User).filter_by(id=user_id).first()
     if not user:
@@ -124,7 +124,7 @@ def user_summary(
     return {
         "agents_count": int(agents_count),
         "account_balance": float(get_account_balance(db, user_id)),
-        "revenue_generated": float(get_total_earnings(db, user_id)),
+        "revenue_generated": float(get_ledger_earnings(db, user_id)),
     }
 
 

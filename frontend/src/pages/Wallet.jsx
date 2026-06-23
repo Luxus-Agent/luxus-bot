@@ -3,7 +3,7 @@ import { UserLayout, AdminLayout } from '../components/Layout'
 import { useAuth } from '../context/AuthContext'
 import api from '../api/client'
 import toast from 'react-hot-toast'
-import { Wallet as WalletIcon, TrendingUp, Lock, Activity, Coins } from 'lucide-react'
+import { TrendingUp, Lock, Activity, Coins } from 'lucide-react'
 import Pagination from '../components/Pagination'
 import { formatDateTimeIST } from '../utils/datetime'
 import { useUsdtBalance } from '../hooks/useUsdtBalance'
@@ -28,6 +28,7 @@ export default function Wallet() {
   const Layout = isAdmin ? AdminLayout : UserLayout
   const [wallets, setWallets] = useState([])
   const [transactions, setTransactions] = useState([])
+  const [earnings, setEarnings] = useState({ total_earned: 0 })
   const [loading, setLoading] = useState(true)
   const [filterTier, setFilterTier] = useState('all')
   const [filterType, setFilterType] = useState('all')
@@ -38,16 +39,20 @@ export default function Wallet() {
     Promise.all([
       api.get('/wallet/balances'),
       api.get('/wallet/transactions'),
-    ]).then(([wb, tb]) => {
+      // Non-fatal: a missing/failing earnings endpoint must not blank the wallet
+      // page (balances + transactions) — fall back to $0.
+      api.get('/wallet/earnings').catch(() => ({ data: { total_earned: 0 } })),
+    ]).then(([wb, tb, eb]) => {
       setWallets(wb.data)
       setTransactions(tb.data)
+      setEarnings(eb.data || { total_earned: 0 })
     }).catch(() => toast.error('Failed to load wallet')).finally(() => setLoading(false))
   }, [])
 
-  const mainWallets = wallets.filter(w => w.wallet_type === 'main' && w.agent_tier > 0)
   const repurchaseWallets = wallets.filter(w => w.wallet_type === 'repurchase' && w.agent_tier > 0)
-  const accountWallet = wallets.find(w => w.wallet_type === 'account')
-  const totalMain = mainWallets.reduce((s, w) => s + parseFloat(w.balance), 0)
+  // Total earnings = lifetime Core/Stream/Boost income from the ledger, NOT the
+  // internal main-wallet balance (which stays $0 on the on-chain rail).
+  const totalEarned = Number(earnings.total_earned || 0)
   const totalRep = repurchaseWallets.reduce((s, w) => s + parseFloat(w.balance), 0)
 
   const txTypes = [...new Set(transactions.map(t => t.transaction_type))]
@@ -76,7 +81,7 @@ export default function Wallet() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {/* Live on-chain wallet balance (USDT on BSC). This is the user's real
               spendable balance — on-chain purchases & commissions move here. */}
           <div className="rounded-xl p-5" style={{ background: '#141922', border: '1px solid #00D4B433' }}>
@@ -104,8 +109,7 @@ export default function Wallet() {
             </p>
           </div>
           {[
-            { label: 'Account Balance', val: accountWallet?.balance || 0, icon: WalletIcon, color: '#00D4B4', sub: 'Internal spendable' },
-            { label: 'Total Earnings', val: totalMain, icon: TrendingUp, color: '#00FFD4', sub: 'Internal main wallet' },
+            { label: 'Total Earnings', val: totalEarned, icon: TrendingUp, color: '#00FFD4', sub: 'Commissions paid on-chain' },
             { label: 'Repurchase Reserve', val: totalRep, icon: Lock, color: '#FFB547', sub: 'Auto-hold (internal)' },
           ].map(({ label, val, icon: Icon, color, sub }) => (
             <div key={label} className="rounded-xl p-5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>

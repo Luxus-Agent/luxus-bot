@@ -321,15 +321,19 @@ def _resolve_bep20_address(db: Session, user: User) -> str | None:
 
 def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
     """
-    Write reporting-only Transaction rows for a settled on-chain pack purchase so
-    the internal transaction history and dashboard analytics reflect it:
+    Write reporting Transaction rows for a settled on-chain pack purchase so the
+    internal transaction history and dashboard analytics reflect it:
       • the buyer's outgoing purchase (agent_purchase, an expense), and
       • each upline's commission (core_income), paid directly to their wallet on-chain.
 
-    NO Wallet rows are touched — the money moved on-chain, not through internal
-    wallets — so these rows are purely informational (they intentionally do not
-    affect withdrawable/account balances).
+    The commission money moved ON-CHAIN (not through internal wallets). For DISPLAY,
+    we additionally mirror each upline's commission into their internal per-tier
+    wallets as an 80% main / 20% repurchase-reserve split (via
+    mirror_onchain_earning_split) so the per-tier balances and the Repurchase
+    Reserve populate — these wallet figures are bookkeeping only, not movable funds
+    (the real spendable balance is on-chain). The buyer's purchase touches no wallet.
     """
+    from app.core.wallet_ops import mirror_onchain_earning_split
     try:
         recipients = json.loads(record.recipients_json or "[]")
     except (ValueError, TypeError):
@@ -354,16 +358,20 @@ def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
             continue
         uid = r.get("user_id")
         amount = r.get("amount") or 0
-        if not uid or Decimal(str(amount)) <= 0:
+        gross = Decimal(str(amount))
+        if not uid or gross <= 0:
             continue
         db.add(Transaction(
             user_id=uid,
             agent_tier=record.agent_tier,
             transaction_type=TransactionType.CORE_INCOME,
-            amount=Decimal(str(amount)),
+            amount=gross,
             reference_id=record.order_id,
             notes=f"On-chain Core commission — {record.pack_name}, paid to your wallet{tx_suffix}",
         ))
+        # Virtual per-tier tracking (80% main / 20% repurchase reserve) so the
+        # internal wallet displays populate. Bookkeeping only — funds are on-chain.
+        mirror_onchain_earning_split(db, uid, record.agent_tier, gross)
 
 
 def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> bool:

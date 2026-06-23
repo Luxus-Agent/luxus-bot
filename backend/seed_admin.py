@@ -7,16 +7,9 @@ from app.config import settings
 from app.database import SessionLocal
 from app.core.security import hash_password, verify_password
 
-# Import all models so SQLAlchemy resolves all relationships before any query
-import app.models.user
-import app.models.agent
-import app.models.matrix
-import app.models.wallet
-import app.models.transaction
-import app.models.deposit
-import app.models.withdrawal
-import app.models.wallet_address
-import app.models.transfer_verification
+# Import all models so SQLAlchemy resolves all relationships before any query.
+# app.models.__init__ imports every current model in the right order.
+import app.models  # noqa: F401
 
 from app.models.user import User
 
