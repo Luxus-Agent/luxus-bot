@@ -532,9 +532,9 @@ def pack_status(
 
         # Reflect ownership so the rest of the app (purchase page "OWNED", the
         # sequential-unlock gate, and Core-eligibility / compression for future
-        # on-chain splits) sees this agent as active. We do NOT queue the Celery
-        # revenue engine. Guarded against a duplicate tier row in case ownership
-        # already exists (e.g. from the deposit-first rail).
+        # on-chain splits) sees this agent as active. There is no internal revenue
+        # engine to run on this rail. Guarded against a duplicate tier row in case
+        # ownership already exists.
         already_owned = (
             db.query(AgentPurchase.id)
             .filter(

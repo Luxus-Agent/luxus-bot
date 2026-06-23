@@ -7,14 +7,13 @@ import Logo from './Logo'
 import { useAppKitAccount, useDisconnect } from '@reown/appkit/react'
 import {
   LayoutDashboard, Wallet,
-  Users, BarChart3, History, Bot, Network, LogOut, Menu, X,
+  Users, BarChart3, History, Bot, LogOut, Menu, X,
   ChevronRight, ShieldCheck, User, ShieldAlert, Lock, Unlock, AlertTriangle
 } from 'lucide-react'
 
 const userNav = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/agents',    label: 'Buy Agents', icon: Bot },
-  { path: '/matrix',   label: 'Queue',       icon: Network },
   { path: '/wallet',   label: 'Wallet',      icon: Wallet },
   { path: '/transactions', label: 'Transactions', icon: History },
 ]

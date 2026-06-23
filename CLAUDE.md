@@ -4,7 +4,13 @@
 
 A multi-tier passive income platform. Users make a one-time purchase of an AI agent tier ($10 / $20 / $50 / $100). Each purchase automatically activates three revenue mechanisms that run in parallel.
 
-**Payment model:** Deposit-first. Users top up their account balance via NOWPayments (USDT BEP-20), then spend that balance to purchase agent tiers instantly. Users can also transfer balance to other users.
+**Payment model:** On-chain (TokenPocket / MultiSender DApp, USDT BEP-20). Users buy agent tiers by paying the upline split **directly from their own connected wallet** on-chain; the backend computes the split and records the outcome (`POST /distribution/pack/purchase` + `/pack/status`). Income lands directly in users' on-chain wallets — no internal balances move.
+
+> **Removed (on-chain migration):** the legacy **deposit-first money rail is gone** — NOWPayments (deposit invoices + IPN webhooks + payout/withdrawal), the `/deposit` endpoints, user-to-user `/deposit/transfer`, the `/wallet/withdraw(+withdrawals)` endpoints, the account-balance `/agents/purchase` path, and the `deposit` / `withdrawal_requests` / `webhook_events` / `transfer_verifications` models/tables.
+>
+> The internal **Core/Stream/Boost revenue engine has also been removed** — `app/workers/` (Celery app + tasks), `core/matrix_engine.py`, `core/revenue_split.py`, the `matrix_positions` / `matrix_counters` models, the `/agents/matrix` endpoint, and the frontend Matrix/"Queue" page. **Celery and Redis are no longer used or required** (removed from `requirements.txt` and config). The on-chain pack split uses the **Core rule only** via `core/pack_payout.py` + the eligibility/compression helpers kept in `core/proactive.py`.
+>
+> **Kept:** the internal `Wallet` model + `/wallet/balances` + the Wallet page (still read by `/distribution/wallet-map` and the admin views; balances simply stay $0 on the on-chain rail), and the admin manual wallet credit/debit endpoints. The old DB tables (`deposits`, `withdrawal_requests`, `webhook_events`, `transfer_verifications`, `matrix_positions`, `matrix_counters`) are left in the database untouched (no data dropped); they're simply no longer created or read.
 
 ## Directory Structure
 
@@ -21,11 +27,13 @@ agent-revenue-sharing-platform/
 │   │   ├── pages/
 │   │   │   ├── Login.jsx / Register.jsx / VerifyEmail.jsx
 │   │   │   ├── ForgotPassword.jsx / ResetPassword.jsx
-│   │   │   ├── Dashboard.jsx / AgentPurchase.jsx / Matrix.jsx
-│   │   │   ├── Wallet.jsx / Deposit.jsx / Transfer.jsx / Withdraw.jsx / Transactions.jsx
+│   │   │   ├── Dashboard.jsx / AgentPurchase.jsx (on-chain buy)
+│   │   │   ├── Wallet.jsx / Transactions.jsx / Profile.jsx
 │   │   │   └── admin/
 │   │   │       ├── AdminDashboard.jsx / AdminUsers.jsx
-│   │   │       └── AdminTransactions.jsx / AdminWithdrawals.jsx
+│   │   │       └── AdminTransactions.jsx
+│   │   ├── hooks/useUsdtBalance.js  # Live on-chain USDT balance (wagmi balanceOf)
+│   │   └── config/appkit.js     # Reown/WalletConnect + wagmi (BSC) wallet config
 │   └── vite.config.js           # Tailwind, port 3000, /api proxy → localhost:8000
 ├── backend/
 │   ├── seed_admin.py            # One-time admin user creation from .env credentials
@@ -34,40 +42,32 @@ agent-revenue-sharing-platform/
 │   │   ├── config.py            # Settings (reads ../.env)
 │   │   ├── database.py          # SQLAlchemy engine + session
 │   │   ├── models/
-│   │   │   ├── user.py          # User + OTP fields (email verify, password reset)
+│   │   │   ├── user.py          # User + OTP fields (email verify, password reset) + wallet_address
 │   │   │   ├── agent.py         # AgentPurchase
-│   │   │   ├── matrix.py        # MatrixPosition, MatrixCounter (SystemType: STREAM, BOOST)
-│   │   │   ├── wallet.py        # Wallet (MAIN + REPURCHASE + ACCOUNT types)
+│   │   │   ├── wallet.py        # Wallet (MAIN + REPURCHASE + ACCOUNT types — internal, $0 on-chain)
+│   │   │   ├── wallet_address.py # Verified BEP-20 payout addresses
 │   │   │   ├── transaction.py   # Transaction ledger (TransactionType enum)
-│   │   │   ├── deposit.py       # Deposit (account balance top-up via NOWPayments)
-│   │   │   ├── withdrawal.py    # WithdrawalRequest (instant BEP-20 payout)
+│   │   │   ├── pack_purchase.py # On-chain pack order record (pending/success/failed + tx_hash)
 │   │   │   └── platform_setting.py # Single-row platform state (global freeze kill switch)
 │   │   ├── core/
-│   │   │   ├── matrix_engine.py # 3x3 forced matrix + Stream & Boost 10% sponsor completion-share
-│   │   │   ├── proactive.py     # Core Agent: 30% sponsor + 30% supreme, odd/even routing
-│   │   │   ├── revenue_split.py # 60/30/10 split → core / stream / boost
+│   │   │   ├── pack_payout.py   # On-chain pack split (Core rule: 60% → 2 eligible uplines, 40% platform)
+│   │   │   ├── proactive.py     # Core Agent eligibility/compression helpers (used by pack_payout)
 │   │   │   ├── wallet_ops.py    # credit/debit_wallet() + credit/debit_account() + withdrawable/earnings
 │   │   │   ├── platform_state.py # Freeze get/set helpers
 │   │   │   └── security.py      # JWT + password hashing
 │   │   ├── logging_config.py    # Central timestamped logging setup (LOG_LEVEL)
 │   │   ├── services/
-│   │   │   ├── nowpayments.py   # Deposit invoices, IPN verify, payout API
-│   │   │   └── email_service.py # SMTP email — OTP, activation, withdrawal notifications
-│   │   ├── workers/
-│   │   │   ├── celery_app.py    # Celery + Redis setup
-│   │   │   └── tasks.py         # activate → payout → re-entry (Stream=dummy same queue / Boost=real) → withdrawal
+│   │   │   └── email_service.py # SMTP email — OTP / verification notifications
 │   │   ├── schemas/
 │   │   │   ├── user.py          # Register (sponsor_username), Login (username+password), OTP, reset
-│   │   │   └── agent.py         # Purchase, Deposit, Transfer, Wallet, Withdrawal, Admin treasury/freeze schemas
+│   │   │   └── agent.py         # Purchase, Wallet, WalletAddress, Admin treasury/freeze schemas
 │   │   └── api/
 │   │       ├── auth.py          # register / check-username / verify-email / login (username) / forgot & reset
-│   │       ├── agents.py        # purchase (from balance, one per tier, sequential 1→2→3→4) / matrix view
-│   │       ├── wallet.py        # balances / transactions / income-daily / withdraw (combined balance) / withdrawals
-│   │       ├── deposit.py       # account balance / create deposit / transfer / refund
-│   │       ├── admin.py         # admin-only: users + summary, transactions, withdrawals, freeze/unfreeze, treasury (transfer), platform freeze
+│   │       ├── agents.py        # GET purchases (read-only ownership list)
+│   │       ├── wallet.py        # balances / transactions / income-daily / BEP-20 address management
+│   │       ├── admin.py         # admin-only: users + summary, transactions, freeze/unfreeze, treasury (transfer), platform freeze
 │   │       ├── platform.py      # GET /platform/status (freeze state for any logged-in user)
-│   │       ├── distribution.py  # GET /distribution/wallet-map — TokenPocket/MultiSender consolidated endpoint
-│   │       └── payments.py      # NOWPayments IPN webhook
+│   │       └── distribution.py  # /distribution/wallet-map + on-chain pack rail (/pack/purchase, /pack/status)
 │   ├── create_tables.py         # One-time DB table creation (run once on fresh setup)
 ├── .env                         # Local secrets (never commit)
 ├── .env.example                 # Template — copy to .env and fill in
@@ -84,9 +84,8 @@ agent-revenue-sharing-platform/
 | Frontend | Vite + React + Tailwind CSS |
 | Backend | FastAPI (Python) |
 | Database | PostgreSQL 18 |
-| Task Queue | Celery + Redis |
 | Auth | JWT (python-jose + passlib/bcrypt==4.0.1) |
-| Payments | NOWPayments (USDT on BEP-20) |
+| Payments | On-chain USDT (BEP-20) via TokenPocket / MultiSender DApp |
 | Email | SMTP (Gmail / any provider) |
 
 ## Database
@@ -97,7 +96,9 @@ agent-revenue-sharing-platform/
 - **Password**: `dhanush`
 - **Connection string**: `postgresql://luxus:dhanush@localhost/luxus`
 
-Tables: `users`, `agent_purchases`, `matrix_positions`, `matrix_counters`, `wallets`, `transactions`, `withdrawal_requests`, `deposits`
+Tables (created by `create_tables.py`): `users`, `agent_purchases`, `wallets`, `wallet_addresses`, `transactions`, `pack_purchases`, `platform_settings`.
+
+> Legacy tables (`deposits`, `withdrawal_requests`, `webhook_events`, `transfer_verifications`, `matrix_positions`, `matrix_counters`) may still exist in older databases — they are no longer created or read after the on-chain migration. Drop them manually if you want a clean schema.
 
 ## Auth Flow
 
@@ -119,42 +120,53 @@ Resend:
 **Note:** Every user must register under a sponsor identified by the **sponsor's username** (not a referral code). The `sponsor_username` field is mandatory at registration.
 Only the platform root/admin user can exist without a sponsor — create it directly in the DB via `seed_admin.py`.
 
-## Deposit & Purchase Flow
+## Purchase Flow (on-chain)
+
+Purchases happen **on-chain** — the buyer pays the upline split directly from their
+connected wallet via the TokenPocket / MultiSender DApp. See the "On-chain pack
+purchase" section below for the full detail.
 
 ```
-Deposit (top up account balance):
-1. POST /deposit                  → creates Deposit record + NOWPayments invoice
-2. User pays invoice_url (USDT BEP-20)
-3. NOWPayments → POST /webhooks/nowpayments/ipn  (HMAC-SHA512 verified)
-4. IPN credits user's ACCOUNT balance
+1. POST /distribution/pack/purchase  → backend computes the Core-rule split and
+                                        returns recipients + amounts (sums to price)
+2. Frontend sends the batched USDT (BEP-20) payment on-chain (MultiSender)
+3. POST /distribution/pack/status    → backend records success (tx_hash) or failure;
+                                        on success creates the AgentPurchase ownership
+                                        row + reporting-only Transaction rows
 
-Purchase (spend account balance):
-5. POST /agents/purchase          → checks ACCOUNT balance >= price, deducts, queues Celery
-6. Celery: activate_purchase → revenue split → matrix placement → payouts → email
-
-Transfer (user-to-user):
-   POST /deposit/transfer         → 1% fee deducted; first transfer to a new recipient requires email OTP
-   POST /deposit/transfer/verify  → confirm OTP for first-time recipient; executes the transfer
-
-Balance query:
-   GET  /deposit/balance          → returns { "account_balance": float }
-   GET  /deposit                  → deposit history
-
-Withdrawal address management (required before withdrawing):
+Wallet address management (BEP-20 payout target, used by the distribution map):
    POST /wallet/address           → register a BEP-20 address; sends email OTP
    POST /wallet/address/verify    → confirm OTP; marks address as verified
    GET  /wallet/addresses         → list user's verified addresses
    DELETE /wallet/address/{id}    → remove a registered address
 ```
 
+> **Removed:** account-balance deposits, user-to-user transfers, and withdrawals —
+> along with NOWPayments. There is no internal money-in/money-out flow anymore;
+> all value moves on-chain in users' own wallets.
+
 ## Revenue Mechanics
 
-### Split (on every confirmed purchase)
+> **Status after the on-chain migration:** Only the **Core Agent rule** is live — it
+> drives the on-chain pack split (`core/pack_payout.py` + the eligibility/compression
+> helpers in `core/proactive.py`): **60% → two 30% halves to the first two eligible
+> uplines, 40% → platform fee** (see "On-chain pack purchase" below). The **Stream
+> (30%) and Boost (10%) matrix systems, the 60/30/10 split, and auto-repurchase were
+> REMOVED** with the deposit-first engine. The internal-wallet 70/20/10 deduction
+> logic (`credit_wallet`) still exists but is now only reachable via the admin
+> manual wallet-credit tool — no automatic income flows through it. The
+> Stream/Boost/Wallet-rule subsections below are retained as **historical
+> reference** for the original business model — they no longer run.
+
+### Split (historical — deposit-first model, removed)
 - **60%** → Core Agent system
 - **30%** → Stream Agent system (3x3 forced matrix, separate queue per tier)
 - **10%** → Boost Agent system (3x3 forced matrix, single global queue)
 
 ### Core Agent (60%) — formerly ProActive
+*(The compression + odd/even rule below is LIVE — it is exactly what the on-chain
+pack split applies, except the on-chain split routes 40% to the platform instead of
+30% Stream + 10% Boost.)*
 The 60% is split into two equal halves (30% each), routed up the sponsor chain
 with **compression** (see below):
 - **First 30%** → first eligible upline
@@ -184,7 +196,7 @@ keeps the amount or passes it up.
 - If next count is **even** → amount passes **up to the next ELIGIBLE upline** above the recipient (the pass-up is compressed too — ineligible uplines are skipped)
 - If no eligible upline to pass to → stays with recipient
 
-### Stream Agent (30%) — formerly Proportion
+### Stream Agent (30%) — formerly Proportion  *(REMOVED — historical reference)*
 Uses a 3x3 breadth-first matrix. Each tier has its **own separate queue**.
 Locked via `MatrixCounter` (SELECT FOR UPDATE).
 
@@ -204,7 +216,7 @@ Wallet, per-re-entry amount, and sponsor share all scale by multiplier.
 
 **Re-entry rule:** Stream re-entries are **dummy** positions placed back into the **same tier's Stream queue** (per the client matrix diagram `A·B·C·D·A1·E·F·B1·…`). They fill slots to advance the queue, earn no payout, and spawn no further re-entries. Only one real entry per user in the Stream queue at a time. Stream does **not** feed Boost.
 
-### Boost Agent (10%) — formerly Speculation
+### Boost Agent (10%) — formerly Speculation  *(REMOVED — historical reference)*
 Uses the same 3x3 matrix format. **Single global queue** (no per-tier split). Always placed at `agent_tier=1`.
 
 | Level | Threshold | Wallet | Re-entry | Sponsor share |
@@ -226,22 +238,22 @@ Every income credit → two deductions, **both computed off the gross**:
 1. **10% software fee** (of gross) → platform profit (not credited to any user)
 2. **20% repurchase reserve** (of gross) → held in REPURCHASE wallet per tier
 
-Effective split of gross income: **70% main wallet** (withdrawable) + **20% repurchase** + **10% platform fee**.
-ACCOUNT balance (deposits/transfers) is credited at **100%** — no deductions.
+Effective split of gross income: **70% main wallet** + **20% repurchase** + **10% platform fee**.
 
-### Auto-repurchase
-When a user's REPURCHASE wallet for a given tier accumulates >= tier price, a new agent purchase is automatically created and activated via Celery (`auto_repurchase` task).
+> **Status:** `credit_wallet()` (the 70/20/10 logic above) still exists but is now only
+> reachable via the **admin manual wallet-credit** endpoint. No automatic income flows
+> through the internal wallets anymore — the on-chain rail pays users directly on-chain
+> and never touches `Wallet` balances (they stay $0).
 
-## Withdrawal Flow
+### Auto-repurchase  *(REMOVED)*
+The auto-repurchase trigger (and its `auto_repurchase` Celery task) were removed with the
+deposit-first engine.
 
-```
-1. POST /wallet/withdraw          → min $10, deducts from MAIN wallet, creates request
-2. NOWPayments /v1/payout         → sends USDT on BEP-20 to user's verified BEP-20 address
-3. On success → status=sent, sends "withdrawal dispatched" email
-4. On failure → status=failed, refunds to MAIN wallet, sends "refund" email, retries 3x
-```
+## Withdrawal Flow  *(REMOVED)*
 
-`GET /wallet/withdrawals` — lists all withdrawal history for the current user.
+Withdrawals were removed with NOWPayments. Users hold their funds on-chain in their own
+wallets, so there is no internal withdrawal/payout flow. (BEP-20 address registration under
+`/wallet/address` is kept — it's the payout target used by the distribution map.)
 
 ## TokenPocket / MultiSender Distribution Endpoint
 
@@ -336,15 +348,16 @@ POST /distribution/pack/status     → JWT. Body: { purchase_id, status:"success
 
 ## Email Notifications
 
-| Event | Endpoint / Task |
+| Event | Endpoint |
 |-------|----------------|
 | OTP verification on register | `POST /auth/register` |
 | Resend OTP | `POST /auth/resend-verification` |
 | Password reset OTP | `POST /auth/forgot-password` |
-| Agent purchase activated | Celery `activate_purchase` |
-| Withdrawal scheduled | `POST /wallet/withdraw` |
-| Withdrawal sent | Celery `process_withdrawal` (success) |
-| Withdrawal failed + refunded | Celery `process_withdrawal` (failure) |
+| BEP-20 address verification OTP | `POST /wallet/address` |
+
+> The deposit / agent-activation / withdrawal / transfer emails were removed with the
+> deposit-first engine. (Their template functions still exist in `email_service.py` but
+> are no longer called.)
 
 SMTP config keys: `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SENDER_EMAIL`
 
@@ -355,14 +368,15 @@ For Gmail use an **App Password**: `myaccount.google.com/apppasswords`
 ### Prerequisites
 - Python 3.11+ in conda env `luxus`
 - PostgreSQL 18 running locally
-- Redis running locally on port 6379
+- (Celery/Redis are no longer used — the backend is fully synchronous)
 
 ### Setup (first time — fresh install)
 
 ```bash
 # 1. Fill in your .env
 cp .env.example .env
-# edit .env — add NOWPAYMENTS keys, SMTP credentials, etc.
+# edit .env — SMTP credentials, SECRET_KEY, ADMIN_*, and on-chain settings
+# (USDT_CONTRACT, PLATFORM_FEE_WALLET, etc.)
 
 # 2. Install dependencies (in luxus env)
 conda activate luxus
@@ -381,15 +395,10 @@ No migration scripts are needed on a fresh install — `create_tables.py` create
 ### Running the backend
 
 ```bash
-# Terminal 1 — API server (from backend/)
+# API server (from backend/) — no Celery worker needed anymore
 conda activate luxus
 cd backend
 uvicorn app.main:app --reload
-
-# Terminal 2 — Celery worker (from backend/)
-conda activate luxus
-cd backend
-celery -A app.workers.celery_app worker --loglevel=info
 ```
 
 API docs: http://localhost:8000/docs
@@ -416,32 +425,27 @@ Safe to re-run — exits early if an admin already exists.
 
 | File | Purpose |
 |------|---------|
-| `backend/app/core/matrix_engine.py` | 3x3 matrix + Stream & Boost 10% sponsor share on level completion |
-| `backend/app/core/proactive.py` | Core Agent: 30%/30% sponsor chain routing with odd/even logic |
-| `backend/app/core/revenue_split.py` | 60/30/10 split → core / stream / boost |
-| `backend/app/core/wallet_ops.py` | credit/debit wallet + account balance functions |
-| `backend/app/models/matrix.py` | MatrixPosition, MatrixCounter, SystemType (STREAM, BOOST) |
-| `backend/app/models/transaction.py` | TransactionType enum (CORE_INCOME, STREAM_PAYOUT, BOOST_PAYOUT, etc.) |
-| `backend/app/models/deposit.py` | Deposit model for account balance top-ups |
-| `backend/app/api/deposit.py` | Deposit creation, transfer, balance query |
-| `backend/app/api/auth.py` | Register (sponsor_username), check-username, email verify, password reset |
-| `backend/app/services/nowpayments.py` | Deposit invoices, IPN routing, payout API |
-| `backend/app/services/email_service.py` | All transactional email templates + SMTP send |
-| `backend/app/workers/tasks.py` | Celery chain: activate → payout → re-entry(BOOST) → withdrawal |
-| `backend/app/api/payments.py` | NOWPayments IPN webhook (deposit IPNs) |
-| `backend/app/api/wallet.py` | Per-tier balances, transactions, withdrawal request + history |
-| `backend/app/api/distribution.py` | `GET /distribution/wallet-map` (accrued wallet+profit map) + `POST /distribution/pack/purchase` & `/pack/status` (on-chain BEP-20 pack rail) |
+| `backend/app/api/distribution.py` | `GET /distribution/wallet-map` (wallet+profit map) + the on-chain pack rail (`POST /pack/purchase`, `/pack/status`) |
 | `backend/app/core/pack_payout.py` | On-chain pack split (Core rule: 60% → 2 eligible uplines, 40% → platform; missing→platform). No wallet writes |
+| `backend/app/core/proactive.py` | Core eligibility/compression helpers (`_is_eligible`, `_next_eligible_upline`) used by `pack_payout` |
 | `backend/app/models/pack_purchase.py` | `PackPurchase` — on-chain pack order record (pending/success/failed + tx_hash + recipients snapshot) |
+| `backend/app/core/wallet_ops.py` | credit/debit wallet + account balance helpers (internal wallets; admin-credit + distribution reads) |
+| `backend/app/models/transaction.py` | `TransactionType` enum (CORE_INCOME, AGENT_PURCHASE, SOFTWARE_FEE, PLATFORM_PROFIT, …) |
+| `backend/app/api/auth.py` | Register (sponsor_username), check-username, email verify, password reset |
+| `backend/app/api/wallet.py` | Balances, transactions, daily income, BEP-20 address management |
+| `backend/app/api/agents.py` | `GET /agents/purchases` — read-only ownership list |
+| `backend/app/api/admin.py` | Admin: users, transactions, freeze/unfreeze, treasury transfer, platform freeze, manual wallet credit/debit |
+| `backend/app/services/email_service.py` | Transactional email templates + SMTP send (OTP / verification) |
 
 ## Dev Notes
 
+> **Many notes below describe the removed deposit-first / matrix / Celery / withdrawal
+> model.** They are kept where they still document live behavior (Core eligibility,
+> auth, freeze, IST timestamps, etc.) and marked *(REMOVED)* where they don't. The
+> backend is now fully synchronous (no Celery/Redis) and all value moves on-chain.
+
 - All financial amounts use Python `Decimal` to avoid float precision errors.
-- Matrix concurrency uses PostgreSQL `SELECT FOR UPDATE` on `MatrixCounter` + ancestor rows.
-- Celery tasks retry up to 3x (60s delay) on failure — safe to requeue.
-- `process_withdrawal` retries up to 3x with 300s delay on payout failure.
-- `POST /agents/purchase/{id}/confirm` is a dev-only endpoint (no payment needed). Remove in production.
-- `APP_ENV=development` always hits the NOWPayments sandbox — no real funds used.
+- The backend is fully synchronous — there are **no background tasks / Celery / Redis** anymore.
 - Login requires email verification — unverified users get HTTP 403.
 - **Sponsor is identified by username** at registration (`sponsor_username` field). The register form does a live debounced username availability check via `GET /auth/check-username`, and a **live sponsor-existence check** against the *same* endpoint inverted (`available:false` = username taken = sponsor exists = valid; `available:true` = no such user = invalid). Submit is blocked on an invalid sponsor.
 - **Root/admin user has no sponsor** — created directly in DB via `seed_admin.py`.
@@ -449,23 +453,14 @@ Safe to re-run — exits early if an admin already exists.
 - **TokenPocket distribution map:** `GET /distribution/wallet-map` (`app/api/distribution.py`) is the single consolidated, read-only endpoint that returns a user + their downline with each one's wallet address and profit, for the frontend MultiSender. Distribute against `profit.withdrawable`. See the "TokenPocket / MultiSender Distribution Endpoint" section above.
 - **On-chain pack purchase:** `POST /distribution/pack/purchase` + `POST /distribution/pack/status` (`app/api/distribution.py`) are a **separate on-chain (BEP-20 USDT) rail** — the frontend pays the upline split directly from the buyer's wallet; the backend returns the validated split and records the outcome. Split = **Core rule only** (60% → two 30% halves to the first two eligible uplines via `app/core/pack_payout.py`, 40% → platform fee; missing/ineligible upline → platform, so it sums to the pack price). Order record in `pack_purchases` (`app/models/pack_purchase.py`). On success it also creates an **active `AgentPurchase` ownership row** (no Celery, dup-tier guarded) and **reporting-only `Transaction` rows** (buyer `agent_purchase` + each upline `core_income`) via `_mirror_onchain_ledger` so the purchase shows as OWNED and appears in transaction history + the dashboard income chart — but **no internal Wallet balances are credited** (the on-chain transfer is the payout; main/repurchase/withdrawable stay $0, and Stream/Boost/repurchase don't run on this rail). Migration: `python migrate_v15.py`. See the "On-chain pack purchase" subsection above.
 - **On-chain wallet balance display:** the "Wallet Balance" card on Dashboard / Wallet / Buy Agents pages shows the connected wallet's **live on-chain USDT** (via `frontend/src/hooks/useUsdtBalance.js`, wagmi `balanceOf`), not an internal balance. It needs `VITE_USDT_ADDRESS` (frontend `.env`) to **match the backend `USDT_CONTRACT`**; a mismatch makes the card read a different token and show $0. Restart the Vite dev server after changing `.env`.
-- **Withdrawal minimum is $10.** Minimum transfer is $1. No maximum on withdrawals.
-- **Withdrawals are instant** — payout dispatched immediately via NOWPayments.
-- **Withdrawal addresses must be pre-verified** — register via `POST /wallet/address`, confirm OTP via `POST /wallet/address/verify`.
-- **Transfer fee is 1%** — sender debited full amount; recipient receives 99%.
-- **First-time transfer to a new recipient requires email OTP.**
-- **One purchase per tier, bought in order** — each tier can be purchased only once, and tiers must be bought sequentially 1 → 2 → 3 → 4 (cannot skip ahead). Auto-repurchase is the only exception (it activates a tier directly, bypassing this gate).
-- **Inactive sponsors are skipped** in Core Agent routing — income passes to supreme sponsor or goes to platform.
-- **Core Agent compression (Core only):** an upline qualifies for Core income only if their **highest active purchased tier ≥ the buyer's purchased tier**. Lower-tier / inactive / no-agent uplines are skipped and the income compresses up the sponsor chain to the next eligible upline. The two 30% halves go to the first eligible upline and the next eligible upline above it; even-count pass-ups also compress to the next eligible upline; no eligible upline → platform profit. Implemented in `proactive.py` via `_highest_active_tier` / `_is_eligible` / `_next_eligible_upline`. Compression applies to the Core Agent ONLY — Stream and Boost matrices are unaffected.
-- **Stream re-entries are dummy** — they are placed back into the **same tier's Stream queue**, fill matrix slots, do not receive wallet payouts, and spawn no further re-entries. Only one real Stream entry per user at a time.
-- **Boost re-entries are NOT dummy** — all positions in the Boost queue (including Boost's own re-entries) receive full payouts when their level fills.
-- **Stream re-entry count is FIXED at 1/3/9 for L1/L2/L3** across all tiers (total 13 re-entries per full cycle, per the client doc "every Nth income spawns a re-entry") — only the per-re-entry $ amount scales by tier multiplier (Agent 2 = $2 per re-entry, Agent 3 = $5, Agent 4 = $10). Boost uses the same 1/3/9 counts (always tier 1, no $ scaling).
-- **Stream sponsor income (L2/L3) is paid on level completion as 10% × level gross × tier_multiplier** — L2 base $0.90, L3 base $2.70. Not a position-fill milestone. Paid extra from the platform pool; owner's wallet credit is unaffected.
-- **Boost sponsor income (L2/L3) uses the same completion-share model** — L2 $0.27 (10% of $2.70 gross), L3 $0.81 (10% of $8.10 gross). Boost is always tier 1, so no multiplier scaling. The old per-position milestone model (5th/4th/20th member → $0.30) is retired. Boost L3 wallet is **$3.60** (latest client spec, down from $4.90).
-- **Each queue self-cycles its own re-entries:** Stream re-entries (dummy) re-enter the same tier's Stream queue; Boost re-entries (real) re-enter the single Boost queue at agent_tier=1. Stream does not feed Boost.
-- **Auto-repurchase:** when REPURCHASE wallet >= tier price, a new purchase is auto-activated via Celery.
-- **Two deductions** on every wallet credit, **both off the gross**: 10% software fee (platform profit) + 20% repurchase reserve. Effective user take = 70% of gross income credited.
-- **`/deposit/balance` returns `{ "account_balance": float }`** — use key `account_balance`, not `balance`.
+- **BEP-20 address management is kept** — register via `POST /wallet/address`, confirm OTP via `POST /wallet/address/verify`. It's the payout target used by the distribution map (not a withdrawal address anymore).
+- *(REMOVED)* Deposits, user-to-user transfers (1% fee / OTP), and withdrawals — gone with NOWPayments.
+- **One purchase per tier, bought in order** — each tier can be purchased only once, and tiers must be bought sequentially 1 → 2 → 3 → 4 (cannot skip ahead). Ownership is recorded by the on-chain `/pack/status` success handler.
+- **Inactive / ineligible uplines are skipped** in the Core split — see compression below.
+- **Core Agent compression + odd/even (LIVE — the on-chain pack split rule):** an upline qualifies for Core income only if their **highest active purchased tier ≥ the buyer's purchased tier**. Lower-tier / inactive / no-agent uplines are skipped and the income compresses up the sponsor chain to the next eligible upline. The two 30% halves go to the first eligible upline and the next eligible upline above it; even-count pass-ups (via `User.core_route_count`) also compress to the next eligible upline. On the on-chain rail, a half with no eligible recipient (or no valid BEP-20 address) folds into the 40% platform fee. Implemented in `pack_payout.py` + `proactive.py` (`_highest_active_tier` / `_is_eligible` / `_next_eligible_upline`).
+- *(REMOVED)* Stream / Boost matrix mechanics (3×3 queues, dummy/real re-entries, sponsor completion-share, re-entry counts) — the entire matrix engine is gone.
+- *(REMOVED)* Auto-repurchase (REPURCHASE wallet ≥ tier price → new purchase).
+- **Internal wallet deductions** (10% software fee + 20% repurchase = 70% main) still live in `credit_wallet`, but it's only reached via the **admin manual wallet-credit** tool now — no automatic income flows through it.
 - **Login is by username + password** (not email) — for both regular users and admin. `UserLogin` takes `username`; the frontend Login form has a Username field.
 - **Admin access:** created via `seed_admin.py`. Admin endpoints at `/admin/*`. Admin logs in through the same `/login` page and is routed to `/admin` automatically. Admin pages (including Profile) render the admin sidebar.
 - **Frontend auth:** two-step login — POST `/auth/login` (username + password) for JWT, then GET `/auth/me` for full profile (includes `is_admin`).
@@ -473,16 +468,15 @@ Safe to re-run — exits early if an admin already exists.
 - **Frontend API base URL:** `api/client.js` uses `import.meta.env.VITE_API_URL || '/api'`. Local dev / same-domain (reverse-proxy) deploys leave it unset (`/api` + Vite proxy). For split-domain hosting set `VITE_API_URL` to the backend's public URL in `frontend/.env.production`.
 - **Logging:** `app/logging_config.py` configures one timestamped handler (`time | LEVEL | logger | message`) for root + uvicorn loggers; verbosity via `LOG_LEVEL` (default INFO). `main.py` adds a request-logging middleware (method/path/status/**duration**, 4xx/5xx at WARNING) and a catch-all exception handler that logs unhandled errors with a full traceback. Use `LOG_LEVEL=DEBUG` to trace, then revert.
 - **CORS:** `main.py` reads allowed origins from `settings.cors_origins_list` (`CORS_ORIGINS` env, comma-separated or `*`). Set it to the frontend URL in production instead of `*`.
-- **NOWPayments payouts need JWT + 2FA in production:** `send_payout` currently uses only `x-api-key` (fine for deposits/invoices). Outgoing payouts require the `/v1/auth` JWT and a 2FA verify step on the live API — wire this up before go-live or withdrawals will fail (then auto-refund).
-- **Platform freeze (global kill switch):** admin can freeze all user money-movement (deposit / withdraw / transfer / purchase) via `POST /admin/platform/freeze` (reason optional, admin-only) and lift it via `POST /admin/platform/unfreeze`. While frozen, guarded user endpoints return HTTP 423; admins bypass. State lives in the single-row `platform_settings` table. Users poll `GET /platform/status` (no reason exposed); admins read `GET /admin/platform/status` (full audit). Frontend shows a red banner + a Freeze/Frozen toggle in the admin top bar.
+- **Platform freeze (global kill switch):** admin can freeze user money-movement via `POST /admin/platform/freeze` (reason optional, admin-only) and lift it via `POST /admin/platform/unfreeze`. The guarded endpoint now is the on-chain **`POST /distribution/pack/purchase`** (it depends on `require_platform_active`); while frozen it returns HTTP 423, admins bypass. State lives in the single-row `platform_settings` table. Users poll `GET /platform/status` (no reason exposed); admins read `GET /admin/platform/status` (full audit). Frontend shows a red banner + a Freeze/Frozen toggle in the admin top bar.
 - **Admin Treasury (separate from user flows):** the **Generate feature was removed** (frontend page/route/nav + backend `POST /admin/generate` endpoint + `AdminGenerateIn` schema), and the **"Treasury Balance" card was removed** from the admin dashboard. `POST /admin/transfer` still sends treasury funds to any user by username (no fee, instant). The `TransactionType.ADMIN_GENERATE` enum and `GET /admin/treasury/summary` (`total_generated`, `total_sent`, etc.) are **kept for historical-data integrity** — no new generate rows can be created, but existing ones still report and serialize correctly.
-- **Platform profit (realized):** `platform_profit` = SUM(`SOFTWARE_FEE`) + SUM(`PLATFORM_PROFIT`). `PLATFORM_PROFIT` ledger entries are written at each realization point: matrix level-completion residual (`matrix_engine.place_in_matrix`), Core amount retained when a buyer has no sponsor (`proactive._route_half`), and the 1% transfer fee (`deposit._execute_transfer`). Software fees stay as their own `SOFTWARE_FEE` rows. The admin dashboard's "Platform Profit" card shows this. Historical events were backfilled once via `backend/backfill_platform_profit.py` (idempotent). Pending (uncompleted) matrix money is intentionally NOT counted — only realized profit.
+- **Platform profit (realized):** the admin dashboard still computes `platform_profit` = SUM(`SOFTWARE_FEE`) + SUM(`PLATFORM_PROFIT`), but the code paths that *wrote* those rows (matrix residuals, core-retained, transfer fee) were all removed with the engine. So this now reflects **historical rows only** (plus any `SOFTWARE_FEE` from admin manual credits). On the on-chain rail the platform's 40% is paid on-chain to `PLATFORM_FEE_WALLET` and is **not** ledgered as a `PLATFORM_PROFIT` transaction — to surface on-chain platform revenue, sum the `platform_fee` recipients from `pack_purchases` instead.
 - **Admin user management:** per-user expandable summary (agents bought, account balance, revenue generated) via `GET /admin/users/{id}/summary`; freeze/unfreeze per user; **delete user** via `DELETE /admin/users/{id}` (trash button next to freeze); no credit/debit wallet UI; admin's own row shows no controls. `GET /admin/transactions` resolves each transaction's owner username.
-- **Delete user (HARD delete):** `DELETE /admin/users/{id}` permanently removes the user and ALL their rows (wallets, transactions, purchases, matrix positions, withdrawals, deposits, addresses, transfer verifications) in one transaction. Downline users are re-parented to the deleted user's sponsor (`sponsor_position` cleared). Guards: cannot delete self or any admin. Frontend shows a strong confirm dialog. Note: this erases financial history — intended for cleanup, not routine ops.
-- **Transfer recipient validation:** both user and admin transfer forms validate the recipient username live (debounced, via `GET /auth/check-username`) — the recipient must exist; self-transfer is blocked client-side.
+- **Delete user (HARD delete):** `DELETE /admin/users/{id}` permanently removes the user and their rows (wallets, transactions, purchases, wallet addresses) in one transaction. Downline users are re-parented to the deleted user's sponsor (`sponsor_position` cleared). Guards: cannot delete self or any admin. Frontend shows a strong confirm dialog. Note: this erases financial history — intended for cleanup, not routine ops.
+- **Admin treasury transfer recipient validation:** the admin treasury *Send to User* form validates the recipient username live (debounced, via `GET /auth/check-username`) — the recipient must exist; self-transfer is blocked client-side.
 - **bcrypt pinned to 4.0.1** — bcrypt 5.x breaks passlib's 72-byte wrap detection; do not upgrade.
 - `ACCOUNT_TIER = 0` is the sentinel agent_tier used for the account balance wallet.
 - **Transaction types are lowercase enum *values*** (`agent_purchase`, `core_sent`, `deposit`, …) — the API serializes `TransactionType.value`, not the member name. Frontend transaction views (`Transactions.jsx`, `Wallet.jsx`, `admin/AdminTransactions.jsx`) classify them with lowercase `INCOME` / `EXPENSE` / `SYSTEM` sets. **Do not use UPPERCASE keys** to match transaction types client-side — that was a real bug where "Total In" summed every row (income + expenses + audit records) because nothing matched the uppercase `NEGATIVE` list. (`Wallet.jsx` had the same UPPERCASE bug — every row rendered as a green "+" — fixed to lowercase keys.)
-- **`core_sent` is an informational/audit record**, not a wallet inflow — it records the 60% Core split routed to the upline at purchase time. It is classified as `SYSTEM` (excluded from Total In / Total Out, shown with a neutral marker), not as income.
+- **`core_sent` is no longer written** — it was the deposit-first audit record for the 60% Core routing. The on-chain rail instead writes a buyer `agent_purchase` row + each upline's `core_income` row (reporting-only, no wallet balance). The `CORE_SENT` enum value is retained for historical rows; frontends still classify it as `SYSTEM`.
 - **All timestamps display in IST (`Asia/Kolkata`).** The backend stores naive UTC (`datetime.utcnow()`) and serializes it *without* a tz suffix, so JS would otherwise parse it as local time and show it ~5h30m early. `frontend/src/utils/datetime.js` exposes `formatDateTimeIST` / `formatDateIST` / `formatTimeIST` — they mark the value as UTC then format in IST. Use these helpers for any `created_at` rendering; do **not** call `new Date(x).toLocaleString()` directly on backend timestamps. Storage stays UTC (correct convention) — this is display-only.
 - **Dashboard "Daily Income" chart uses 2-hour IST-aligned buckets.** `GET /wallet/income/daily` returns **12 two-hour buckets** (not 24 hourly) for the last 24h, anchored to IST even-hour boundaries. Bucket `hour` is still emitted as UTC ISO (`…Z`); because the anchors are IST 2-hour marks, the client renders clean IST labels (`00:00, 02:00, … 22:00`) instead of off-by-:30 values. The chart X-axis (`Dashboard.jsx`) labels every 2-hour mark (`interval="preserveStartEnd"`, thins on mobile); the Y-axis auto-scales in $1 increments (Recharts default — no fixed domain).

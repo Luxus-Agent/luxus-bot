@@ -11,7 +11,6 @@ import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import Dashboard from './pages/Dashboard'
 import AgentPurchase from './pages/AgentPurchase'
-import Matrix from './pages/Matrix'
 import Wallet from './pages/Wallet'
 import Transactions from './pages/Transactions'
 import Profile from './pages/Profile'
@@ -52,7 +51,6 @@ export default function App() {
           {/* User routes */}
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/agents" element={<ProtectedRoute><AgentPurchase /></ProtectedRoute>} />
-          <Route path="/matrix" element={<ProtectedRoute><Matrix /></ProtectedRoute>} />
           <Route path="/wallet" element={<ProtectedRoute><Wallet /></ProtectedRoute>} />
           <Route path="/transactions" element={<ProtectedRoute><Transactions /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />

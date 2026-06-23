@@ -50,7 +50,7 @@ async def send_email(to_email: str, subject: str, body: str) -> bool:
 
 
 def _send_sync(to_email: str, subject: str, body: str) -> bool:
-    """Sync wrapper for use inside Celery tasks (which are not async)."""
+    """Sync wrapper around the async send_email for non-async call sites."""
     try:
         asyncio.run(send_email(to_email, subject, body))
         return True

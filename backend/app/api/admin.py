@@ -39,7 +39,6 @@ from app.models.agent import AgentPurchase
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
 from app.models.wallet import Wallet
-from app.models.withdrawal import WithdrawalRequest
 from app.schemas.agent import (
     AdminTransferIn,
     AdminUserOut,
@@ -49,7 +48,6 @@ from app.schemas.agent import (
     PlatformStatusOut,
     TransactionOut,
     WalletOut,
-    WithdrawalOut,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -194,10 +192,7 @@ def delete_user(
         raise HTTPException(status_code=400, detail="Cannot delete an admin account.")
 
     # Lazy imports for the dependent models (kept local to this destructive op)
-    from app.models.matrix import MatrixPosition
-    from app.models.deposit import Deposit
     from app.models.wallet_address import WalletAddress
-    from app.models.transfer_verification import TransferVerification
     from app.models.platform_setting import PlatformSetting
 
     username = user.username
@@ -226,14 +221,7 @@ def delete_user(
         ).update({Transaction.user_id: admin.id}, synchronize_session=False)
 
         # 4. Delete all remaining rows owned by this user (children first)
-        db.query(TransferVerification).filter(
-            (TransferVerification.sender_id == user_id)
-            | (TransferVerification.recipient_id == user_id)
-        ).delete(synchronize_session=False)
         db.query(WalletAddress).filter(WalletAddress.user_id == user_id).delete(synchronize_session=False)
-        db.query(Deposit).filter(Deposit.user_id == user_id).delete(synchronize_session=False)
-        db.query(WithdrawalRequest).filter(WithdrawalRequest.user_id == user_id).delete(synchronize_session=False)
-        db.query(MatrixPosition).filter(MatrixPosition.user_id == user_id).delete(synchronize_session=False)
         db.query(Transaction).filter(Transaction.user_id == user_id).delete(synchronize_session=False)
         db.query(Wallet).filter(Wallet.user_id == user_id).delete(synchronize_session=False)
         db.query(AgentPurchase).filter(AgentPurchase.user_id == user_id).delete(synchronize_session=False)
@@ -462,22 +450,6 @@ def all_transactions(
         }
         for t in txns
     ]
-
-
-# ── Withdrawals ───────────────────────────────────────────────────────────────
-
-@router.get("/withdrawals", response_model=list[WithdrawalOut])
-def all_withdrawals(
-    db: Session = Depends(get_db),
-    _: User = Depends(get_admin_user),
-):
-    """Return all withdrawal requests across all users, newest first."""
-    return (
-        db.query(WithdrawalRequest)
-        .order_by(WithdrawalRequest.created_at.desc())
-        .limit(500)
-        .all()
-    )
 
 
 # ── Wallet operations ─────────────────────────────────────────────────────────

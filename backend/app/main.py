@@ -7,11 +7,9 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.logging_config import configure_logging
-from app.api import auth, agents, wallet, payments, deposit, admin, platform, distribution
-from app.models import webhook_event  # noqa: F401 — registers table with SQLAlchemy metadata
+from app.api import auth, agents, wallet, admin, platform, distribution
 from app.models import platform_setting  # noqa: F401 — registers table with SQLAlchemy metadata
 from app.models import pack_purchase  # noqa: F401 — registers table with SQLAlchemy metadata
-from app.workers.celery_app import celery_app  # noqa: F401
 
 # Configure logging before anything else so all startup logs are formatted.
 configure_logging(settings.LOG_LEVEL)
@@ -74,8 +72,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.include_router(auth.router)
 app.include_router(agents.router)
 app.include_router(wallet.router)
-app.include_router(payments.router)
-app.include_router(deposit.router)
 app.include_router(admin.router)
 app.include_router(platform.router)
 app.include_router(distribution.router)

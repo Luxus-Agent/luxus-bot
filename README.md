@@ -32,9 +32,8 @@ A multi-tier passive income platform where users purchase AI Agent tiers and ear
 └────────────────────────┬────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────┐
-│  Backend   (FastAPI, port 8000)                         │
-│  ├── REST API (auth, agents, wallet, deposit, admin)    │
-│  └── Celery Worker  ←→  Redis                           │
+│  Backend   (FastAPI, port 8000 — fully synchronous)     │
+│  └── REST API (auth, agents, wallet, distribution, admin)│
 │           │                                             │
 │           ▼                                             │
 │      PostgreSQL 18                                      │
@@ -42,8 +41,9 @@ A multi-tier passive income platform where users purchase AI Agent tiers and ear
                          │
           ┌──────────────┴──────────────┐
           ▼                             ▼
-   NOWPayments (USDT BEP-20)       SMTP Email
-   Deposits + Payouts              Notifications
+   On-chain USDT (BEP-20)          SMTP Email
+   TokenPocket / MultiSender       Notifications
+   (buyer pays uplines directly)
 ```
 
 ---
@@ -404,10 +404,11 @@ price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app
 | Frontend     | Vite + React 18 + Tailwind CSS                 |
 | Backend      | FastAPI (Python 3.11+)                         |
 | Database     | PostgreSQL 18                                  |
-| Task Queue   | Celery + Redis                                 |
 | Auth         | JWT — python-jose + passlib/bcrypt==4.0.1      |
-| Payments     | NOWPayments (USDT on BEP-20)                   |
+| Payments     | On-chain USDT (BEP-20) via TokenPocket / MultiSender DApp |
 | Email        | SMTP (Gmail App Password or any provider)      |
+
+> **Note:** The platform is now **fully on-chain**. The legacy deposit-first money rail (NOWPayments deposits/withdrawals/transfers), the internal Core/Stream/Boost revenue engine, and Celery/Redis have all been removed. Some sections below (Matrix System, Withdrawal Flow, etc.) describe the old model — see `CLAUDE.md` for the current architecture.
 
 ---
 
@@ -417,14 +418,14 @@ price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app
 
 - Python 3.11+ (conda env `luxus` recommended)
 - PostgreSQL 18 on localhost:5432 with database `luxus` and user `luxus`
-- Redis on localhost:6379
 - Node.js 18+
 
 ### 1. Clone & configure
 
 ```bash
 cp .env.example .env
-# Edit .env — fill in NOWPayments keys, SMTP credentials, SECRET_KEY, ADMIN_* fields
+# Edit .env — fill in SMTP credentials, SECRET_KEY, ADMIN_* fields,
+# and the on-chain settings (USDT_CONTRACT, PLATFORM_FEE_WALLET, etc.)
 ```
 
 ### 2. Install backend dependencies
@@ -462,19 +463,14 @@ npm install
 ## Running the Project
 
 ```bash
-# Terminal 1 — Backend API
+# Terminal 1 — Backend API (no Celery worker needed — fully synchronous)
 conda activate luxus
 cd backend
 uvicorn app.main:app --reload
 # API → http://localhost:8000
 # Swagger → http://localhost:8000/docs
 
-# Terminal 2 — Celery worker
-conda activate luxus
-cd backend
-celery -A app.workers.celery_app worker --loglevel=info
-
-# Terminal 3 — Frontend dev server
+# Terminal 2 — Frontend dev server
 cd frontend
 npm run dev
 # App → http://localhost:3000
@@ -513,14 +509,10 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 | Variable                    | Description                                                   |
 |-----------------------------|---------------------------------------------------------------|
 | `DATABASE_URL`              | PostgreSQL connection string                                  |
-| `REDIS_URL`                 | Redis connection string                                       |
 | `SECRET_KEY`                | JWT signing secret (long random string)                       |
-| `APP_ENV`                   | `development` (sandbox) or `production` (live NOWPayments)    |
+| `APP_ENV`                   | `development` or `production`                                 |
 | `LOG_LEVEL`                 | `DEBUG` / `INFO` / `WARNING` / `ERROR` — log verbosity (default `INFO`) |
 | `CORS_ORIGINS`              | Comma-separated allowed frontend origins, or `*`. Set to your frontend URL in production |
-| `NOWPAYMENTS_API_KEY`       | NOWPayments API key                                           |
-| `NOWPAYMENTS_IPN_SECRET`    | NOWPayments IPN secret for HMAC-SHA512 verification           |
-| `NOWPAYMENTS_CALLBACK_BASE` | Public URL of **backend** for IPN callbacks (use ngrok locally; live backend URL in prod) |
 | `PLATFORM_FEE_WALLET`       | BEP-20 wallet that receives the pack-purchase platform fee (**set before go-live**) |
 | `USDT_CONTRACT`             | USDT token contract on the active chain (returned by `pack/purchase`)         |
 | `USDT_DECIMALS`             | USDT token decimals (e.g. 18)                                                  |

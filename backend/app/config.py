@@ -4,12 +4,11 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # Core
     DATABASE_URL: str = "postgresql://luxus:dhanush@localhost/luxus"
-    REDIS_URL: str = "redis://localhost:6379/0"
     SECRET_KEY: str = "changeme-use-a-real-secret-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
-    # Environment — "development" uses NOWPayments sandbox, "production" uses live
+    # Environment — "development" | "production"
     APP_ENV: str = "development"
 
     # Logging verbosity: DEBUG | INFO | WARNING | ERROR
@@ -35,11 +34,7 @@ class Settings(BaseSettings):
     # success. Left off by default — wire up an RPC check before enabling.
     VERIFY_ONCHAIN_TX: bool = False
 
-    # NOWPayments
-    NOWPAYMENTS_API_KEY: str = ""
-    NOWPAYMENTS_IPN_SECRET: str = ""
-    # Public URL of this backend (NOWPayments will POST the IPN here)
-    NOWPAYMENTS_CALLBACK_BASE: str = "https://yourdomain.com"
+    # Public URL of the frontend (used in emails / links).
     FRONTEND_URL: str = "http://localhost:3000"
 
     # SMTP (email)

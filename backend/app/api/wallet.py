@@ -8,22 +8,18 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_platform_active
-from app.core.wallet_ops import debit_withdrawable, get_withdrawable_balance
+from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
-from app.models.wallet import Wallet, WalletType
+from app.models.wallet import Wallet
 from app.models.wallet_address import WalletAddress
-from app.models.withdrawal import WithdrawalRequest, WithdrawalStatus
 from app.schemas.agent import (
     TransactionOut,
     WalletAddressIn,
     WalletAddressOut,
     WalletAddressVerifyIn,
     WalletOut,
-    WithdrawalIn,
-    WithdrawalOut,
 )
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
@@ -253,102 +249,3 @@ def delete_address(
     db.delete(wa)
     db.commit()
     return {"message": "Address removed."}
-
-
-# ── Withdrawal ────────────────────────────────────────────────────────────────
-
-@router.post("/withdraw", response_model=WithdrawalOut)
-async def request_withdrawal(
-    body: WithdrawalIn,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_platform_active),
-):
-    """
-    Request a USDT (BEP-20) withdrawal from the user's MAIN wallet.
-    The wallet_address must be pre-registered and email-verified via POST /wallet/address.
-    Funds are deducted immediately and the payout is dispatched instantly via NOWPayments.
-    """
-    from app.workers.tasks import process_withdrawal
-
-    # Require the address to be pre-verified
-    verified_address = (
-        db.query(WalletAddress)
-        .filter_by(user_id=current_user.id, address=body.wallet_address, is_verified=True)
-        .first()
-    )
-    if not verified_address:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Withdrawal address not verified. "
-                "Register and verify it first via POST /wallet/address then POST /wallet/address/verify."
-            ),
-        )
-
-    amount = Decimal(str(body.amount))
-
-    # Withdrawals draw from the user's combined balance: account balance + all earnings.
-    withdrawable = get_withdrawable_balance(db, current_user.id)
-    if withdrawable < amount:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Insufficient balance. Available: ${withdrawable:.4f}, Requested: ${amount:.4f}",
-        )
-
-    scheduled_for = datetime.utcnow()
-
-    withdrawal = WithdrawalRequest(
-        user_id=current_user.id,
-        agent_tier=0,  # 0 = combined earnings (no per-tier withdrawal)
-        amount=amount,
-        wallet_address=body.wallet_address,
-        status=WithdrawalStatus.PENDING,
-        scheduled_for=scheduled_for,
-    )
-    db.add(withdrawal)
-    db.flush()
-
-    debit_withdrawable(
-        db=db,
-        user_id=current_user.id,
-        amount=amount,
-        reference_id=f"withdrawal_{withdrawal.id}",
-        notes=f"Withdrawal to {body.wallet_address[:10]}… processing now",
-    )
-
-    db.commit()
-    db.refresh(withdrawal)
-
-    logger.info(
-        "WITHDRAWAL requested: withdrawal_id=%d user_id=%d username=%s tier=%d amount=$%.2f address=%s",
-        withdrawal.id, current_user.id, current_user.username,
-        body.agent_tier, float(amount), body.wallet_address[:10] + "…",
-    )
-    process_withdrawal.delay(withdrawal.id)
-
-    from app.services.email_service import send_withdrawal_requested_email
-    background_tasks.add_task(
-        send_withdrawal_requested_email,
-        current_user.email,
-        current_user.username,
-        float(amount),
-        body.wallet_address,
-        scheduled_for.strftime("%Y-%m-%d %H:%M"),
-    )
-
-    return withdrawal
-
-
-@router.get("/withdrawals", response_model=list[WithdrawalOut])
-def get_withdrawals(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return (
-        db.query(WithdrawalRequest)
-        .filter_by(user_id=current_user.id)
-        .order_by(WithdrawalRequest.created_at.desc())
-        .limit(100)
-        .all()
-    )

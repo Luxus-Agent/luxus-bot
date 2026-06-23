@@ -252,7 +252,6 @@ export default function Dashboard() {
             <div className="space-y-2">
               {[
                 { to: '/agents', icon: Bot, label: 'Buy Agent', sub: 'Purchase a tier', color: '#9B59B6' },
-                { to: '/matrix', icon: Users, label: 'View Queue', sub: 'Track progress', color: '#3498DB' },
               ].map(({ to, icon: Icon, label, sub, color }) => (
                 <Link key={to} to={to}>
                   <div
