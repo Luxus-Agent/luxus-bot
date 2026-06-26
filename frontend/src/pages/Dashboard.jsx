@@ -12,7 +12,7 @@ import toast from 'react-hot-toast'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import { formatTimeIST } from '../utils/datetime'
+import { formatDateIST } from '../utils/datetime'
 
 const TIER_PRICES = { 1: 10, 2: 20, 3: 50, 4: 100 }
 const TIER_NAMES = { 1: 'Agent 1', 2: 'Agent 2', 3: 'Agent 3', 4: 'Agent 4' }
@@ -45,6 +45,7 @@ export default function Dashboard() {
   const [wallets, setWallets] = useState([])
   const [purchases, setPurchases] = useState([])
   const [income, setIncome] = useState({ total: 0, buckets: [] })
+  const [repurchase, setRepurchase] = useState({ tiers: [] })
   const [earnings, setEarnings] = useState({ total_earned: 0 })
   const [referralCount, setReferralCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -57,14 +58,17 @@ export default function Dashboard() {
       api.get('/agents/purchases'),
       api.get('/auth/referrals'),
       api.get('/wallet/income/daily'),
+      // Per-tier reserve + the real (price + gas) repurchase threshold.
+      api.get('/wallet/repurchase').catch(() => ({ data: { tiers: [] } })),
       // Non-fatal: a missing/failing earnings endpoint must not blank the whole
       // dashboard (agents, wallets, etc.) — fall back to $0.
       api.get('/wallet/earnings').catch(() => ({ data: { total_earned: 0 } })),
-    ]).then(([wb, pb, rb, ib, eb]) => {
+    ]).then(([wb, pb, rb, ib, rpb, eb]) => {
       setWallets(wb.data)
       setPurchases(pb.data)
       setReferralCount(rb.data.count || 0)
       setIncome(ib.data || { total: 0, buckets: [] })
+      setRepurchase(rpb.data || { tiers: [] })
       setEarnings(eb.data || { total_earned: 0 })
     }).catch(() => toast.error('Failed to load dashboard')).finally(() => setLoading(false))
   }, [])
@@ -75,6 +79,8 @@ export default function Dashboard() {
   const totalEarned = Number(earnings.total_earned || 0)
   const activePurchases = purchases.filter(p => p.status === 'active')
   const highestTier = purchases.length ? Math.max(...purchases.map(p => p.agent_tier)) : 0
+  // Reserve target = pack price + gas (the real auto-repurchase threshold), keyed by tier.
+  const repByTier = Object.fromEntries((repurchase.tiers || []).map(t => [t.agent_tier, t]))
 
   const copyRef = () => {
     const name = user?.username
@@ -85,9 +91,10 @@ export default function Dashboard() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // Build the 24h income chart series from 2-hour IST buckets → IST time labels
+  // Cumulative income series: one point per IST day, amount = running lifetime
+  // total up to that day (climbs from the past to the present).
   const incomeChart = (income.buckets || []).map(b => ({
-    label: formatTimeIST(b.hour, { hour: '2-digit', minute: '2-digit', hour12: false }),
+    label: formatDateIST(b.hour),
     amount: Number(b.amount) || 0,
   }))
 
@@ -200,8 +207,12 @@ export default function Dashboard() {
                   if (tierPurchases.length === 0) return null
                   const mainW = wallets.find(w => w.wallet_type === 'main' && w.agent_tier === tier)
                   const repW = wallets.find(w => w.wallet_type === 'repurchase' && w.agent_tier === tier)
-                  const repBal = parseFloat(repW?.balance || 0)
-                  const progress = Math.min(100, (repBal / TIER_PRICES[tier]) * 100)
+                  const rep = repByTier[tier]
+                  const repBal = rep ? rep.reserve : parseFloat(repW?.balance || 0)
+                  // Target the real threshold (price + gas), not the bare price.
+                  const repTarget = rep ? rep.threshold : TIER_PRICES[tier]
+                  const repGas = rep ? rep.gas_fee : 0
+                  const progress = rep ? rep.progress_percent : Math.min(100, (repBal / TIER_PRICES[tier]) * 100)
                   return (
                     <div
                       key={tier}
@@ -236,7 +247,7 @@ export default function Dashboard() {
                         <div>
                           <div className="flex justify-between mb-1" style={{ color: '#8899AA' }}>
                             <span>Repurchase Reserve</span>
-                            <span className="text-white">${repBal.toFixed(2)} / ${TIER_PRICES[tier]}</span>
+                            <span className="text-white">${repBal.toFixed(2)} / ${repTarget.toFixed(2)}</span>
                           </div>
                           <div className="h-1.5 rounded-full overflow-hidden" style={{ background: '#1E2A38' }}>
                             <div
@@ -244,6 +255,11 @@ export default function Dashboard() {
                               style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #00D4B4, #00FFD4)' }}
                             />
                           </div>
+                          {repGas > 0 && (
+                            <p className="text-right mt-1" style={{ color: '#4A5568', fontSize: '10px' }}>
+                              target incl. ${repGas.toFixed(2)} gas
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -285,18 +301,18 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Daily Income (last 24h) */}
+        {/* Cumulative Income (all-time running total) */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-white">Daily Income</h2>
-            <span className="text-xs font-medium" style={{ color: '#8899AA' }}>Last 24 hours</span>
+            <h2 className="font-semibold text-white">Cumulative Income</h2>
+            <span className="text-xs font-medium" style={{ color: '#8899AA' }}>All time</span>
           </div>
           <div className="rounded-xl p-4 sm:p-5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
             <div className="flex items-baseline gap-2 mb-4">
               <span className="text-2xl font-bold" style={{ color: '#00D4B4' }}>
                 ${Number(income.total || 0).toFixed(2)}
               </span>
-              <span className="text-xs" style={{ color: '#8899AA' }}>earned in the past 24 hours</span>
+              <span className="text-xs" style={{ color: '#8899AA' }}>earned to date</span>
             </div>
             <div style={{ width: '100%', height: 240 }}>
               <ResponsiveContainer>
@@ -327,7 +343,7 @@ export default function Dashboard() {
                     contentStyle={{ background: '#0E1117', border: '1px solid #1E2A38', borderRadius: 8 }}
                     labelStyle={{ color: '#8899AA' }}
                     itemStyle={{ color: '#00D4B4' }}
-                    formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Income']}
+                    formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Total earned']}
                   />
                   <Area
                     type="monotone"

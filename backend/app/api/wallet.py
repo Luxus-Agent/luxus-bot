@@ -123,54 +123,62 @@ def daily_income(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Income earned in the last 24 hours, bucketed into 12 two-hour slots
-    aligned to IST (Asia/Kolkata) even-hour boundaries.
-    Only revenue-engine earnings count (deposits/transfers are excluded).
-    Bucket timestamps are emitted as UTC (ISO with trailing 'Z'); because the
-    buckets are anchored to IST 2-hour marks, the client renders them as clean
-    IST labels (00:00, 02:00, ... 22:00) instead of off-by-:30 values.
+    Cumulative income over the user's full history, grouped by IST (Asia/Kolkata)
+    calendar day. Each bucket's `amount` is the RUNNING TOTAL earned up to and
+    including that day, so the chart climbs from the past to the present and the
+    final point equals lifetime earnings (per the client: an accumulative line,
+    not a rolling 24h window).
+
+    Only revenue-engine earnings count (deposits/transfers are excluded). To keep
+    the payload bounded the series shows at most the last `MAX_DAYS` days; any
+    earlier income is folded into the starting cumulative so the first visible
+    point already sits at the correct height. Bucket timestamps are the IST
+    midnight of each day, emitted as UTC (ISO + 'Z') so the client renders clean
+    IST date labels. Empty days carry the previous cumulative forward.
     """
     IST_OFFSET = timedelta(hours=5, minutes=30)
-    BUCKET_HOURS = 2
-    BUCKET_COUNT = 12  # 12 × 2h = 24h window
-
-    # Floor "now" (in IST) to the current even 2-hour boundary, then step back
-    # so the window covers the last 24 hours ending at the current bucket.
-    now_ist = datetime.utcnow() + IST_OFFSET
-    current_bucket_ist = now_ist.replace(
-        hour=now_ist.hour - (now_ist.hour % BUCKET_HOURS),
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-    start_ist = current_bucket_ist - timedelta(hours=BUCKET_HOURS * (BUCKET_COUNT - 1))
-    start_utc = start_ist - IST_OFFSET  # back to UTC for comparison with stored timestamps
+    MAX_DAYS = 90  # cap on the number of daily points returned
 
     rows = (
         db.query(Transaction)
         .filter(
             Transaction.user_id == current_user.id,
             Transaction.transaction_type.in_(INCOME_TYPES),
-            Transaction.created_at >= start_utc,
         )
+        .order_by(Transaction.created_at.asc())
         .all()
     )
+    if not rows:
+        return {"total": 0.0, "buckets": []}
 
-    buckets = [
-        {
-            "hour": (start_utc + timedelta(hours=BUCKET_HOURS * i)).isoformat() + "Z",
-            "amount": 0.0,
-        }
-        for i in range(BUCKET_COUNT)
-    ]
-    total = Decimal("0")
+    # Sum income per IST calendar day.
+    per_day: dict = {}
     for tx in rows:
-        idx = int((tx.created_at - start_utc).total_seconds() // (BUCKET_HOURS * 3600))
-        if 0 <= idx < BUCKET_COUNT:
-            buckets[idx]["amount"] = round(buckets[idx]["amount"] + float(tx.amount), 4)
-            total += Decimal(str(tx.amount))
+        day = (tx.created_at + IST_OFFSET).date()
+        per_day[day] = per_day.get(day, Decimal("0")) + Decimal(str(tx.amount))
 
-    return {"total": float(round(total, 4)), "buckets": buckets}
+    first_day = min(per_day)
+    today_ist = (datetime.utcnow() + IST_OFFSET).date()
+    window_start = max(first_day, today_ist - timedelta(days=MAX_DAYS - 1))
+
+    # Income that predates the visible window seeds the starting cumulative.
+    cumulative = sum(
+        (amt for d, amt in per_day.items() if d < window_start), Decimal("0")
+    )
+
+    buckets = []
+    day = window_start
+    while day <= today_ist:
+        cumulative += per_day.get(day, Decimal("0"))
+        ist_midnight_utc = datetime(day.year, day.month, day.day) - IST_OFFSET
+        buckets.append({
+            "hour": ist_midnight_utc.isoformat() + "Z",
+            "amount": float(round(cumulative, 4)),
+        })
+        day += timedelta(days=1)
+
+    grand_total = sum(per_day.values(), Decimal("0"))
+    return {"total": float(round(grand_total, 4)), "buckets": buckets}
 
 
 # ── Repurchase reserve (auto-repurchase progress + history) ───────────────────

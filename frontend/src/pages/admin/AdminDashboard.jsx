@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { Users, TrendingUp, DollarSign } from 'lucide-react'
+import { Users, TrendingUp, DollarSign, Zap, Activity, RefreshCw, Flame, PiggyBank, Layers } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { formatDateTimeIST } from '../../utils/datetime'
 
@@ -10,6 +10,10 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState([])
   const [transactions, setTransactions] = useState([])
   const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0, platform_profit: 0 })
+  const [metrics, setMetrics] = useState({
+    revenue: { core_income: 0, stream_payout: 0, boost_payout: 0, sponsor_share: 0, total_paid_to_users: 0, software_fees: 0 },
+    repurchase: { count: 0, volume: 0, gas_paid: 0, reserve_held: 0 },
+  })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -17,10 +21,13 @@ export default function AdminDashboard() {
       api.get('/admin/users'),
       api.get('/admin/transactions'),
       api.get('/admin/treasury/summary'),
-    ]).then(([u, t, s]) => {
+      // Revenue-engine + auto-repurchase aggregates. Non-fatal — never blank the page.
+      api.get('/admin/metrics').catch(() => ({ data: null })),
+    ]).then(([u, t, s, m]) => {
       setUsers(u.data)
       setTransactions(t.data)
       setTreasury(s.data)
+      if (m.data) setMetrics(m.data)
     }).catch(() => toast.error('Failed to load admin data')).finally(() => setLoading(false))
   }, [])
 
@@ -134,6 +141,53 @@ export default function AdminDashboard() {
                 )
               })}
             </div>
+          </div>
+        </div>
+
+        {/* Revenue Engine Breakdown */}
+        <div>
+          <h2 className="font-semibold text-white mb-4">Revenue Engine — Commissions Paid to Users</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            {[
+              { label: 'Core Agent', val: metrics.revenue.core_income, icon: Zap, color: '#00D4B4' },
+              { label: 'Stream Agent', val: metrics.revenue.stream_payout, icon: TrendingUp, color: '#3498DB' },
+              { label: 'Boost Agent', val: metrics.revenue.boost_payout, icon: Activity, color: '#9B59B6' },
+              { label: 'Sponsor Shares', val: metrics.revenue.sponsor_share, icon: Users, color: '#FFB547' },
+              { label: 'Total to Users', val: metrics.revenue.total_paid_to_users, icon: DollarSign, color: '#00FFD4' },
+            ].map(({ label, val, icon: Icon, color }) => (
+              <div key={label} className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center mb-3" style={{ background: `${color}18` }}>
+                  <Icon size={18} style={{ color }} />
+                </div>
+                <p className="text-xs" style={{ color: '#8899AA' }}>{label}</p>
+                <p className="text-xl font-bold text-white mt-0.5">${Number(val || 0).toFixed(2)}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs mt-2" style={{ color: '#4A5568' }}>
+            Net 70% wallet credits across all engines. Software fees collected: ${Number(metrics.revenue.software_fees || 0).toFixed(2)}.
+          </p>
+        </div>
+
+        {/* Auto-Repurchase & Reserve */}
+        <div>
+          <h2 className="font-semibold text-white mb-4">Auto-Repurchase &amp; Reserve</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[
+              { label: 'Repurchases', val: metrics.repurchase.count, money: false, icon: RefreshCw, color: '#00D4B4', sub: 'Auto re-buys executed' },
+              { label: 'Repurchase Volume', val: metrics.repurchase.volume, money: true, icon: Layers, color: '#3498DB', sub: 'Total re-bought' },
+              { label: 'Gas Paid by Platform', val: metrics.repurchase.gas_paid, money: true, icon: Flame, color: '#FF4D6A', sub: 'Network fees covered' },
+              { label: 'Reserve Held', val: metrics.repurchase.reserve_held, money: true, icon: PiggyBank, color: '#FFB547', sub: 'Awaiting next re-buy' },
+            ].map(({ label, val, money, icon: Icon, color, sub }) => (
+              <div key={label} className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center mb-3" style={{ background: `${color}18` }}>
+                  <Icon size={18} style={{ color }} />
+                </div>
+                <p className="text-xs" style={{ color: '#8899AA' }}>{label}</p>
+                <p className="text-xl font-bold text-white mt-0.5">{money ? `$${Number(val || 0).toFixed(2)}` : Number(val || 0)}</p>
+                <p className="text-xs mt-1" style={{ color: '#4A5568' }}>{sub}</p>
+              </div>
+            ))}
           </div>
         </div>
 

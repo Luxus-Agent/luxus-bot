@@ -344,6 +344,72 @@ def treasury_summary(
     }
 
 
+@router.get("/metrics")
+def platform_metrics(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """
+    Platform-wide revenue-engine + auto-repurchase metrics for the admin overview.
+
+    All figures are summed live from the transaction ledger / wallet balances:
+
+      revenue:
+        - core_income / stream_payout / boost_payout / sponsor_share: total
+          commissions paid to users by each engine (net 70% wallet credits)
+        - total_paid_to_users: sum of the four above
+        - software_fees: 10% platform fee collected across every payout
+      repurchase:
+        - count / volume: number and $ of auto-repurchases executed (repurchase_buy)
+        - gas_paid: network gas the platform covered for those repurchases
+        - reserve_held: total 20% reserve currently sitting across all REPURCHASE
+          wallets (a platform-held liability awaiting the next auto-repurchase)
+    """
+    from app.models.wallet import WalletType
+
+    def _sum_all(tx_type: TransactionType) -> float:
+        total = (
+            db.query(func.coalesce(func.sum(Transaction.amount), 0))
+            .filter(Transaction.transaction_type == tx_type)
+            .scalar()
+        )
+        return float(total or 0)
+
+    core = _sum_all(TransactionType.CORE_INCOME)
+    stream = _sum_all(TransactionType.STREAM_PAYOUT)
+    boost = _sum_all(TransactionType.BOOST_PAYOUT)
+    sponsor = _sum_all(TransactionType.SPONSOR_MILESTONE_INCOME)
+
+    repurchase_count = (
+        db.query(func.count(Transaction.id))
+        .filter(Transaction.transaction_type == TransactionType.REPURCHASE_BUY)
+        .scalar()
+    ) or 0
+
+    reserve_held = (
+        db.query(func.coalesce(func.sum(Wallet.balance), 0))
+        .filter(Wallet.wallet_type == WalletType.REPURCHASE)
+        .scalar()
+    )
+
+    return {
+        "revenue": {
+            "core_income": core,
+            "stream_payout": stream,
+            "boost_payout": boost,
+            "sponsor_share": sponsor,
+            "total_paid_to_users": round(core + stream + boost + sponsor, 4),
+            "software_fees": _sum_all(TransactionType.SOFTWARE_FEE),
+        },
+        "repurchase": {
+            "count": int(repurchase_count),
+            "volume": _sum_all(TransactionType.REPURCHASE_BUY),
+            "gas_paid": _sum_all(TransactionType.REPURCHASE_GAS),
+            "reserve_held": float(reserve_held or 0),
+        },
+    }
+
+
 @router.post("/transfer")
 def treasury_transfer(
     body: AdminTransferIn,

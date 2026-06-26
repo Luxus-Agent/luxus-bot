@@ -14,22 +14,22 @@ import { MULTISENDER_ADDRESS, USDT_ADDRESS, USDT_DECIMALS, multisenderAbi } from
 const TIERS = [
   {
     id: 1, price: 10, name: 'Agent 1',
-    core: '$6.00', stream: '$20.00', boost: '$7.00',
+    core: '$6.00', stream: '$20.00', boost: '$5.70',
     color: '#00D4B4', desc: 'Entry level AI agent with full revenue mechanics',
   },
   {
     id: 2, price: 20, name: 'Agent 2',
-    core: '$12.00', stream: '$40.00', boost: '$7.00',
+    core: '$12.00', stream: '$40.00', boost: '$5.70',
     color: '#3498DB', desc: '2× multiplier — doubles all payouts',
   },
   {
     id: 3, price: 50, name: 'Agent 3',
-    core: '$30.00', stream: '$100.00', boost: '$7.00',
+    core: '$30.00', stream: '$100.00', boost: '$5.70',
     color: '#9B59B6', desc: '5× multiplier — high-yield tier',
   },
   {
     id: 4, price: 100, name: 'Agent 4',
-    core: '$60.00', stream: '$200.00', boost: '$7.00',
+    core: '$60.00', stream: '$200.00', boost: '$5.70',
     color: '#FFB547', desc: '10× multiplier — maximum earning potential',
   },
 ]
