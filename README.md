@@ -1,11 +1,12 @@
-# PresZ — Agent Revenue Sharing Platform
+# Luxus — Agent Revenue Sharing Platform
 
-A multi-tier passive income platform where users purchase AI Agent tiers and earn revenue through three parallel mechanisms: **Core Agent**, **Stream Agent**, and **Boost Agent**.
+A multi-tier passive income platform where users buy AI Agent tiers **on-chain** (USDT BEP-20) and earn through three parallel revenue engines: **Core Agent**, **Stream Agent**, and **Boost Agent**.
 
 ---
 
 ## Table of Contents
 
+- [Key Features](#key-features)
 - [Architecture](#architecture)
 - [Revenue Mechanics](#revenue-mechanics)
 - [User Journey](#user-journey)
@@ -20,6 +21,19 @@ A multi-tier passive income platform where users purchase AI Agent tiers and ear
 - [Running the Project](#running-the-project)
 - [Admin Setup](#admin-setup)
 - [Environment Variables](#environment-variables)
+
+---
+
+## Key Features
+
+- 🔗 **Fully on-chain payments** — buyers pay the upline split directly from their own wallet (TokenPocket / MultiSender, USDT BEP-20); no custodial deposit/withdrawal rail.
+- 💸 **Three-engine 60 / 30 / 10 revenue split** — Core (compressed upline routing with odd/even), Stream (per-tier 3×3 matrix), Boost (single global 3×3 matrix + 1% admin).
+- 🔁 **Automatic repurchase** — a 20% per-tier reserve auto re-buys the same tier at its price+gas threshold, unbounded and compounding through uplines.
+- 🌳 **Username-based sponsor tree** — every user registers under a sponsor; live sponsor-existence + wallet-address validation on the register form.
+- 🧮 **70 / 20 / 10 wallet rule** — every commission splits into main wallet / repurchase reserve / software fee.
+- 🛡️ **Admin controls** — per-user freeze, treasury transfer, and a global platform-freeze kill switch (HTTP 423 on purchases while frozen).
+- 📊 **Real-time earnings & distribution map** — ledger-sourced totals plus a read-only `wallet-map` endpoint that feeds the MultiSender payout.
+- ✉️ **Email OTP** — verification on register, password reset, and BEP-20 address confirmation.
 
 ---
 
@@ -341,17 +355,21 @@ const payouts = [user, ...downline.users]
 
 ## On-Chain Pack Purchase
 
-A **separate on-chain rail** (BEP-20 USDT) from the deposit-first + matrix engine. When a user
-buys a pack, the frontend pays the upline split **directly on-chain** from the buyer's connected
-wallet (one batched MultiSender call). The backend (1) returns the validated recipient split and
-(2) records the outcome — it **credits no internal wallet balances** on this rail (the on-chain
-transfer *is* the payout). On success it does reflect the purchase internally so the app stays
-consistent: it creates an **active `AgentPurchase` ownership row** (so the agent shows as OWNED,
-the sequential-unlock gate works, and the buyer becomes Core-eligible for future on-chain splits)
-and writes **reporting-only ledger rows** (buyer `agent_purchase` expense + each upline
-`core_income`) so transaction history and the dashboard income chart reflect the activity. These
-rows carry no wallet balance — main / repurchase / withdrawable stay `$0` on this rail, and
-Stream / Boost / repurchase mechanics do not run here.
+The **on-chain rail** (BEP-20 USDT) is how packs are bought. When a user buys a pack, the
+frontend pays the split **directly on-chain** from the buyer's connected wallet (one batched
+MultiSender call). The backend (1) returns the validated recipient split and (2) records the
+outcome and runs the **full revenue engine** internally.
+
+The split is the **complete 60 / 30 / 10 model** (not Core-only): Core 60% → eligible uplines,
+Stream 30% → the per-tier Stream pool wallet, Boost 9% → the global Boost pool wallet, and 1% →
+the admin income wallet. Each upline's Core commission is paid out on-chain under the **70 / 20 / 10
+wallet rule** — 70% to the upline's address, 20% to the repurchase-reserve wallet, 10% to the
+software-fee wallet. On `pack/status` **success** the backend: creates an **active `AgentPurchase`
+ownership row** (agent shows OWNED, the sequential-unlock gate works, buyer becomes Core-eligible),
+writes reporting ledger rows, **runs the Stream + Boost matrix placement + payout cascade**
+(`run_purchase_matrices`, crediting internal wallets via `credit_wallet`), and **sweeps
+auto-repurchases** (`sweep_auto_repurchases`) for any reserve that has reached its threshold. So
+the internal wallets, matrices, and repurchase reserve **do** populate on this rail.
 
 ```
 POST /distribution/pack/purchase   → JWT. Body: { "pack_name": "Agent 1", "amount"?: 10 }
@@ -360,11 +378,14 @@ POST /distribution/pack/status     → JWT. Body: { purchase_id, status, tx_hash
    → records the on-chain result (success/failed)
 ```
 
-**Split rule — Core Agent rule only:** 60% of the price → two 30% halves to the **first two
-eligible uplines** (eligible = active **and** highest active tier ≥ buyer's tier; compression +
-odd/even). The remaining **40% → platform fee**. A half with no eligible upline (or whose recipient
-has no valid BEP-20 address) is folded into the platform fee, so **the split always sums to the pack
-price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app/core/pack_payout.py`.)
+**Split rule — full 60 / 30 / 10:** Core 60% → two 30% halves to the **first two eligible uplines**
+(eligible = active **and** highest active tier ≥ buyer's tier; compression + odd/even), Stream 30%
+→ the per-tier Stream pool wallet, Boost 9% → the global Boost pool wallet, admin 1% → the admin
+income wallet. Each Core upline commission is further split **70 / 20 / 10** (upline / repurchase
+reserve / software fee). A Core half with no eligible upline (or no valid BEP-20 address) is folded
+into the platform fee, so **the split always sums to the pack price**. (Split logic in
+`app/core/pack_payout.py`; matrix + repurchase execution on `pack/status` in
+`app/core/matrix_runtime.py` + `app/core/repurchase.py`.)
 
 **API 1 — request:**
 
@@ -382,13 +403,21 @@ price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app
   "token_contract": "0xb2681F1CA80e080827d5f275648D2d2e2684f0C8",
   "decimals": 18,
   "recipients": [
-    { "role": "buyer",        "level": 0,    "wallet_address": "0x…", "has_wallet_address": true,  "amount": 0.0 },
-    { "role": "upline",       "level": 1,    "wallet_address": "0x…", "has_wallet_address": true,  "amount": 3.0 },
-    { "role": "upline",       "level": 2,    "wallet_address": "0x…", "has_wallet_address": true,  "amount": 3.0 },
-    { "role": "platform_fee", "level": null, "wallet_address": "0x…", "has_wallet_address": true,  "amount": 4.0 }
+    { "role": "buyer",             "level": 0,    "wallet_address": "0x…", "has_wallet_address": true, "amount": 0.0 },
+    { "role": "upline",            "level": 1,    "wallet_address": "0x…", "has_wallet_address": true, "amount": 2.10, "gross_amount": 3.0 },
+    { "role": "upline",            "level": 2,    "wallet_address": "0x…", "has_wallet_address": true, "amount": 2.10, "gross_amount": 3.0 },
+    { "role": "repurchase_reserve","level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 1.20 },
+    { "role": "software_fee",      "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 0.60 },
+    { "role": "stream_pool",       "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 3.0 },
+    { "role": "boost_pool",        "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 0.90 },
+    { "role": "admin",             "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 0.10 }
   ]
 }
 ```
+
+> $10 pack, two eligible uplines: each upline's $3 Core half is paid 70/20/10 → **$2.10** on-chain
+> + **$0.60** reserve + **$0.30** fee (reserve/fee shown summed across uplines). Stream $3 + Boost
+> $0.90 + admin $0.10 complete the $10. Roles and amounts vary with eligibility.
 
 **API 2 — request / response:**
 
@@ -402,10 +431,11 @@ price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app
 - `buyer` is informational (`amount: 0`) so the frontend can confirm it matches the connected wallet.
 - Send on-chain to every recipient where `has_wallet_address` is `true`; skip the rest.
 - `status: "success"` requires a valid `tx_hash` (0x + 64 hex); re-recording a finalized order → 400.
-- **On success the backend also reflects the purchase internally** (idempotent, runs once): an active
-  `AgentPurchase` ownership row (no Celery revenue engine, dup-tier guarded) + reporting-only
-  `Transaction` rows (buyer `agent_purchase`, each upline `core_income`). No internal wallet balances
-  are credited.
+- **On success the backend runs the full engine internally** (idempotent, runs once): an active
+  `AgentPurchase` ownership row (dup-tier guarded) + reporting `Transaction` rows (buyer
+  `agent_purchase`, each upline `core_income`) + the **Stream/Boost matrix cascade**
+  (`run_purchase_matrices`, crediting wallets via `credit_wallet`) + the **auto-repurchase sweep**
+  (`sweep_auto_repurchases`). Internal main / repurchase-reserve balances populate accordingly.
 - **Live wallet balance:** the "Wallet Balance" card on the Dashboard, Wallet, and Buy Agents pages
   shows the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an
   internal balance. It requires `VITE_USDT_ADDRESS` to **match the backend `USDT_CONTRACT`** (else it
@@ -413,7 +443,10 @@ price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app
 - Order records live in `pack_purchases` (`app/models/pack_purchase.py`). Run `python migrate_v15.py`
   once on existing DBs; `create_tables.py` covers fresh installs.
 - Config (`.env`): `USDT_CONTRACT`, `USDT_DECIMALS`, `PAYOUT_CURRENCY`, `PAYOUT_NETWORK`,
-  `PLATFORM_FEE_WALLET` (**set before go-live**), `VERIFY_ONCHAIN_TX` (optional tx verification, off by default).
+  `PLATFORM_FEE_WALLET` (**set before go-live**), `VERIFY_ONCHAIN_TX` (optional tx verification, off
+  by default), plus the pool/income wallets `STREAM_POOL_WALLET`, `BOOST_POOL_WALLET`,
+  `ADMIN_INCOME_WALLET`, `REPURCHASE_RESERVE_WALLET` (each falls back to `PLATFORM_FEE_WALLET` when
+  unset — set distinct addresses before go-live).
 
 ---
 
@@ -428,7 +461,13 @@ price**. Stream/Boost matrix mechanics are not used on this rail. (Logic in `app
 | Payments     | On-chain USDT (BEP-20) via TokenPocket / MultiSender DApp |
 | Email        | SMTP (Gmail App Password or any provider)      |
 
-> **Note:** The platform is now **fully on-chain**. The legacy deposit-first money rail (NOWPayments deposits/withdrawals/transfers), the internal Core/Stream/Boost revenue engine, and Celery/Redis have all been removed. Some sections below (Matrix System, Withdrawal Flow, etc.) describe the old model — see `CLAUDE.md` for the current architecture.
+> **Note:** Packs are bought **on-chain** (BEP-20 USDT via TokenPocket / MultiSender) — the legacy
+> deposit-first money rail (NOWPayments deposits / withdrawals / transfers) and Celery/Redis were
+> removed (the backend is fully synchronous). The **Core / Stream / Boost revenue engine and
+> auto-repurchase are live** and run on the on-chain rail at `pack/status` success (`pack_payout.py`,
+> `matrix_runtime.py`, `repurchase.py`). A few sections below (User Journey, Deposit & Purchase Flow,
+> Withdrawal Flow) still reference the removed NOWPayments deposit/withdrawal/transfer steps and are
+> retained as historical context only — the revenue mechanics they describe are current.
 
 ---
 
@@ -533,7 +572,11 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 | `APP_ENV`                   | `development` or `production`                                 |
 | `LOG_LEVEL`                 | `DEBUG` / `INFO` / `WARNING` / `ERROR` — log verbosity (default `INFO`) |
 | `CORS_ORIGINS`              | Comma-separated allowed frontend origins, or `*`. Set to your frontend URL in production |
-| `PLATFORM_FEE_WALLET`       | BEP-20 wallet that receives the pack-purchase platform fee (**set before go-live**) |
+| `PLATFORM_FEE_WALLET`       | BEP-20 wallet that receives the pack-purchase platform fee (**set before go-live**); also the fallback for the four wallets below |
+| `STREAM_POOL_WALLET`        | Receives the Stream 30% pool (falls back to `PLATFORM_FEE_WALLET`)             |
+| `BOOST_POOL_WALLET`         | Receives the Boost 9% pool (falls back to `PLATFORM_FEE_WALLET`)               |
+| `ADMIN_INCOME_WALLET`       | Receives the 1% Boost-allocation admin cut (falls back to `PLATFORM_FEE_WALLET`) |
+| `REPURCHASE_RESERVE_WALLET` | Receives the 20% repurchase reserve (falls back to `PLATFORM_FEE_WALLET`)      |
 | `USDT_CONTRACT`             | USDT token contract on the active chain (returned by `pack/purchase`)         |
 | `USDT_DECIMALS`             | USDT token decimals (e.g. 18)                                                  |
 | `PAYOUT_CURRENCY` / `PAYOUT_NETWORK` | Currency / network labels returned by `pack/purchase` (USDT / BEP-20) |
@@ -588,4 +631,4 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - **Admin Treasury** (*Send to User*) and the **global freeze** kill switch are admin-only and separate from user flows. *(The Treasury *Generate* feature + dashboard "Treasury Balance" card were removed; `POST /admin/generate` no longer exists, though the `admin_generate` ledger type stays for historical data.)*
 - **All timestamps are displayed in IST (`Asia/Kolkata`).** The backend stores naive UTC; the frontend converts via `frontend/src/utils/datetime.js` (`formatDateTimeIST` / `formatDateIST` / `formatTimeIST`). Storage stays UTC — only the display is localized to Indian time.
 - **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views (`Transactions.jsx`, `Wallet.jsx`, `admin/AdminTransactions.jsx`) classify them into Income / Expense / System groups using **lowercase** keys; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income. *(`Wallet.jsx` previously used UPPERCASE keys, which matched nothing and rendered every row as a green "+" — fixed to lowercase.)*
-- **On-chain "Wallet Balance"** shown on the Dashboard, Wallet, and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases credit no internal wallets, so the internal main / repurchase / withdrawable balances stay `$0` on that rail — on-chain activity shows in transaction history and the income chart instead (mirrored on `pack/status` success).
+- **On-chain "Wallet Balance"** shown on the Dashboard, Wallet, and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases **do** populate internal wallets: on `pack/status` success each Core commission is credited 70/20/10 (`mirror_onchain_earning_split`) and the Stream/Boost matrix payouts credit via `credit_wallet`, so main / repurchase-reserve balances fill and on-chain activity also shows in transaction history and the income chart.

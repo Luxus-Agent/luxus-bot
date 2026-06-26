@@ -19,7 +19,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_BRAND = "PresZ Platform"
+_BRAND = "Luxus"
 _ACCENT = "#6C63FF"       # purple accent
 _BG = "#f5f5f5"
 _CARD_BG = "#ffffff"
@@ -70,7 +70,7 @@ def _card(content: str) -> str:
 # ── Email verification OTP ────────────────────────────────────────────────────
 
 async def send_verification_email(email: str, otp: str) -> bool:
-    subject = "Verify Your PresZ Account"
+    subject = "Verify Your Luxus Account"
     body = _card(f"""
         <h2 style="color: #1a1a2e; margin-top: 0;">Email Verification</h2>
         <p>Welcome to <strong>{_BRAND}</strong>! Please verify your email address
@@ -80,14 +80,14 @@ async def send_verification_email(email: str, otp: str) -> bool:
                    letter-spacing: 10px; text-align: center; margin: 24px 0;">{otp}</p>
         <p>Enter this code on the verification page. It expires in <strong>24 hours</strong>.</p>
         <p style="color: #6b7280; font-size: 13px;">
-            If you did not create a PresZ account, you can safely ignore this email.
+            If you did not create a Luxus account, you can safely ignore this email.
         </p>
     """)
     return await send_email(email, subject, body)
 
 
 async def send_resend_verification_email(email: str, otp: str) -> bool:
-    subject = "New Verification Code — PresZ"
+    subject = "New Verification Code — Luxus"
     body = _card(f"""
         <h2 style="color: #1a1a2e; margin-top: 0;">New Verification Code</h2>
         <p>Here is your new verification code:</p>
@@ -101,7 +101,7 @@ async def send_resend_verification_email(email: str, otp: str) -> bool:
 # ── Password reset OTP ────────────────────────────────────────────────────────
 
 async def send_password_reset_email(email: str, otp: str) -> bool:
-    subject = "Reset Your PresZ Password"
+    subject = "Reset Your Luxus Password"
     body = _card(f"""
         <h2 style="color: #1a1a2e; margin-top: 0;">Password Reset</h2>
         <p>We received a request to reset your password.</p>
@@ -121,7 +121,7 @@ async def send_password_reset_email(email: str, otp: str) -> bool:
 async def send_address_verification_email(
     email: str, otp: str, wallet_address: str
 ) -> bool:
-    subject = "Verify BEP-20 Address — PresZ"
+    subject = "Verify BEP-20 Address — Luxus"
     body = _card(f"""
         <h2 style="color: #1a1a2e; margin-top: 0;">BEP-20 Address Verification</h2>
         <p>You are registering a new BEP-20 payout address:</p>

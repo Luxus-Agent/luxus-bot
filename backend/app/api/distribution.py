@@ -463,6 +463,31 @@ def pack_purchase(
         )
 
     buyer = current_user
+
+    # Sequential-unlock gate (client rule): each tier can be bought only once and
+    # tiers must be purchased in order 1 → 2 → 3 → 4 (no skipping ahead). The
+    # frontend already enforces this, but a direct API call would otherwise bypass
+    # it — and on this on-chain rail the buyer pays BEFORE /pack/status records
+    # ownership, so the check must happen here, before we compute/return the split.
+    # Auto-repurchase re-buys an owned tier via app/core/repurchase.py (not this
+    # endpoint), so it is unaffected by this guard.
+    owned_tiers = {
+        t for (t,) in db.query(AgentPurchase.agent_tier).filter(
+            AgentPurchase.user_id == buyer.id,
+            AgentPurchase.status == "active",
+        ).all()
+    }
+    if tier in owned_tiers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You already own {payload.pack_name}. Each agent can be purchased once.",
+        )
+    if tier > 1 and (tier - 1) not in owned_tiers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Purchase Agent {tier - 1} before Agent {tier}.",
+        )
+
     # Advance the Core odd/even counter at purchase-creation time (mutate_counter=True).
     split = compute_pack_split(db, buyer, tier, price, mutate_counter=True)
 
