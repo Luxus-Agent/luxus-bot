@@ -45,7 +45,14 @@
       "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['app/api/wallet.py','app/api/admin.py','app/core/wallet_ops.py','app/api/distribution.py']]; print\\('syntax OK'\\)\")",
       "Bash(python -c \"import app.api.wallet, app.api.admin, app.core.wallet_ops; print\\('import OK'\\)\")",
       "Bash(python -c \"import app.models; from app.models.user import User; print\\('seed_admin imports OK'\\)\")",
-      "Bash(python -c \"import app.api.distribution, app.core.wallet_ops; from app.core.wallet_ops import mirror_onchain_earning_split; print\\('imports OK'\\)\")"
+      "Bash(python -c \"import app.api.distribution, app.core.wallet_ops; from app.core.wallet_ops import mirror_onchain_earning_split; print\\('imports OK'\\)\")",
+      "Bash(git branch *)",
+      "Bash(git push *)",
+      "Bash(python -c \"from docx import Document; d=Document\\(r'C:\\\\Users\\\\Shamlatech\\\\Downloads\\\\Luxus\\\\Luxus 5.docx'\\); [print\\(p.text\\) for p in d.paragraphs]\")",
+      "Bash(grep -niE \"core rule only|core-only|40.*platform fee|engine.*removed|stream.*boost.*removed|stay.*\\\\\\\\\\\\$0|balances stay\" README.md)",
+      "Bash(echo \"exit:$?  \\(no output = clean\\)\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
