@@ -52,7 +52,8 @@
       "Bash(grep -niE \"core rule only|core-only|40.*platform fee|engine.*removed|stream.*boost.*removed|stay.*\\\\\\\\\\\\$0|balances stay\" README.md)",
       "Bash(echo \"exit:$?  \\(no output = clean\\)\")",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(npx esbuild *)"
     ]
   }
 }
