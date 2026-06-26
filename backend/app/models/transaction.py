@@ -15,6 +15,9 @@ class TransactionType(str, enum.Enum):
     BOOST_PAYOUT = "boost_payout"        # Boost Agent (10%) — matrix level payout
     REENTRY = "reentry"
     REPURCHASE_HOLD = "repurchase_hold"
+    REPURCHASE_BUY = "repurchase_buy"    # Auto-repurchase: reserve consumed to re-buy a tier
+    REPURCHASE_GAS = "repurchase_gas"    # Auto-repurchase: gas-fee portion → platform
+    ADMIN_CREDIT = "admin_credit"        # Admin manual wallet credit (audit record)
     SOFTWARE_FEE = "software_fee"        # 10% platform fee deducted from every wallet credit
     WITHDRAWAL = "withdrawal"
     WITHDRAWAL_REFUND = "withdrawal_refund"  # Failed payout returned — reversal, not income
@@ -25,6 +28,9 @@ class TransactionType(str, enum.Enum):
     AGENT_PURCHASE = "agent_purchase"    # Deducted from account balance for agent buy
     ADMIN_GENERATE = "admin_generate"    # Admin-minted funds into the admin's account balance
     PLATFORM_PROFIT = "platform_profit"  # Realized platform earnings (residuals, core-retained, transfer fee)
+    STREAM_POOL_FUND = "stream_pool_fund"  # 30% of a purchase parked in the Stream matrix pool (per tier)
+    BOOST_POOL_FUND = "boost_pool_fund"    # 9% of a purchase parked in the Boost matrix pool (global)
+    ADMIN_INCOME = "admin_income"          # 1% of a purchase → admin income wallet (Boost allocation)
 
 
 class Transaction(Base):

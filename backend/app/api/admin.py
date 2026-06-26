@@ -461,8 +461,8 @@ def admin_credit_wallet(
     admin: User = Depends(get_admin_user),
 ):
     """
-    Manually credit a user's MAIN wallet (with 10% repurchase split applied).
-    Records as PROPORTION_PAYOUT for audit traceability.
+    Manually credit a user's MAIN wallet (with the 70/20/10 split applied).
+    Records as ADMIN_CREDIT for audit traceability.
     """
     user = db.query(User).filter_by(id=body.user_id).first()
     if not user:
@@ -473,7 +473,7 @@ def admin_credit_wallet(
         user_id=body.user_id,
         agent_tier=body.agent_tier,
         gross_amount=Decimal(str(body.amount)),
-        tx_type=TransactionType.PROPORTION_PAYOUT,
+        tx_type=TransactionType.ADMIN_CREDIT,
         reference_id=f"admin_credit_{admin.id}",
         notes=body.notes or f"Admin manual credit by #{admin.id}",
     )

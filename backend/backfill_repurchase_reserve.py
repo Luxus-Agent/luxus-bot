@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import app.models  # noqa: F401 — register all models
 from sqlalchemy import func
 
-from app.core.wallet_ops import REPURCHASE_RATE, get_or_create_wallet
+from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE, get_or_create_wallet
 from app.database import SessionLocal
 from app.models.transaction import Transaction, TransactionType
 from app.models.wallet import WalletType
@@ -49,10 +49,14 @@ def backfill() -> None:
             print("No CORE_INCOME rows found — nothing to backfill.")
             return
 
+        # CORE_INCOME stores the user's NET income (main + reserve = 90% of the
+        # gross Core share; the 10% software fee is excluded). So the reserve is
+        # 20/90 of the recorded income, and main is the rest (70/90).
+        net_reserve_ratio = REPURCHASE_RATE / (Decimal("1") - SOFTWARE_FEE_RATE)
         for user_id, agent_tier, total in rows:
-            gross = Decimal(str(total)).quantize(FOUR, rounding=ROUND_HALF_UP)
-            reserve = (gross * REPURCHASE_RATE).quantize(FOUR, rounding=ROUND_HALF_UP)
-            main_credit = gross - reserve
+            income = Decimal(str(total)).quantize(FOUR, rounding=ROUND_HALF_UP)
+            reserve = (income * net_reserve_ratio).quantize(FOUR, rounding=ROUND_HALF_UP)
+            main_credit = income - reserve
 
             main_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.MAIN)
             main_wallet.balance = main_credit
@@ -60,7 +64,7 @@ def backfill() -> None:
             repurchase_wallet.balance = reserve
 
             print(
-                f"user_id={user_id} tier={agent_tier}: gross=${gross} "
+                f"user_id={user_id} tier={agent_tier}: income=${income} "
                 f"-> main=${main_credit} reserve=${reserve}"
             )
 

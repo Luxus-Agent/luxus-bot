@@ -254,9 +254,39 @@ Effective split of gross income: **70% main wallet** + **20% repurchase** + **10
 > not movable funds. "Total Earnings" reads the **gross** from the ledger
 > (`GET /wallet/earnings`), which equals main + reserve.
 
-### Auto-repurchase  *(REMOVED)*
-The auto-repurchase trigger (and its `auto_repurchase` Celery task) were removed with the
-deposit-first engine.
+### Auto-repurchase  *(LIVE — `app/core/repurchase.py`)*
+Every income credit holds back 20% into the earner's per-tier `REPURCHASE` wallet
+(via `credit_wallet` / `mirror_onchain_earning_split`). When a tier's reserve reaches its
+**threshold = pack price + a fixed gas allowance**, the platform automatically re-buys that
+**same tier** from the reserve, unbounded ("to its infinity" — a manual buy happens once,
+repurchases keep going while the reserve can afford them).
+
+Thresholds (per the client spec):
+
+| Tier | Price | Gas | Threshold |
+|------|-------|-----|-----------|
+| Agent 1 | $10 | $0.25 | **$10.25** |
+| Agent 2 | $20 | $0.50 | **$20.50** |
+| Agent 3 | $50 | $1.25 | **$51.25** |
+| Agent 4 | $100 | $2.50 | **$102.50** |
+
+A repurchase **acts like a normal purchase**: it re-runs the Core 60% compressed/odd-even
+split to eligible uplines (credited via `credit_wallet`, so uplines build their *own* reserve →
+**compounding**, per client Q6) plus the Stream/Boost matrix placement + payout cascade. The
+buy portion is recorded as a `REPURCHASE_BUY` ledger row and the gas portion as `REPURCHASE_GAS`
+(platform pays the network gas, per the client). Boost reserve always accrues in the **tier-1**
+bucket (single global queue), so Boost-driven repurchases re-buy Agent 1.
+
+The driver is `sweep_auto_repurchases(db)` — it scans every user's reserve and re-buys any tier
+at/over threshold, re-scanning each round so the upline compounding cascade is drained (bounded
+by a step cap). It is called inside the `/distribution/pack/status` success transaction, right
+after the Stream/Boost matrices. Reserves of frozen/inactive users are **held** (not consumed),
+per client Q8.
+
+**Frontend support:** `GET /wallet/repurchase` returns per-tier reserve + threshold +
+`progress_percent` + `ready` (for the progress bar); `GET /wallet/repurchase/history` lists
+executed auto-repurchases (`REPURCHASE_BUY` rows). On-chain *broadcasting* of the repurchase from
+the platform reserve wallet is **not yet wired** — this implements the internal accounting only.
 
 ## Withdrawal Flow  *(REMOVED)*
 
@@ -476,10 +506,10 @@ Safe to re-run — exits early if an admin already exists.
 - **Inactive / ineligible uplines are skipped** in the Core split — see compression below.
 - **Core Agent compression + odd/even (LIVE — the on-chain pack split rule):** an upline qualifies for Core income only if their **highest active purchased tier ≥ the buyer's purchased tier**. Lower-tier / inactive / no-agent uplines are skipped and the income compresses up the sponsor chain to the next eligible upline. The two 30% halves go to the first eligible upline and the next eligible upline above it; even-count pass-ups (via `User.core_route_count`) also compress to the next eligible upline. On the on-chain rail, a half with no eligible recipient (or no valid BEP-20 address) folds into the 40% platform fee. Implemented in `pack_payout.py` + `proactive.py` (`_highest_active_tier` / `_is_eligible` / `_next_eligible_upline`).
 - *(REMOVED)* Stream / Boost matrix mechanics (3×3 queues, dummy/real re-entries, sponsor completion-share, re-entry counts) — the entire matrix engine is gone.
-- *(REMOVED)* Auto-repurchase (REPURCHASE wallet ≥ tier price → new purchase).
-- **Internal wallet deductions** (10% software fee + 20% repurchase = 70% main) still live in `credit_wallet`, but it's only reached via the **admin manual wallet-credit** tool now — no automatic income flows through it. The on-chain rail uses a **different, virtual 80/20 split** (`mirror_onchain_earning_split`, no software fee) purely for display.
+- **Auto-repurchase (LIVE — `app/core/repurchase.py`):** when a tier's `REPURCHASE` reserve reaches its **threshold = price + gas** ($10.25 / $20.50 / $51.25 / $102.50), the platform auto-re-buys that same tier from the reserve, unbounded. A repurchase re-runs the Core split + Stream/Boost matrices like a normal purchase (uplines build their own reserve → compounding). Driven by `sweep_auto_repurchases(db)`, called in the `/distribution/pack/status` success transaction after the matrices; re-scans each round to drain the cascade. Records `REPURCHASE_BUY` (price) + `REPURCHASE_GAS` (gas → platform) ledger rows; frozen/inactive users' reserves are held. Progress + history via `GET /wallet/repurchase` and `GET /wallet/repurchase/history`. On-chain *broadcast* of the repurchase is not yet wired (internal accounting only). See the "Auto-repurchase" section above.
+- **Internal wallet deductions** (10% software fee + 20% repurchase = 70% main) live in `credit_wallet`, reached by both the Stream/Boost matrix payouts and the **admin manual wallet-credit** tool (`/admin/wallet/credit`, recorded as `ADMIN_CREDIT` — previously referenced a non-existent `PROPORTION_PAYOUT` and threw; fixed). The on-chain Core rail uses `mirror_onchain_earning_split` (same 70/20/10) so each upline's 20% lands in their per-tier reserve and can trigger auto-repurchase.
 - **Total Earnings = ledger, not wallets.** `GET /wallet/earnings` (`wallet_ops.get_ledger_earnings`) sums lifetime income (`core_income` + stream/boost/sponsor types) from the transaction ledger — live, no admin approval, not capped at the 200-row tx listing. Dashboard, Wallet, and the admin per-user "revenue_generated" all read this (NOT `sum(MAIN wallet balances)`, which previously read $0 because on-chain commissions never credit internal wallets as real funds). The earnings fetch on Dashboard/Wallet is **non-fatal** (falls back to $0) so a failing endpoint can't blank the page. Earnings show even with the wallet disconnected (they come from the DB, not the chain).
-- **No auto-repurchase.** The virtual repurchase reserve just accumulates; reaching a tier price does nothing (auto-repurchase was removed with the deposit-first engine and was not re-added).
+- **Auto-repurchase is back.** The per-tier repurchase reserve auto-triggers a same-tier re-buy at the price+gas threshold ($10.25 / $20.50 / $51.25 / $102.50) via `app/core/repurchase.py` — see the dedicated note above. New transaction types: `REPURCHASE_BUY`, `REPURCHASE_GAS`. Run `python migrate_v17.py` on existing DBs (adds these + `ADMIN_CREDIT` and the matrix pool types to the Postgres `transactiontype` enum).
 - **Wallet page** has no "Account Balance" card (removed — always $0 on-chain); it shows Wallet Balance (on-chain USDT) + Total Earnings (ledger) + Repurchase Reserve (virtual).
 - **Login is by username + password** (not email) — for both regular users and admin. `UserLogin` takes `username`; the frontend Login form has a Username field.
 - **Admin access:** created via `seed_admin.py`. Admin endpoints at `/admin/*`. Admin logs in through the same `/login` page and is routed to `/admin` automatically. Admin pages (including Profile) render the admin sidebar.

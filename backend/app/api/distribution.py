@@ -16,7 +16,7 @@ import logging
 import re
 import uuid
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_platform_active
 from app.config import settings
+from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE
 from app.database import get_db
 from app.models.agent import AGENT_TIER_PRICES, AgentPurchase
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
@@ -312,6 +313,18 @@ class PackStatusRequest(BaseModel):
     failure_reason: str | None = Field(None, description="Optional, when status='failed'.")
 
 
+def _platform_user_id(db: Session) -> int | None:
+    """The platform/admin user that owns pool-funding + admin-income ledger rows.
+    Returns the lowest-id admin, or None if no admin exists yet."""
+    row = (
+        db.query(User.id)
+        .filter(User.is_admin.is_(True))
+        .order_by(User.id.asc())
+        .first()
+    )
+    return row[0] if row else None
+
+
 def _resolve_bep20_address(db: Session, user: User) -> str | None:
     """User's payout address: registration address, else latest verified, else None.
     Only returns it if it is a valid BEP-20 address."""
@@ -326,12 +339,12 @@ def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
       • the buyer's outgoing purchase (agent_purchase, an expense), and
       • each upline's commission (core_income), paid directly to their wallet on-chain.
 
-    The commission money moved ON-CHAIN (not through internal wallets). For DISPLAY,
-    we additionally mirror each upline's commission into their internal per-tier
-    wallets as an 80% main / 20% repurchase-reserve split (via
-    mirror_onchain_earning_split) so the per-tier balances and the Repurchase
-    Reserve populate — these wallet figures are bookkeeping only, not movable funds
-    (the real spendable balance is on-chain). The buyer's purchase touches no wallet.
+    Each upline's Core commission is split 70/20/10 (the client wallet rule) via
+    mirror_onchain_earning_split: 70% main + 20% repurchase reserve credited to
+    their internal per-tier wallets, and 10% software fee booked as platform profit.
+    On-chain, the upline receives the 70% to their own wallet while the 20% reserve
+    and 10% fee are paid to platform-held wallets, so these internal balances track
+    real per-user holdings. The buyer's purchase row touches no wallet.
     """
     from app.core.wallet_ops import mirror_onchain_earning_split
     try:
@@ -352,26 +365,62 @@ def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
         notes=f"On-chain purchase — {record.pack_name}, paid from your wallet{tx_suffix}",
     ))
 
-    # Upline commissions (paid directly to each upline's on-chain wallet).
+    # Upline commissions. Each upline's gross Core share is split 70/20/10: 70%
+    # main (paid to the upline on-chain), 20% repurchase reserve, 10% software fee
+    # (both routed on-chain to platform wallets). The user's recorded income is
+    # their net share (main + reserve = 90%); the 10% fee is platform profit.
     for r in recipients:
         if r.get("role") != "upline":
             continue
         uid = r.get("user_id")
-        amount = r.get("amount") or 0
-        gross = Decimal(str(amount))
+        # `gross_amount` is the full Core share; fall back to `amount` for any
+        # legacy pending record created before the 70/20/10 split was added.
+        gross = Decimal(str(r.get("gross_amount", r.get("amount") or 0)))
         if not uid or gross <= 0:
             continue
+        main_credit, repurchase, _fee = mirror_onchain_earning_split(
+            db, uid, record.agent_tier, gross
+        )
         db.add(Transaction(
             user_id=uid,
             agent_tier=record.agent_tier,
             transaction_type=TransactionType.CORE_INCOME,
-            amount=gross,
+            amount=main_credit + repurchase,
             reference_id=record.order_id,
-            notes=f"On-chain Core commission — {record.pack_name}, paid to your wallet{tx_suffix}",
+            notes=f"On-chain Core commission — {record.pack_name}{tx_suffix}",
         ))
-        # Virtual per-tier tracking (80% main / 20% repurchase reserve) so the
-        # internal wallet displays populate. Bookkeeping only — funds are on-chain.
-        mirror_onchain_earning_split(db, uid, record.agent_tier, gross)
+
+    # Stream (30%) / Boost (9%) pool funding + admin (1%) income — record against
+    # the platform/admin user so the money is accounted for. The Stream pool is
+    # per-tier; the Boost pool is global (booked at tier 1 — all Boost reserve goes
+    # to the $10 bucket per the client spec). The matrix engines (separate) draw
+    # these pools down later.
+    admin_user_id = _platform_user_id(db)
+    if admin_user_id is not None:
+        pool_rows = {
+            "stream_pool": (TransactionType.STREAM_POOL_FUND, record.agent_tier,
+                            f"Stream pool funding (30%) — {record.pack_name}"),
+            "boost_pool": (TransactionType.BOOST_POOL_FUND, 1,
+                           f"Boost pool funding (9%) — {record.pack_name}"),
+            "admin": (TransactionType.ADMIN_INCOME, 0,
+                      f"Admin income (1%) — {record.pack_name}"),
+        }
+        for r in recipients:
+            spec = pool_rows.get(r.get("role"))
+            if spec is None:
+                continue
+            tx_type, tier, note = spec
+            gross = Decimal(str(r.get("amount") or 0))
+            if gross <= 0:
+                continue
+            db.add(Transaction(
+                user_id=admin_user_id,
+                agent_tier=tier,
+                transaction_type=tx_type,
+                amount=gross,
+                reference_id=record.order_id,
+                notes=note,
+            ))
 
 
 def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> bool:
@@ -446,8 +495,26 @@ def pack_purchase(
             merged[user.id] = [user, amount, addr]
             order.append(user.id)
 
+    def _pool_address(configured: str) -> str | None:
+        """Validated pool/admin wallet, or None when unset/invalid."""
+        wallet = configured or None
+        if wallet and not _BEP20_RE.match(wallet):
+            wallet = None
+        return wallet
+
+    # Each Core commission is split 70/20/10 (per the client wallet rule): the
+    # upline receives 70% to their own wallet; 20% goes to the platform reserve
+    # wallet (held per-user for auto-repurchase) and 10% to the software-fee wallet.
+    _four = Decimal("0.0001")
+    reserve_total = Decimal("0")
+    fee_total = Decimal("0")
     for level, uid in enumerate(order, start=1):
-        user, amount, addr = merged[uid]
+        user, gross, addr = merged[uid]
+        software_fee = (gross * SOFTWARE_FEE_RATE).quantize(_four, rounding=ROUND_HALF_UP)
+        reserve = (gross * REPURCHASE_RATE).quantize(_four, rounding=ROUND_HALF_UP)
+        main = gross - software_fee - reserve  # 70%
+        reserve_total += reserve
+        fee_total += software_fee
         recipients.append({
             "role": "upline",
             "level": level,
@@ -455,14 +522,68 @@ def pack_purchase(
             "username": user.username,
             "wallet_address": addr,
             "has_wallet_address": True,
-            "amount": _two_places(amount),
+            "amount": _two_places(main),          # 70% paid on-chain to the upline
+            "gross_amount": _two_places(gross),   # full Core share (for internal accounting)
         })
 
-    # Platform fee (always > 0 here = 40% + any folded halves).
+    # Repurchase reserve (20% of each Core commission) — to the platform reserve
+    # wallet; tracked per user/tier internally for auto-repurchase.
+    if reserve_total > 0:
+        reserve_wallet = _pool_address(settings.repurchase_reserve_wallet)
+        recipients.append({
+            "role": "repurchase_reserve",
+            "level": None,
+            "wallet_address": reserve_wallet,
+            "has_wallet_address": reserve_wallet is not None,
+            "amount": _two_places(reserve_total),
+        })
+
+    # Software fee (10% of each Core commission) → platform profit.
+    if fee_total > 0:
+        fee_wallet = _pool_address(settings.PLATFORM_FEE_WALLET)
+        recipients.append({
+            "role": "software_fee",
+            "level": None,
+            "wallet_address": fee_wallet,
+            "has_wallet_address": fee_wallet is not None,
+            "amount": _two_places(fee_total),
+        })
+
+    # Stream pool (30%) — parked in a platform-held wallet, drawn down by the
+    # Stream matrix engine. Falls back to PLATFORM_FEE_WALLET when unset.
+    stream_wallet = _pool_address(settings.stream_pool_wallet)
+    recipients.append({
+        "role": "stream_pool",
+        "level": None,
+        "wallet_address": stream_wallet,
+        "has_wallet_address": stream_wallet is not None,
+        "amount": _two_places(split.stream_amount),
+    })
+
+    # Boost pool (9%) — platform-held, drawn down by the Boost matrix engine.
+    boost_wallet = _pool_address(settings.boost_pool_wallet)
+    recipients.append({
+        "role": "boost_pool",
+        "level": None,
+        "wallet_address": boost_wallet,
+        "has_wallet_address": boost_wallet is not None,
+        "amount": _two_places(split.boost_amount),
+    })
+
+    # Admin income (1%) — the admin cut of the Boost 10% allocation.
+    admin_wallet = _pool_address(settings.admin_income_wallet)
+    recipients.append({
+        "role": "admin",
+        "level": None,
+        "wallet_address": admin_wallet,
+        "has_wallet_address": admin_wallet is not None,
+        "amount": _two_places(split.admin_amount),
+    })
+
+    # Platform fee — now ONLY unroutable Core halves (no eligible upline); usually
+    # absent. Omitted entirely when zero.
     if platform_amount > 0:
-        pf_wallet = settings.PLATFORM_FEE_WALLET or None
-        if pf_wallet and not _BEP20_RE.match(pf_wallet):
-            pf_wallet = None
+        pf_wallet = _pool_address(settings.PLATFORM_FEE_WALLET)
         recipients.append({
             "role": "platform_fee",
             "level": None,
@@ -568,6 +689,20 @@ def pack_status(
         # never credit/debit a Wallet. pack/status is idempotent (PENDING-guarded),
         # so this mirror runs exactly once per order.
         _mirror_onchain_ledger(db, record)
+
+        # Stream (30%) + Boost (10%) matrix engines: place the buyer in both
+        # matrices and run the full level-payout + re-entry + sponsor-share
+        # cascade, crediting internal wallets via credit_wallet (70/20/10). Also
+        # PENDING-guarded, so it runs exactly once per order.
+        from app.core.matrix_runtime import run_purchase_matrices
+        run_purchase_matrices(db, record.buyer_id, record.agent_tier)
+
+        # Auto-repurchase: every commission above held back 20% into the earners'
+        # per-tier REPURCHASE wallets. Sweep all reserves now and re-buy any tier
+        # that has reached its threshold (price + gas), cascading through the
+        # uplines those repurchases credit. Runs in this same transaction.
+        from app.core.repurchase import sweep_auto_repurchases
+        sweep_auto_repurchases(db)
     else:
         record.status = PackPurchaseStatus.FAILED
         record.failure_reason = (payload.failure_reason or "Unspecified failure")[:500]

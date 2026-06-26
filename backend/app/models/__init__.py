@@ -5,6 +5,7 @@ from app.models.wallet import Wallet, WalletType
 from app.models.transaction import Transaction, TransactionType
 from app.models.platform_setting import PlatformSetting
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
+from app.models.matrix import MatrixPosition, MatrixCounter, SystemType
 
 __all__ = [
     "User",
@@ -17,4 +18,7 @@ __all__ = [
     "PlatformSetting",
     "PackPurchase",
     "PackPurchaseStatus",
+    "MatrixPosition",
+    "MatrixCounter",
+    "SystemType",
 ]

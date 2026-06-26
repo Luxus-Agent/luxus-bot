@@ -30,6 +30,34 @@ class Settings(BaseSettings):
     # Wallet that receives the platform-fee portion of each pack purchase. Set this
     # in .env before go-live; when empty the platform_fee recipient address is null.
     PLATFORM_FEE_WALLET: str = ""
+    # Platform-held pool wallets that receive the Stream (30%) and Boost (9%)
+    # portions of each purchase on-chain. These pools are drawn down by the Stream /
+    # Boost matrix engines. When empty they fall back to PLATFORM_FEE_WALLET.
+    STREAM_POOL_WALLET: str = ""
+    BOOST_POOL_WALLET: str = ""
+    # Admin income wallet — receives the 1% Boost-allocation admin cut on each
+    # purchase. When empty it falls back to PLATFORM_FEE_WALLET.
+    ADMIN_INCOME_WALLET: str = ""
+    # Platform reserve wallet — receives the 20% repurchase reserve skimmed from
+    # each Core commission. Held per-user (tracked internally) to fund auto-
+    # repurchase. When empty it falls back to PLATFORM_FEE_WALLET.
+    REPURCHASE_RESERVE_WALLET: str = ""
+
+    @property
+    def stream_pool_wallet(self) -> str:
+        return self.STREAM_POOL_WALLET or self.PLATFORM_FEE_WALLET
+
+    @property
+    def boost_pool_wallet(self) -> str:
+        return self.BOOST_POOL_WALLET or self.PLATFORM_FEE_WALLET
+
+    @property
+    def admin_income_wallet(self) -> str:
+        return self.ADMIN_INCOME_WALLET or self.PLATFORM_FEE_WALLET
+
+    @property
+    def repurchase_reserve_wallet(self) -> str:
+        return self.REPURCHASE_RESERVE_WALLET or self.PLATFORM_FEE_WALLET
     # When true, API 2 (mark status) verifies the tx_hash on-chain before recording
     # success. Left off by default — wire up an RPC check before enabling.
     VERIFY_ONCHAIN_TX: bool = False

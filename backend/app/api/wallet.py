@@ -173,6 +173,77 @@ def daily_income(
     return {"total": float(round(total, 4)), "buckets": buckets}
 
 
+# ── Repurchase reserve (auto-repurchase progress + history) ───────────────────
+
+@router.get("/repurchase")
+def repurchase_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Per-tier repurchase reserve and progress toward the next auto-repurchase.
+
+    Each tier holds back 20% of income into its REPURCHASE wallet; when the
+    balance reaches the threshold (pack price + gas) the platform auto-re-buys that
+    tier. Returns one row per tier with the live reserve, threshold, and a 0–100%
+    progress figure for the progress bar.
+    """
+    from app.core.repurchase import REPURCHASE_GAS_FEE, repurchase_threshold
+    from app.models.agent import AGENT_TIER_PRICES
+    from app.models.wallet import WalletType
+
+    reserves = {
+        w.agent_tier: Decimal(str(w.balance))
+        for w in db.query(Wallet)
+        .filter_by(user_id=current_user.id, wallet_type=WalletType.REPURCHASE)
+        .all()
+    }
+
+    tiers = []
+    for tier, price in AGENT_TIER_PRICES.items():
+        reserve = reserves.get(tier, Decimal("0"))
+        threshold = repurchase_threshold(tier)
+        progress = float(min(reserve / threshold, Decimal("1")) * 100) if threshold > 0 else 0.0
+        tiers.append({
+            "agent_tier": tier,
+            "price": float(price),
+            "gas_fee": float(REPURCHASE_GAS_FEE[tier]),
+            "threshold": float(threshold),
+            "reserve": float(round(reserve, 4)),
+            "progress_percent": round(progress, 2),
+            "ready": reserve >= threshold,
+        })
+    return {"tiers": tiers}
+
+
+@router.get("/repurchase/history")
+def repurchase_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """History of automatic repurchases (most recent first)."""
+    rows = (
+        db.query(Transaction)
+        .filter_by(
+            user_id=current_user.id,
+            transaction_type=TransactionType.REPURCHASE_BUY,
+        )
+        .order_by(Transaction.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    return [
+        {
+            "id": t.id,
+            "agent_tier": t.agent_tier,
+            "amount": float(t.amount),
+            "notes": t.notes,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
+        for t in rows
+    ]
+
+
 # ── Wallet address management ─────────────────────────────────────────────────
 
 @router.get("/addresses", response_model=list[WalletAddressOut])
