@@ -12,7 +12,7 @@ export default function AdminDashboard() {
   const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0, platform_profit: 0 })
   const [metrics, setMetrics] = useState({
     revenue: { core_income: 0, stream_payout: 0, boost_payout: 0, sponsor_share: 0, total_paid_to_users: 0, software_fees: 0 },
-    repurchase: { count: 0, volume: 0, gas_paid: 0, reserve_held: 0 },
+    repurchase: { count: 0, volume: 0, platform_fee: 0, reserve_held: 0 },
   })
   const [loading, setLoading] = useState(true)
 
@@ -176,7 +176,7 @@ export default function AdminDashboard() {
             {[
               { label: 'Repurchases', val: metrics.repurchase.count, money: false, icon: RefreshCw, color: '#00D4B4', sub: 'Auto re-buys executed' },
               { label: 'Repurchase Volume', val: metrics.repurchase.volume, money: true, icon: Layers, color: '#3498DB', sub: 'Total re-bought' },
-              { label: 'Gas Paid by Platform', val: metrics.repurchase.gas_paid, money: true, icon: Flame, color: '#FF4D6A', sub: 'Network fees covered' },
+              { label: 'Repurchase Platform Fees', val: metrics.repurchase.platform_fee, money: true, icon: Flame, color: '#FF4D6A', sub: 'Flat fee on auto re-buys' },
               { label: 'Reserve Held', val: metrics.repurchase.reserve_held, money: true, icon: PiggyBank, color: '#FFB547', sub: 'Awaiting next re-buy' },
             ].map(({ label, val, money, icon: Icon, color, sub }) => (
               <div key={label} className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>

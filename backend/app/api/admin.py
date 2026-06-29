@@ -361,7 +361,7 @@ def platform_metrics(
         - software_fees: 10% platform fee collected across every payout
       repurchase:
         - count / volume: number and $ of auto-repurchases executed (repurchase_buy)
-        - gas_paid: network gas the platform covered for those repurchases
+        - platform_fee: flat platform fee collected on those repurchases
         - reserve_held: total 20% reserve currently sitting across all REPURCHASE
           wallets (a platform-held liability awaiting the next auto-repurchase)
     """
@@ -404,7 +404,7 @@ def platform_metrics(
         "repurchase": {
             "count": int(repurchase_count),
             "volume": _sum_all(TransactionType.REPURCHASE_BUY),
-            "gas_paid": _sum_all(TransactionType.REPURCHASE_GAS),
+            "platform_fee": _sum_all(TransactionType.REPURCHASE_GAS),
             "reserve_held": float(reserve_held or 0),
         },
     }

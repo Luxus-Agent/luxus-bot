@@ -11,24 +11,26 @@ import { bscTestnet } from '@reown/appkit/networks'
 import { wagmiConfig } from '../config/appkit'
 import { MULTISENDER_ADDRESS, USDT_ADDRESS, USDT_DECIMALS, multisenderAbi } from '../config/contracts'
 
+// `price` is what the buyer pays = base + platform fee. The 60/30/10 revenue split
+// runs off `base`; the flat `fee` goes straight to the platform profit wallet.
 const TIERS = [
   {
-    id: 1, price: 10, name: 'Agent 1',
+    id: 1, base: 10, fee: 1, price: 11, name: 'Agent 1',
     core: '$6.00', stream: '$20.00', boost: '$5.70',
     color: '#00D4B4', desc: 'Entry level AI agent with full revenue mechanics',
   },
   {
-    id: 2, price: 20, name: 'Agent 2',
+    id: 2, base: 20, fee: 2, price: 22, name: 'Agent 2',
     core: '$12.00', stream: '$40.00', boost: '$5.70',
     color: '#3498DB', desc: '2× multiplier — doubles all payouts',
   },
   {
-    id: 3, price: 50, name: 'Agent 3',
+    id: 3, base: 50, fee: 5, price: 55, name: 'Agent 3',
     core: '$30.00', stream: '$100.00', boost: '$5.70',
     color: '#9B59B6', desc: '5× multiplier — high-yield tier',
   },
   {
-    id: 4, price: 100, name: 'Agent 4',
+    id: 4, base: 100, fee: 11, price: 111, name: 'Agent 4',
     core: '$60.00', stream: '$200.00', boost: '$5.70',
     color: '#FFB547', desc: '10× multiplier — maximum earning potential',
   },
@@ -292,6 +294,7 @@ export default function AgentPurchase() {
                   </div>
                   <h3 className="text-lg font-bold text-white">{tier.name}</h3>
                   <p className="text-2xl font-bold" style={{ color: tier.color }}>${tier.price}</p>
+                  <p className="text-xs" style={{ color: '#4A5568' }}>${tier.base} + ${tier.fee} platform fee</p>
                   <p className="text-xs mt-1" style={{ color: '#8899AA' }}>{tier.desc}</p>
                 </div>
 
@@ -368,8 +371,9 @@ export default function AgentPurchase() {
               </div>
               <p className="text-sm mb-5" style={{ color: '#8899AA' }}>
                 Buy <span className="text-white font-semibold">{confirmTier.name}</span> for{' '}
-                <span className="text-white font-semibold">${confirmTier.price}</span>? Payment is sent
-                on-chain in USDT from your connected wallet to the referral payout addresses.
+                <span className="text-white font-semibold">${confirmTier.price}</span>{' '}
+                <span style={{ color: '#4A5568' }}>(${confirmTier.base} + ${confirmTier.fee} platform fee)</span>?
+                Payment is sent on-chain in USDT from your connected wallet to the referral payout addresses.
               </p>
               <div className="flex gap-3">
                 <button

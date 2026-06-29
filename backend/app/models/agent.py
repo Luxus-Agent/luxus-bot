@@ -5,7 +5,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
+# Distribution base — the amount the 60/30/10 revenue split is computed off.
 AGENT_TIER_PRICES = {1: 10, 2: 20, 3: 50, 4: 100}
+
+# Flat platform fee added on top of the base price (per the client "purchase cost"
+# spec). The buyer pays base + fee; the extra goes straight to the platform profit
+# wallet and is NOT part of the revenue split. Applies to repurchase too.
+AGENT_TIER_PLATFORM_FEE = {1: 1, 2: 2, 3: 5, 4: 11}
+
+# What the buyer actually pays for a tier (base + platform fee):
+#   Agent 1 $11  ·  Agent 2 $22  ·  Agent 3 $55  ·  Agent 4 $111
+AGENT_TIER_COST = {t: AGENT_TIER_PRICES[t] + AGENT_TIER_PLATFORM_FEE[t] for t in AGENT_TIER_PRICES}
 
 
 class AgentPurchase(Base):

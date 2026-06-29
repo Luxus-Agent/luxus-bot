@@ -192,11 +192,11 @@ def repurchase_status(
     Per-tier repurchase reserve and progress toward the next auto-repurchase.
 
     Each tier holds back 20% of income into its REPURCHASE wallet; when the
-    balance reaches the threshold (pack price + gas) the platform auto-re-buys that
-    tier. Returns one row per tier with the live reserve, threshold, and a 0–100%
-    progress figure for the progress bar.
+    balance reaches the threshold (pack price + platform fee) the platform
+    auto-re-buys that tier. Returns one row per tier with the live reserve,
+    threshold, and a 0–100% progress figure for the progress bar.
     """
-    from app.core.repurchase import REPURCHASE_GAS_FEE, repurchase_threshold
+    from app.core.repurchase import REPURCHASE_PLATFORM_FEE, repurchase_threshold
     from app.models.agent import AGENT_TIER_PRICES
     from app.models.wallet import WalletType
 
@@ -215,7 +215,7 @@ def repurchase_status(
         tiers.append({
             "agent_tier": tier,
             "price": float(price),
-            "gas_fee": float(REPURCHASE_GAS_FEE[tier]),
+            "platform_fee": float(REPURCHASE_PLATFORM_FEE[tier]),
             "threshold": float(threshold),
             "reserve": float(round(reserve, 4)),
             "progress_percent": round(progress, 2),

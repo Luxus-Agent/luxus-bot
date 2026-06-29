@@ -58,7 +58,7 @@ export default function Dashboard() {
       api.get('/agents/purchases'),
       api.get('/auth/referrals'),
       api.get('/wallet/income/daily'),
-      // Per-tier reserve + the real (price + gas) repurchase threshold.
+      // Per-tier reserve + the real (price + platform fee) repurchase threshold.
       api.get('/wallet/repurchase').catch(() => ({ data: { tiers: [] } })),
       // Non-fatal: a missing/failing earnings endpoint must not blank the whole
       // dashboard (agents, wallets, etc.) — fall back to $0.
@@ -79,7 +79,7 @@ export default function Dashboard() {
   const totalEarned = Number(earnings.total_earned || 0)
   const activePurchases = purchases.filter(p => p.status === 'active')
   const highestTier = purchases.length ? Math.max(...purchases.map(p => p.agent_tier)) : 0
-  // Reserve target = pack price + gas (the real auto-repurchase threshold), keyed by tier.
+  // Reserve target = pack price + platform fee (the real auto-repurchase threshold), keyed by tier.
   const repByTier = Object.fromEntries((repurchase.tiers || []).map(t => [t.agent_tier, t]))
 
   const copyRef = () => {
@@ -209,9 +209,9 @@ export default function Dashboard() {
                   const repW = wallets.find(w => w.wallet_type === 'repurchase' && w.agent_tier === tier)
                   const rep = repByTier[tier]
                   const repBal = rep ? rep.reserve : parseFloat(repW?.balance || 0)
-                  // Target the real threshold (price + gas), not the bare price.
+                  // Target the real threshold (price + platform fee), not the bare price.
                   const repTarget = rep ? rep.threshold : TIER_PRICES[tier]
-                  const repGas = rep ? rep.gas_fee : 0
+                  const repFee = rep ? rep.platform_fee : 0
                   const progress = rep ? rep.progress_percent : Math.min(100, (repBal / TIER_PRICES[tier]) * 100)
                   return (
                     <div
@@ -255,9 +255,9 @@ export default function Dashboard() {
                               style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #00D4B4, #00FFD4)' }}
                             />
                           </div>
-                          {repGas > 0 && (
+                          {repFee > 0 && (
                             <p className="text-right mt-1" style={{ color: '#4A5568', fontSize: '10px' }}>
-                              target incl. ${repGas.toFixed(2)} gas
+                              target incl. ${repFee.toFixed(2)} platform fee
                             </p>
                           )}
                         </div>

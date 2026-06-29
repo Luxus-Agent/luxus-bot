@@ -16,16 +16,17 @@ which can in turn trigger their auto-repurchases (intended compounding, per the
 client Q&A). That cascade is handled by `sweep_auto_repurchases`, which keeps
 re-buying across all users until no reserve is over threshold.
 
-Thresholds (price + gas), per the client spec:
-    Tier 1  $10.25  ($10.00 buy + $0.25 gas)
-    Tier 2  $20.50  ($20.00 buy + $0.50 gas)
-    Tier 3  $51.25  ($50.00 buy + $1.25 gas)
-    Tier 4  $102.50 ($100.00 buy + $2.50 gas)
+Thresholds (price + platform fee), per the client spec:
+    Tier 1  $11   ($10.00 buy + $1 platform fee)
+    Tier 2  $22   ($20.00 buy + $2 platform fee)
+    Tier 3  $55   ($50.00 buy + $5 platform fee)
+    Tier 4  $111  ($100.00 buy + $11 platform fee)
 
-The gas portion is booked as a platform expense/cut (REPURCHASE_GAS) — the client
-confirmed the platform pays the network gas. Boost reserve always accumulates in
-the tier-1 bucket (Boost is a single global queue), so Boost-driven repurchases
-re-buy Agent 1.
+The platform-fee portion is booked as platform profit (REPURCHASE_GAS ledger row) —
+the same flat fee charged on a manual purchase, applied to repurchase too ("the
+extra amount will go to our platform profit wallet … this includes for repurchase
+also"). Boost reserve always accumulates in the tier-1 bucket (Boost is a single
+global queue), so Boost-driven repurchases re-buy Agent 1.
 
 Everything runs inside the caller's transaction (flush, never commit).
 """
@@ -36,19 +37,18 @@ from sqlalchemy.orm import Session
 
 from app.core.pack_payout import compute_pack_split
 from app.core.wallet_ops import credit_wallet, get_or_create_wallet
-from app.models.agent import AGENT_TIER_PRICES
+from app.models.agent import AGENT_TIER_PLATFORM_FEE, AGENT_TIER_PRICES
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
 from app.models.wallet import Wallet, WalletType
 
 logger = logging.getLogger(__name__)
 
-# Fixed gas allowance reserved on top of the pack price for each tier's repurchase.
-REPURCHASE_GAS_FEE = {
-    1: Decimal("0.25"),
-    2: Decimal("0.50"),
-    3: Decimal("1.25"),
-    4: Decimal("2.50"),
+# Flat platform fee reserved on top of the pack price for each tier's repurchase
+# (matches AGENT_TIER_PLATFORM_FEE — the same fee charged on a manual purchase).
+# The reserve must reach price + this fee before the tier auto-repurchases.
+REPURCHASE_PLATFORM_FEE = {
+    tier: Decimal(str(fee)) for tier, fee in AGENT_TIER_PLATFORM_FEE.items()
 }
 
 # Safety cap on the cascade (a repurchase can credit uplines, who may repurchase…).
@@ -58,8 +58,8 @@ _MAX_REPURCHASE_STEPS = 100_000
 
 
 def repurchase_threshold(tier: int) -> Decimal:
-    """Reserve balance at which tier `tier` auto-repurchases (price + gas)."""
-    return Decimal(str(AGENT_TIER_PRICES[tier])) + REPURCHASE_GAS_FEE[tier]
+    """Reserve balance at which tier `tier` auto-repurchases (price + platform fee)."""
+    return Decimal(str(AGENT_TIER_PRICES[tier])) + REPURCHASE_PLATFORM_FEE[tier]
 
 
 def _platform_user_id(db: Session) -> int | None:
@@ -121,8 +121,8 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
     Returns True if a repurchase happened, False if the reserve was insufficient.
     """
     price = Decimal(str(AGENT_TIER_PRICES[tier]))
-    gas = REPURCHASE_GAS_FEE[tier]
-    threshold = price + gas
+    platform_fee = REPURCHASE_PLATFORM_FEE[tier]
+    threshold = price + platform_fee
 
     reserve = (
         db.query(Wallet)
@@ -134,7 +134,7 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
     if balance < threshold:
         return False
 
-    # Consume the reserve: price (the re-buy) + gas (platform pays the network fee).
+    # Consume the reserve: price (the re-buy) + platform fee (→ platform profit).
     reserve.balance = balance - threshold
     ref = f"repurchase_u{user.id}_t{tier}"
 
@@ -150,9 +150,9 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
         user_id=user.id,
         agent_tier=tier,
         transaction_type=TransactionType.REPURCHASE_GAS,
-        amount=gas,
+        amount=platform_fee,
         reference_id=ref,
-        notes=f"Auto-repurchase gas fee (Agent {tier})",
+        notes=f"Auto-repurchase platform fee (Agent {tier})",
     ))
 
     # Distribute exactly like a normal purchase (uplines earn + build reserve).
@@ -160,8 +160,8 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
 
     db.flush()
     logger.info(
-        "AUTO-REPURCHASE: user=%s tier=%s price=$%s gas=$%s reserve_left=$%s",
-        user.username, tier, price, gas, reserve.balance,
+        "AUTO-REPURCHASE: user=%s tier=%s price=$%s platform_fee=$%s reserve_left=$%s",
+        user.username, tier, price, platform_fee, reserve.balance,
     )
     return True
 

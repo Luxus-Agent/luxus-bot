@@ -27,7 +27,7 @@ from app.api.deps import get_current_user, require_platform_active
 from app.config import settings
 from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE
 from app.database import get_db
-from app.models.agent import AGENT_TIER_PRICES, AgentPurchase
+from app.models.agent import AGENT_TIER_PLATFORM_FEE, AGENT_TIER_PRICES, AgentPurchase
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
@@ -404,6 +404,8 @@ def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
                            f"Boost pool funding (9%) — {record.pack_name}"),
             "admin": (TransactionType.ADMIN_INCOME, 0,
                       f"Admin income (1%) — {record.pack_name}"),
+            "platform_fee": (TransactionType.PLATFORM_PROFIT, record.agent_tier,
+                             f"Platform fee — {record.pack_name}"),
         }
         for r in recipients:
             spec = pool_rows.get(r.get("role"))
@@ -455,11 +457,16 @@ def pack_purchase(
             detail=f"Unknown pack_name. Valid packs: {list(_PACK_NAME_TO_TIER)}",
         )
 
+    # `price` is the distribution base (the 60/30/10 split is computed off this).
+    # The buyer pays `cost` = base + a flat platform fee that goes straight to the
+    # platform profit wallet (per the client "purchase cost" spec).
     price = Decimal(str(AGENT_TIER_PRICES[tier]))
-    if payload.amount is not None and Decimal(str(payload.amount)) != price:
+    platform_fee = Decimal(str(AGENT_TIER_PLATFORM_FEE[tier]))
+    cost = price + platform_fee
+    if payload.amount is not None and Decimal(str(payload.amount)) != cost:
         raise HTTPException(
             status_code=400,
-            detail=f"amount {payload.amount} does not match {payload.pack_name} price {price}.",
+            detail=f"amount {payload.amount} does not match {payload.pack_name} cost {cost}.",
         )
 
     buyer = current_user
@@ -506,7 +513,9 @@ def pack_purchase(
     })
 
     # Upline recipients — merge duplicates (same user across both halves), keep order.
-    platform_amount = split.platform_amount
+    # The flat platform fee is added to the platform-fee bucket (alongside any
+    # unroutable Core halves), so the recipients sum to the full cost (base + fee).
+    platform_amount = split.platform_amount + platform_fee
     merged: dict[int, list] = {}   # user_id -> [user, amount, address]
     order: list[int] = []
     for user, amount in split.uplines:
@@ -605,8 +614,9 @@ def pack_purchase(
         "amount": _two_places(split.admin_amount),
     })
 
-    # Platform fee — now ONLY unroutable Core halves (no eligible upline); usually
-    # absent. Omitted entirely when zero.
+    # Platform fee — the flat per-tier purchase fee (always present) plus any
+    # unroutable Core halves (no eligible upline). Goes to the platform profit
+    # wallet. Omitted only when zero (never, given the flat fee).
     if platform_amount > 0:
         pf_wallet = _pool_address(settings.PLATFORM_FEE_WALLET)
         recipients.append({
@@ -623,7 +633,7 @@ def pack_purchase(
         buyer_id=buyer.id,
         pack_name=payload.pack_name,
         agent_tier=tier,
-        amount=price,
+        amount=cost,
         status=PackPurchaseStatus.PENDING,
         recipients_json=json.dumps(recipients),
     )
@@ -631,8 +641,9 @@ def pack_purchase(
     db.commit()
 
     logger.info(
-        "PACK purchase: order=%s buyer=%s pack=%s price=$%s uplines=%d platform=$%s",
-        order_id, buyer.username, payload.pack_name, price, len(order), _two_places(platform_amount),
+        "PACK purchase: order=%s buyer=%s pack=%s cost=$%s (base $%s + fee $%s) uplines=%d platform=$%s",
+        order_id, buyer.username, payload.pack_name, cost, price, platform_fee,
+        len(order), _two_places(platform_amount),
     )
 
     return {

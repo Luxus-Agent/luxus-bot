@@ -1,7 +1,10 @@
 # Luxus Agent Revenue Sharing Platform
 
-Multi-tier passive-income MLM platform. Users buy AI-agent tiers ($10 / $20 / $50 / $100)
-**on-chain** (USDT BEP-20); each purchase drives three parallel revenue engines.
+Multi-tier passive-income MLM platform. Users buy AI-agent tiers **on-chain** (USDT BEP-20)
+for a cost of **base + flat platform fee** — **$11 / $22 / $55 / $111** ($10/$20/$50/$100 base
++ $1/$2/$5/$11 fee → platform profit). The 60/30/10 split runs off the base; each purchase
+drives three parallel revenue engines. Prices/fees live in `models/agent.py`
+(`AGENT_TIER_PRICES`, `AGENT_TIER_PLATFORM_FEE`, `AGENT_TIER_COST`).
 
 > Full architecture, API shapes, payout schedules, and env reference live in **@README.md** —
 > read it for detail. This file is the lightweight rules + map. Keep it **under 200 lines**.
@@ -48,8 +51,8 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
 - **Boost 10%** = **9% matrix + 1% admin income**. **Single global queue** (always tier 1). Re-entries are **real**.
 - **Wallet rule (70 / 20 / 10):** every income credit → 70% main + 20% per-tier repurchase reserve + 10% software fee.
   Core uses `mirror_onchain_earning_split`; Stream/Boost matrix payouts use `credit_wallet`.
-- **Auto-repurchase:** when a tier's reserve hits **threshold = price + gas** ($10.25 / $20.50 / $51.25 / $102.50),
-  the platform auto re-buys that same tier, unbounded — re-runs Core + matrices (compounding). Platform pays gas.
+- **Auto-repurchase:** when a tier's reserve hits **threshold = price + platform fee** ($11 / $22 / $55 / $111),
+  the platform auto re-buys that same tier, unbounded — re-runs Core + matrices (compounding). The flat fee → platform profit.
   Boost reserve accrues in tier-1. Frozen/inactive reserves are held. See `core/repurchase.py`.
 
 > Payout schedules per tier/level are in @README.md (Revenue Mechanics).

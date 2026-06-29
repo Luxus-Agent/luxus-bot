@@ -68,13 +68,15 @@ Every confirmed agent purchase triggers a **60 / 30 / 10 split** across three pa
 
 ### Agent Tiers & Max Payouts
 
-| Tier    | Price | Core Agent | Stream Agent | Boost Agent |
-|---------|-------|-----------|-------------|------------|
-| Agent 1 | $10   | $6.00     | $20.00      | $5.70      |
-| Agent 2 | $20   | $12.00    | $40.00      | $5.70      |
-| Agent 3 | $50   | $30.00    | $100.00     | $5.70      |
-| Agent 4 | $100  | $60.00    | $200.00     | $5.70      |
+| Tier    | Base | Platform fee | Total cost | Core Agent | Stream Agent | Boost Agent |
+|---------|------|--------------|-----------|-----------|-------------|------------|
+| Agent 1 | $10  | $1   | **$11**  | $6.00     | $20.00      | $5.70      |
+| Agent 2 | $20  | $2   | **$22**  | $12.00    | $40.00      | $5.70      |
+| Agent 3 | $50  | $5   | **$55**  | $30.00    | $100.00     | $5.70      |
+| Agent 4 | $100 | $11  | **$111** | $60.00    | $200.00     | $5.70      |
 
+> The buyer pays **Total cost = Base + Platform fee**; the flat platform fee goes straight to the platform profit wallet and is **not** part of the 60/30/10 split (which runs off the **Base**). Applies to repurchase too.
+>
 > Boost runs a **single global queue** (always tier 1), so its payout does not scale with the purchased tier — the full Boost cycle is $0.60 + $1.50 + $3.60 = **$5.70** wallet for every tier.
 
 ---
@@ -170,17 +172,17 @@ When the repurchase reserve for a tier reaches its **threshold (price + gas)**, 
 
 ### Auto-Repurchase
 
-Implemented in `app/core/repurchase.py`. Every income credit holds back 20% into the earner's per-tier `REPURCHASE` wallet. When a tier's reserve reaches its threshold (**pack price + a fixed gas allowance**), the platform automatically re-buys that **same tier** from the reserve — automatic and **unbounded** (a manual purchase happens once; repurchases keep going while the reserve can afford them).
+Implemented in `app/core/repurchase.py`. Every income credit holds back 20% into the earner's per-tier `REPURCHASE` wallet. When a tier's reserve reaches its threshold (**pack price + the flat platform fee**, i.e. the same total cost as a manual buy), the platform automatically re-buys that **same tier** from the reserve — automatic and **unbounded** (a manual purchase happens once; repurchases keep going while the reserve can afford them).
 
-| Tier    | Price | Gas    | Threshold |
-|---------|-------|--------|-----------|
-| Agent 1 | $10   | $0.25  | **$10.25**  |
-| Agent 2 | $20   | $0.50  | **$20.50**  |
-| Agent 3 | $50   | $1.25  | **$51.25**  |
-| Agent 4 | $100  | $2.50  | **$102.50** |
+| Tier    | Base  | Platform fee | Threshold |
+|---------|-------|--------------|-----------|
+| Agent 1 | $10   | $1   | **$11**  |
+| Agent 2 | $20   | $2   | **$22**  |
+| Agent 3 | $50   | $5   | **$55**  |
+| Agent 4 | $100  | $11  | **$111** |
 
 - A repurchase **acts like a normal purchase**: it re-runs the Core 60% compressed/odd-even split to eligible uplines (credited via `credit_wallet`, so uplines build their **own** reserve → intended **compounding**) plus the Stream/Boost matrix placement + payout cascade.
-- The buy is recorded as a `REPURCHASE_BUY` ledger row, the gas as `REPURCHASE_GAS` (the platform pays the network gas). Boost reserve always accrues in the **tier-1** bucket (single global queue), so Boost-driven repurchases re-buy Agent 1.
+- The buy is recorded as a `REPURCHASE_BUY` ledger row, the platform fee as a `REPURCHASE_GAS` row (→ platform profit; the same flat fee charged on a manual purchase). Boost reserve always accrues in the **tier-1** bucket (single global queue), so Boost-driven repurchases re-buy Agent 1.
 - Driven by `sweep_auto_repurchases(db)`, run inside the `/distribution/pack/status` success transaction (after the matrices). It re-scans every reserve each round so the upline compounding cascade is fully drained, with a step cap as a loop guard. Reserves of frozen/inactive users are **held**, not consumed.
 - **Frontend support:** `GET /wallet/repurchase` (per-tier reserve, threshold, `progress_percent`, `ready` — for the progress bar) and `GET /wallet/repurchase/history` (executed repurchases).
 - On-chain **broadcasting** of the repurchase from the platform reserve wallet is **not yet wired** — this is the internal accounting layer.
