@@ -89,7 +89,7 @@ conda activate luxus && cd backend && uvicorn app.main:app --reload   # :8000, /
 # Frontend
 cd frontend && npm run dev                                            # :3000
 # Fresh DB: python create_tables.py && python seed_admin.py
-# Existing DB migrations: migrate_v14/v15/v17.py; backfill_repurchase_reserve.py
+# Existing DB migrations: migrate_v14/v15/v17/v18/v19.py; backfill_repurchase_reserve.py
 ```
 
 - **Touch only what you must** — this is a financial system; keep changes scoped.

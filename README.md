@@ -256,26 +256,21 @@ GET  /deposit                         → deposit history
 
 ## Matrix System
 
-Both Stream and Boost use a 3×3 breadth-first forced matrix:
+Both Stream and Boost run as **three independent per-level FIFO queues** — one queue each for L1, L2, and L3 — not a single branching tree. Position 1 (the head of a level's queue) is paid once `threshold` **brand-new** members have joined that same level's queue behind them (L1: 3, L2: 9, L3: 27), then pops out and the next member in line becomes head:
 
 ```
-Position (you)
-├── Slot 1  ──┬── Slot 4
-│             ├── Slot 5
-│             └── Slot 6
-├── Slot 2  ──┬── Slot 7
-│             ├── Slot 8
-│             └── Slot 9
-└── Slot 3  ──┬── Slot 10
-              ├── Slot 11
-              └── Slot 12
+L1 queue (threshold 3):  [you, A, B, C, D, E, ...]
+  you paid once A,B,C join (join #4 overall) → popped
+  A paid once D,E,F join (join #7 overall)   → popped
+  ...
 
-L1 = 3 filled  (Slots 1–3)
-L2 = 9 filled  (Slots 4–12)
-L3 = 27 filled (next ring)
+L2 queue (threshold 9):  same pattern, 9 fresh joiners per payout
+L3 queue (threshold 27): same pattern, 27 fresh joiners per payout
 ```
 
-Concurrency is protected via PostgreSQL `SELECT FOR UPDATE` on `MatrixCounter` rows, preventing race conditions under parallel activations.
+A real purchase adds **one entry to all three of its tier's level-queues at once** (a member's downline growth counts toward L1, L2, and L3 simultaneously — the "3 x 3" of the spec). The re-entries a level-completion grants feed back **only into that same level's own queue** — never into the other two. That separation is what keeps the system bounded: each level's own re-entries are a contracting 1-in-3 series (Stream/Boost's `L1/L2/L3 ReBirth` counts are exactly 1/3/9 against thresholds 3/9/27) when they can't cross-feed into the other levels. `app/core/matrix_engine.py` implements this (`MatrixLevelQueue` + `MatrixQueueSlot`); `app/core/matrix_runtime.py` drives it per purchase, via a durable `MatrixPendingPayout` backlog so a busy queue never makes a single purchase request hang — any backlog left over after a bounded per-call budget is picked up by the next purchase automatically.
+
+Concurrency is protected via PostgreSQL `SELECT FOR UPDATE` on `MatrixLevelQueue` and `MatrixQueueSlot` rows, preventing race conditions under parallel activations.
 
 ---
 
@@ -616,7 +611,7 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - **Logging:** all logs use a single timestamped format (`time | LEVEL | logger | message`), configured in `app/logging_config.py` and controlled by `LOG_LEVEL`. A request-logging middleware records every call with its **duration** (4xx/5xx at WARNING), and unhandled errors are logged with a full traceback. Use `LOG_LEVEL=DEBUG` temporarily to trace an issue, then switch back to `INFO`.
 - **NOWPayments payouts (withdrawals)** require the payout API's JWT auth (`/v1/auth`) **+ 2FA** in production — the API key alone (sufficient for deposits) will be rejected for outgoing payouts. Sandbox is more lenient; verify against the live payout API before go-live.
 - All financial amounts use Python `Decimal` — no float precision errors.
-- Matrix concurrency uses PostgreSQL `SELECT FOR UPDATE` on `MatrixCounter`.
+- Matrix concurrency uses PostgreSQL `SELECT FOR UPDATE` on `MatrixLevelQueue` / `MatrixQueueSlot` (per-level FIFO queues — see [Matrix System](#matrix-system)).
 - Celery tasks retry up to 3× on failure (60s delay for purchases, 300s for withdrawals).
 - **bcrypt is pinned to 4.0.1** — bcrypt 5.x breaks passlib; do not upgrade.
 - `POST /agents/purchase/{id}/confirm` is **dev-only** — remove before production.
