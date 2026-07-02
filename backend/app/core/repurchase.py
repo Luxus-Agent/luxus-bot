@@ -28,6 +28,14 @@ extra amount will go to our platform profit wallet … this includes for repurch
 also"). Boost reserve always accumulates in the tier-1 bucket (Boost is a single
 global queue), so Boost-driven repurchases re-buy Agent 1.
 
+`sweep_auto_repurchases` is capped per call (_MAX_REPURCHASE_STEPS) rather than
+truly unbounded within one request — each repurchase is itself a real purchase
+that runs the full Stream/Boost matrix engine, so an unbounded sweep can make a
+single HTTP request run for a very long time once enough reserves are queued up.
+The cascade as a whole is still unbounded across TIME ("to its infinity", per
+spec) — any reserve left over when the cap is hit is untouched and picked up by
+the next purchase's sweep call, so nothing is delayed forever, just spread out.
+
 Everything runs inside the caller's transaction (flush, never commit).
 """
 import logging
@@ -51,10 +59,18 @@ REPURCHASE_PLATFORM_FEE = {
     tier: Decimal(str(fee)) for tier, fee in AGENT_TIER_PLATFORM_FEE.items()
 }
 
-# Safety cap on the cascade (a repurchase can credit uplines, who may repurchase…).
-# Each repurchase consumes price+gas and only redistributes 60% as Core, so reserves
-# strictly shrink and the cascade converges; this only guards against an anomaly.
-_MAX_REPURCHASE_STEPS = 100_000
+# Per-call cap on how many repurchases one sweep_auto_repurchases() call will
+# execute. The reserve math itself always converges (each repurchase consumes
+# price+fee and only redistributes 60% as Core, so reserves strictly shrink) —
+# but every repurchase is also a real purchase, so it calls run_purchase_matrices
+# (matrix_runtime._MAX_STEPS_PER_CALL of work each). Total matrix work for one
+# purchase request is (1 + repurchases_this_call) × that budget, so this cap
+# and matrix_runtime's multiply together — kept low so the product stays a few
+# hundred steps, not thousands. Anything left over when the cap is hit is NOT
+# lost — reserves stay in the Wallet table exactly as-is and get re-scanned by
+# the very next purchase's sweep call (same "defer, don't drop" pattern as the
+# matrix backlog).
+_MAX_REPURCHASE_STEPS = 8
 
 
 def repurchase_threshold(tier: int) -> Decimal:
@@ -168,19 +184,32 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
 
 def sweep_auto_repurchases(db: Session) -> int:
     """
-    Process every pending auto-repurchase across all users until no per-tier
-    reserve is at/over its threshold. Re-buys cascade (an upline's freshly credited
-    reserve can itself cross a threshold), so this re-scans after each round.
+    Process pending auto-repurchases across all users until no per-tier reserve
+    is at/over its threshold, OR until _MAX_REPURCHASE_STEPS repurchases have run
+    in this call — whichever comes first. Re-buys cascade (an upline's freshly
+    credited reserve can itself cross a threshold), so this re-scans after each
+    round. Any reserve still over threshold when the cap is hit is left exactly
+    as-is (nothing is lost) and gets picked up by the next purchase's sweep call.
 
     Runs inside the caller's transaction (flush only, never commit). Returns the
-    number of repurchases executed.
+    number of repurchases executed in this call.
     """
+    # Every tier's threshold is >= the smallest (tier 1, $11), so a wallet below
+    # that can never be over ANY tier's threshold — cheap pre-filter that keeps
+    # this from re-scanning every reserve wallet in the system on every round
+    # (this loop can run up to _MAX_REPURCHASE_STEPS times per call; without the
+    # filter that's O(total reserve wallets × steps), which gets slower and
+    # slower as the platform grows regardless of how few reserves are actually
+    # near threshold).
+    min_threshold = min(repurchase_threshold(t) for t in AGENT_TIER_PRICES)
+
     total = 0
     steps = 0
     while True:
         reserves = (
             db.query(Wallet)
             .filter_by(wallet_type=WalletType.REPURCHASE)
+            .filter(Wallet.balance >= min_threshold)
             .all()
         )
         progressed = False

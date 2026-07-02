@@ -1,25 +1,43 @@
 """
-3×3 Forced Matrix Engine — shared by the Stream and Boost Agent systems.
+3-level independent FIFO Queue Engine — shared by the Stream and Boost Agent
+systems.
 
-Tree layout (breadth-first, 1-indexed)
----------------------------------------
-    1
-    ├── 2  └── 3  └── 4
-        ├── 5,6,7       ├── 8,9,10      ├── 11,12,13
-            └── ...
+This implements the client's exact "How matrix (Queue system) work?" spec, not
+a shared ancestor tree. Each (agent_tier, system_type) runs THREE SEPARATE
+queues — one per level (L1/L2/L3) — and each is a plain FIFO line:
 
-Parent formula: parent(p) = (p - 2) // 3 + 1  for p >= 2
+    Position 1 (the head) is paid once the NEXT `threshold` members join that
+    SAME level's queue behind them (L1: 3, L2: 9, L3: 27), then pops out. The
+    new head is whoever was next in line — "likewise, it goes through."
+    ("1st member get payment from their downline 2nd, 3rd and 4th members in
+    the queue. Once he/she gets payment he/she will be popped out of the
+    queue. And the 2nd member come up to receive his payment...")
 
-When position P joins, it increments the fill count of its L1, L2, and L3 ancestors.
-On each fill increment two events can fire:
+A real purchase adds ONE entry to ALL THREE of its tier's level-queues at
+once — a member's downline growth counts toward L1, L2, and L3 simultaneously,
+which is the "3 x 3" of the spec. The re-entries a level-completion grants,
+however, feed back ONLY into that SAME level's own queue — matching the spec's
+diagram, where each level's re-entry count is drawn directly under its own
+box ("L1 ReBirth", "L2 ReBirth", "L3 ReBirth" are each attached to their own
+level, never pooled).
 
-  1. Level completion — when a fill count reaches the threshold (3 / 9 / 27) the
-                        owner gets the main wallet payout + re-entry grants.
-  2. Sponsor share    — at L2/L3 completion, 10% of the level gross is paid to the
-                        owner's sponsor (extra, from the pool — not deducted).
+That distinction is also what keeps the system economically bounded: at every
+level, reentry_count / threshold is exactly 1/3 (1 of 3, 3 of 9, 9 of 27) — a
+contracting geometric series when a level's re-entries only feed themselves
+back (each level's total queue size converges to 1.5x its real-purchase count,
+see the stability note below). The previous implementation used one shared
+ancestor tree where a single new join could simultaneously complete all three
+levels for its parent/grandparent/great-grandparent at once, feeding real
+re-entries back into a shared structure that could trigger further multi-level
+completions — that's exactly critical (1/3 summed across 3 levels = 1), and in
+testing produced 2,985+ payouts (still climbing) from a single purchase, from a
+Boost pool that had collected only cents. This redesign fixes that at the root
+instead of just rate-limiting it — see matrix_runtime.py for the durable
+backlog that still bounds per-request latency as defense-in-depth.
 
-Payout amounts (Agent 1 / $10 base — higher Stream tiers scale wallet/re-entry $
-amounts by tier_multiplier; re-entry COUNT stays fixed at 1/3/9 across tiers):
+Payout amounts (unchanged from the client spec — Agent 1 / $10 base; higher
+Stream tiers scale wallet/re-entry $ amounts by tier_multiplier; re-entry COUNT
+stays fixed at 1/3/9 across tiers):
 
   Stream Agent  L1: $2.00 wallet + $1.00 re-entry ×1            (no sponsor share)
                 L2: $5.00 wallet + $1.00 re-entries ×3          sponsor $0.90 (10% of $9)
@@ -29,21 +47,16 @@ amounts by tier_multiplier; re-entry COUNT stays fixed at 1/3/9 across tiers):
                 L3: $3.60 wallet + $0.30 re-entries ×9          sponsor $0.81 (10% of $8.10)
   (remaining level pool after payout + re-entries + sponsor share → platform profit)
 
-Each member contributes `reentry_amount` per level × 3 levels, so a single purchase's
-matrix funding = 3 × reentry_amount — exactly the 30% (Stream, $3 of $10) / 9% (Boost,
-$0.90 of $10) pool collected on-chain for that purchase. The matrix IS the distribution
-of that pool; residuals are booked as platform profit.
+Boost Agent uses a SINGLE global queue set (agent_tier=1 for all tiers). Boost
+re-entries are REAL (eligible to be paid themselves later); Stream re-entries
+are DUMMY (fill a slot to keep the queue moving, earn nothing, and — per spec —
+spawn no further re-entries themselves: "All Re-entries instances should be
+placed as dummy ones. It will not receive any income.").
 
-Boost Agent uses a SINGLE global queue (agent_tier=1 for all tiers). Boost re-entries
-are REAL (full payouts); Stream re-entries are DUMMY (fill slots, earn nothing, spawn
-no further re-entries — only one real Stream entry per user at a time).
-
-Concurrency: MatrixCounter and each touched ancestor row are locked with
-SELECT FOR UPDATE, guaranteeing sequential position numbers under concurrent joins.
-
-This module is pure/synchronous — it mutates rows and RETURNS the pending payouts;
-it does NOT credit wallets or place re-entries (the runtime layer does that). It must
-run inside an active transaction and does NOT commit.
+This module is pure/synchronous — it mutates rows and RETURNS the pending
+payouts; it does NOT credit wallets (the runtime layer does that, via the
+durable backlog — see matrix_runtime.py). Must run inside an active
+transaction, does NOT commit.
 """
 from dataclasses import dataclass
 from decimal import Decimal
@@ -51,7 +64,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models.agent import AGENT_TIER_PRICES
-from app.models.matrix import MatrixCounter, MatrixPosition, SystemType
+from app.models.matrix import MatrixLevelQueue, MatrixQueueSlot, SystemType
 from app.models.transaction import Transaction, TransactionType
 
 
@@ -94,28 +107,10 @@ def tier_multiplier(agent_tier: int) -> Decimal:
     return Decimal(str(AGENT_TIER_PRICES[agent_tier])) / Decimal("10")
 
 
-def parent_position(pos: int) -> int | None:
-    if pos <= 1:
-        return None
-    return (pos - 2) // 3 + 1
-
-
-def ancestor_chain(pos: int, depth: int = 3) -> list[int]:
-    ancestors = []
-    current = pos
-    for _ in range(depth):
-        p = parent_position(current)
-        if p is None:
-            break
-        ancestors.append(p)
-        current = p
-    return ancestors
-
-
 @dataclass
 class PendingPayout:
-    """Triggered when a matrix level reaches its fill threshold."""
-    matrix_position_id: int
+    """Triggered when a level's queue head is paid (its threshold reached)."""
+    matrix_position_id: int   # MatrixQueueSlot.id of the paid slot (reference only)
     user_id: int
     agent_tier: int
     system_type: SystemType
@@ -129,139 +124,160 @@ class PendingPayout:
 class PendingSponsorPayout:
     """Triggered when a level completes and its owner's sponsor is owed 10%."""
     matrix_position_id: int
-    owner_user_id: int   # The matrix position owner (their sponsor gets paid)
+    owner_user_id: int   # The paid slot's owner (their sponsor gets paid)
     agent_tier: int
     system_type: SystemType
     level: int
     amount: Decimal      # Amount to credit to owner's sponsor
 
 
-def place_in_matrix(
-    db: Session,
-    user_id: int,
-    agent_tier: int,
-    system_type: SystemType,
-    is_dummy: bool = False,
-) -> tuple[MatrixPosition, list[PendingPayout], list[PendingSponsorPayout]]:
-    """
-    Assign the next available matrix slot to user_id and update ancestor fill counts.
-
-    Returns (new_slot, pending_payouts, sponsor_payouts). Must run inside an active
-    transaction — does NOT commit.
-    """
-    # 1. Claim next position (row-level lock prevents concurrent conflicts)
-    counter = (
-        db.query(MatrixCounter)
-        .filter_by(agent_tier=agent_tier, system_type=system_type)
+def _get_or_create_queue(
+    db: Session, agent_tier: int, system_type: SystemType, level: int
+) -> MatrixLevelQueue:
+    q = (
+        db.query(MatrixLevelQueue)
+        .filter_by(agent_tier=agent_tier, system_type=system_type, level=level)
         .with_for_update()
         .first()
     )
-    if not counter:
-        counter = MatrixCounter(agent_tier=agent_tier, system_type=system_type, next_position=1)
-        db.add(counter)
+    if not q:
+        q = MatrixLevelQueue(
+            agent_tier=agent_tier, system_type=system_type, level=level,
+            head_position=1, next_position=1,
+        )
+        db.add(q)
         db.flush()
+    return q
 
-    new_pos_num = counter.next_position
-    counter.next_position += 1
+
+def _append_to_level(
+    db: Session, user_id: int, agent_tier: int, system_type: SystemType,
+    level: int, is_dummy: bool,
+) -> tuple[list[PendingPayout], list[PendingSponsorPayout]]:
+    """
+    Append one slot to (agent_tier, system_type, level)'s own queue, then drain
+    any completions this triggers (normally 0 or 1; looped for correctness in
+    case of any bulk/edge-case gap). Returns (payouts, sponsor_payouts).
+
+    Completion check: per the spec's own worked example ("1st member gets
+    payment from 2nd,3rd,4th... popped... 2nd member: 5th,6th,7th will pay"),
+    each successive head needs `threshold` BRAND NEW joins counted from when it
+    became head — NOT merely "however many people happen to already be sitting
+    in the queue". Position 3/4 already existed by the time position 1 was
+    paid; they do NOT also count toward position 2's threshold. So completion
+    #k (0-indexed by head_position - 1) requires the cumulative join count to
+    reach `1 + threshold * (k + 1)` — this is what
+    `total_joined >= 1 + threshold * completions_so_far` checks below. A naive
+    `next_position - head_position >= threshold` check double-counts already-
+    queued members across consecutive completions and runs away.
+    """
+    q = _get_or_create_queue(db, agent_tier, system_type, level)
+    pos_num = q.next_position
+    q.next_position += 1
+    db.add(MatrixQueueSlot(
+        agent_tier=agent_tier, system_type=system_type, level=level,
+        position_number=pos_num, user_id=user_id, is_dummy=is_dummy,
+    ))
     db.flush()
 
-    # 2. Insert the new slot
-    new_slot = MatrixPosition(
-        user_id=user_id,
-        agent_tier=agent_tier,
-        system_type=system_type,
-        position_number=new_pos_num,
-        is_dummy=is_dummy,
-    )
-    db.add(new_slot)
-    db.flush()
+    cfg = PAYOUT_CONFIG[system_type][level]
+    multiplier = tier_multiplier(agent_tier)
+    payouts: list[PendingPayout] = []
+    sponsors: list[PendingSponsorPayout] = []
 
-    # 3. Walk up the ancestor chain, increment fill counts, check for events
-    pending_payouts: list[PendingPayout] = []
-    sponsor_payouts: list[PendingSponsorPayout] = []
-
-    for depth_index, ancestor_pos_num in enumerate(ancestor_chain(new_pos_num)):
-        level = depth_index + 1  # 1, 2, or 3
-
-        ancestor = (
-            db.query(MatrixPosition)
-            .filter_by(agent_tier=agent_tier, system_type=system_type, position_number=ancestor_pos_num)
+    while True:
+        total_joined = q.next_position - 1
+        completions_so_far = q.head_position - 1
+        required_total = 1 + cfg.threshold * (completions_so_far + 1)
+        if total_joined < required_total:
+            break
+        head_slot = (
+            db.query(MatrixQueueSlot)
+            .filter_by(agent_tier=agent_tier, system_type=system_type, level=level,
+                       position_number=q.head_position)
             .with_for_update()
             .first()
         )
-        if not ancestor:
+        q.head_position += 1
+        db.flush()
+        if head_slot is None:
+            continue  # defensive: should never happen, positions are contiguous
+
+        # Dummy positions (Stream re-entries) fill slots for others but don't
+        # earn wallet payouts or spawn further re-entries themselves.
+        if head_slot.is_dummy:
             continue
 
-        # Increment fill count for this level
-        if level == 1:
-            ancestor.l1_filled += 1
-            filled, already_paid = ancestor.l1_filled, ancestor.l1_paid
-        elif level == 2:
-            ancestor.l2_filled += 1
-            filled, already_paid = ancestor.l2_filled, ancestor.l2_paid
-        else:
-            ancestor.l3_filled += 1
-            filled, already_paid = ancestor.l3_filled, ancestor.l3_paid
+        payouts.append(PendingPayout(
+            matrix_position_id=head_slot.id,
+            user_id=head_slot.user_id,
+            agent_tier=agent_tier,
+            system_type=system_type,
+            level=level,
+            wallet_amount=cfg.wallet_amount * multiplier,
+            reentry_amount=cfg.reentry_amount * multiplier,
+            reentry_count=cfg.reentry_count,
+        ))
 
-        db.flush()
+        # Realized platform profit = the level's leftover pool after the
+        # wallet payout, re-entries, and sponsor share. reentry_amount is
+        # each member's per-level contribution, so level gross =
+        # threshold × reentry_amount.
+        residual = (
+            cfg.threshold * cfg.reentry_amount
+            - cfg.wallet_amount
+            - cfg.reentry_count * cfg.reentry_amount
+            - cfg.sponsor_on_completion
+        ) * multiplier
+        if residual > 0:
+            db.add(Transaction(
+                user_id=head_slot.user_id,
+                agent_tier=agent_tier,
+                transaction_type=TransactionType.PLATFORM_PROFIT,
+                amount=residual,
+                reference_id=f"residual_{system_type.value}_t{agent_tier}_slot{head_slot.id}_L{level}",
+                notes=f"{system_type.value} L{level} level residual → platform",
+            ))
 
-        cfg = PAYOUT_CONFIG[system_type][level]
-        multiplier = tier_multiplier(agent_tier)
+        # L2/L3: 10% extra to owner's sponsor on level completion (paid from
+        # the pool, not deducted from the owner's wallet).
+        if cfg.sponsor_on_completion > 0:
+            sponsors.append(PendingSponsorPayout(
+                matrix_position_id=head_slot.id,
+                owner_user_id=head_slot.user_id,
+                agent_tier=agent_tier,
+                system_type=system_type,
+                level=level,
+                amount=cfg.sponsor_on_completion * multiplier,
+            ))
 
-        # ── Level completion check ───────────────────────────────────────────
-        if filled >= cfg.threshold and not already_paid:
-            if level == 1:
-                ancestor.l1_paid = True
-            elif level == 2:
-                ancestor.l2_paid = True
-            else:
-                ancestor.l3_paid = True
-                ancestor.completed = True
+    return payouts, sponsors
 
-            # Dummy positions (Stream re-entries) fill slots for others but don't
-            # earn wallet payouts or spawn further re-entries themselves.
-            if not ancestor.is_dummy:
-                pending_payouts.append(PendingPayout(
-                    matrix_position_id=ancestor.id,
-                    user_id=ancestor.user_id,
-                    agent_tier=agent_tier,
-                    system_type=system_type,
-                    level=level,
-                    wallet_amount=cfg.wallet_amount * multiplier,
-                    reentry_amount=cfg.reentry_amount * multiplier,
-                    reentry_count=cfg.reentry_count,
-                ))
 
-                # Realized platform profit = the level's leftover pool after the
-                # wallet payout, re-entries, and sponsor share. reentry_amount is
-                # each member's per-level contribution, so level gross =
-                # threshold × reentry_amount.
-                residual = (
-                    cfg.threshold * cfg.reentry_amount
-                    - cfg.wallet_amount
-                    - cfg.reentry_count * cfg.reentry_amount
-                    - cfg.sponsor_on_completion
-                ) * multiplier
-                if residual > 0:
-                    db.add(Transaction(
-                        user_id=ancestor.user_id,
-                        agent_tier=agent_tier,
-                        transaction_type=TransactionType.PLATFORM_PROFIT,
-                        amount=residual,
-                        reference_id=f"residual_{system_type.value}_t{agent_tier}_pos{ancestor.id}_L{level}",
-                        notes=f"{system_type.value} L{level} level residual → platform",
-                    ))
+def place_real_join(
+    db: Session, user_id: int, agent_tier: int, system_type: SystemType,
+) -> tuple[list[PendingPayout], list[PendingSponsorPayout]]:
+    """
+    A real purchase's placement: adds one entry to ALL THREE level-queues
+    (L1/L2/L3) for this tier+system at once — a member's downline growth
+    counts toward every level simultaneously. Returns (payouts, sponsors).
+    """
+    payouts: list[PendingPayout] = []
+    sponsors: list[PendingSponsorPayout] = []
+    for level in (1, 2, 3):
+        p, s = _append_to_level(db, user_id, agent_tier, system_type, level, is_dummy=False)
+        payouts.extend(p)
+        sponsors.extend(s)
+    return payouts, sponsors
 
-                # L2/L3: 10% extra to owner's sponsor on level completion (paid
-                # from the pool, not deducted from the owner's wallet).
-                if cfg.sponsor_on_completion > 0:
-                    sponsor_payouts.append(PendingSponsorPayout(
-                        matrix_position_id=ancestor.id,
-                        owner_user_id=ancestor.user_id,
-                        agent_tier=agent_tier,
-                        system_type=system_type,
-                        level=level,
-                        amount=cfg.sponsor_on_completion * multiplier,
-                    ))
 
-    return new_slot, pending_payouts, sponsor_payouts
+def place_level_reentry(
+    db: Session, user_id: int, agent_tier: int, system_type: SystemType,
+    level: int, is_dummy: bool,
+) -> tuple[list[PendingPayout], list[PendingSponsorPayout]]:
+    """
+    A re-entry granted by a level completion: feeds back into ONLY that same
+    level's own queue — the key difference from a real join, and what keeps
+    the whole system bounded (see module docstring).
+    """
+    return _append_to_level(db, user_id, agent_tier, system_type, level, is_dummy)
