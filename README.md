@@ -16,6 +16,7 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
 - [Withdrawal Flow](#withdrawal-flow)
 - [TokenPocket Distribution Endpoint](#tokenpocket-distribution-endpoint)
 - [On-Chain Pack Purchase](#on-chain-pack-purchase)
+- [Member Payout](#member-payout-admin-distribution)
 - [Tech Stack](#tech-stack)
 - [Setup & Installation](#setup--installation)
 - [Running the Project](#running-the-project)
@@ -185,7 +186,7 @@ Implemented in `app/core/repurchase.py`. Every income credit holds back 20% into
 - The buy is recorded as a `REPURCHASE_BUY` ledger row, the platform fee as a `REPURCHASE_GAS` row (→ platform profit; the same flat fee charged on a manual purchase). Boost reserve always accrues in the **tier-1** bucket (single global queue), so Boost-driven repurchases re-buy Agent 1.
 - Driven by `sweep_auto_repurchases(db)`, run inside the `/distribution/pack/status` success transaction (after the matrices). It re-scans every reserve each round so the upline compounding cascade is fully drained, with a step cap as a loop guard. Reserves of frozen/inactive users are **held**, not consumed.
 - **Frontend support:** `GET /wallet/repurchase` (per-tier reserve, threshold, `progress_percent`, `ready` — for the progress bar) and `GET /wallet/repurchase/history` (executed repurchases).
-- On-chain **broadcasting** of the repurchase from the platform reserve wallet is **not yet wired** — this is the internal accounting layer.
+- **On-chain settlement** (`app/core/onchain.py`): once `REPURCHASE_SIGNER_PRIVATE_KEY` is set, each repurchase also broadcasts a real ERC20 `transfer` moving the consumed reserve (price + fee) from the reserve wallet to `PLATFORM_FEE_WALLET`, over `BSC_RPC_URL` — best-effort (any failure is logged and swallowed; the internal accounting above always applies regardless, so a broadcast failure never blocks a purchase). Leave the key unset to keep auto-repurchase internal-ledger-only, unchanged from before. This settles the reserve on-chain but does **not** replay the Core/Stream/Boost recipient split — those stay internal, paid out later via the member-payout rail below.
 - **Migration:** existing DBs run `cd backend && python migrate_v17.py` once (adds `repurchase_buy` / `repurchase_gas` / `admin_credit` + the matrix pool types to the Postgres `transactiontype` enum); `create_tables.py` covers fresh installs.
 
 ---
@@ -358,8 +359,9 @@ MultiSender call). The backend (1) returns the validated recipient split and (2)
 outcome and runs the **full revenue engine** internally.
 
 The split is the **complete 60 / 30 / 10 model** (not Core-only): Core 60% → eligible uplines,
-Stream 30% → the per-tier Stream pool wallet, Boost 9% → the global Boost pool wallet, and 1% →
-the admin income wallet. Each upline's Core commission is paid out on-chain under the **70 / 20 / 10
+Stream 30% + Boost 9% → the platform fee wallet (tracked internally per tier by the matrix engines,
+not held in their own on-chain wallet), and 1% → the admin income wallet. Each upline's Core
+commission is paid out on-chain under the **70 / 20 / 10
 wallet rule** — 70% to the upline's address, 20% to the repurchase-reserve wallet, 10% to the
 software-fee wallet. On `pack/status` **success** the backend: creates an **active `AgentPurchase`
 ownership row** (agent shows OWNED, the sequential-unlock gate works, buyer becomes Core-eligible),
@@ -376,8 +378,8 @@ POST /distribution/pack/status     → JWT. Body: { purchase_id, status, tx_hash
 ```
 
 **Split rule — full 60 / 30 / 10:** Core 60% → two 30% halves to the **first two eligible uplines**
-(eligible = active **and** highest active tier ≥ buyer's tier; compression + odd/even), Stream 30%
-→ the per-tier Stream pool wallet, Boost 9% → the global Boost pool wallet, admin 1% → the admin
+(eligible = active **and** highest active tier ≥ buyer's tier; compression + odd/even), Stream 30% +
+Boost 9% → the platform fee wallet (tracked internally by the matrix engines), admin 1% → the admin
 income wallet. Each Core upline commission is further split **70 / 20 / 10** (upline / repurchase
 reserve / software fee). A Core half with no eligible upline (or no valid BEP-20 address) is folded
 into the platform fee, so **the split always sums to the pack price**. (Split logic in
@@ -405,16 +407,17 @@ into the platform fee, so **the split always sums to the pack price**. (Split lo
     { "role": "upline",            "level": 2,    "wallet_address": "0x…", "has_wallet_address": true, "amount": 2.10, "gross_amount": 3.0 },
     { "role": "repurchase_reserve","level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 1.20 },
     { "role": "software_fee",      "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 0.60 },
-    { "role": "stream_pool",       "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 3.0 },
-    { "role": "boost_pool",        "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 0.90 },
-    { "role": "admin",             "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 0.10 }
+    { "role": "admin",             "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 0.10 },
+    { "role": "platform_fee",      "level": null, "wallet_address": "0x…", "has_wallet_address": true, "amount": 3.90 }
   ]
 }
 ```
 
 > $10 pack, two eligible uplines: each upline's $3 Core half is paid 70/20/10 → **$2.10** on-chain
 > + **$0.60** reserve + **$0.30** fee (reserve/fee shown summed across uplines). Stream $3 + Boost
-> $0.90 + admin $0.10 complete the $10. Roles and amounts vary with eligibility.
+> $0.90 land in `platform_fee` (**$3.90**) since those matrix pools are tracked internally rather
+> than held in their own on-chain wallet; admin $0.10 completes the $10. Roles and amounts vary
+> with eligibility.
 
 **API 2 — request / response:**
 
@@ -440,10 +443,57 @@ into the platform fee, so **the split always sums to the pack price**. (Split lo
 - Order records live in `pack_purchases` (`app/models/pack_purchase.py`). Run `python migrate_v15.py`
   once on existing DBs; `create_tables.py` covers fresh installs.
 - Config (`.env`): `USDT_CONTRACT`, `USDT_DECIMALS`, `PAYOUT_CURRENCY`, `PAYOUT_NETWORK`,
-  `PLATFORM_FEE_WALLET` (**set before go-live**), `VERIFY_ONCHAIN_TX` (optional tx verification, off
-  by default), plus the pool/income wallets `STREAM_POOL_WALLET`, `BOOST_POOL_WALLET`,
-  `ADMIN_INCOME_WALLET`, `REPURCHASE_RESERVE_WALLET` (each falls back to `PLATFORM_FEE_WALLET` when
-  unset — set distinct addresses before go-live).
+  `PLATFORM_FEE_WALLET` (**set before go-live** — also receives the Stream 30% + Boost-pool 9%
+  shares, which are tracked internally rather than held in their own on-chain wallet),
+  `VERIFY_ONCHAIN_TX` (optional tx verification, off by default), plus `ADMIN_INCOME_WALLET` and
+  `REPURCHASE_RESERVE_WALLET` (each falls back to `PLATFORM_FEE_WALLET` when unset — set distinct
+  addresses before go-live, and fund `REPURCHASE_RESERVE_WALLET` with its own BNB for gas — no
+  separate gas wallet), and `BSC_RPC_URL` / `REPURCHASE_SIGNER_PRIVATE_KEY` (auto-repurchase's
+  on-chain settlement — see [Auto-Repurchase](#auto-repurchase); leave the key empty to stay
+  internal-ledger-only).
+
+---
+
+## Member Payout (admin distribution)
+
+`pack/purchase` + `pack/status` move money buyer → platform (+ uplines) on-chain. This pair runs the
+**same MultiSender contract in reverse**: platform wallet → every member with a positive withdrawable
+balance (their share of Stream/Boost matrix payouts and Core commissions accumulated internally).
+Admin-only; mirrors the pack-purchase lifecycle exactly.
+
+```
+POST /distribution/payout/create   → Admin JWT. No body.
+   → snapshots every user's withdrawable balance (MAIN + ACCOUNT), returns a batch_id +
+     recipient list (address + amount) for the platform wallet to pay out via
+     sendERC20DifferentValue. Refuses to create a new batch while one is already
+     PENDING (prevents overlapping snapshots from double-debiting the same balance).
+POST /distribution/payout/status   → Admin JWT. Body: { batch_id, status, tx_hash?, failure_reason? }
+   → records the on-chain result. On success, debits each recipient's withdrawable balance
+     (MAIN wallets lowest-tier-first, then ACCOUNT — via `debit_withdrawable`) by exactly the
+     snapshotted amount, so the next payout/create won't offer the same money again. PENDING-
+     guarded, so a batch can only ever be settled once — this is the step that turns "credited
+     internally" into "actually paid."
+```
+
+- Users with a positive withdrawable balance but no valid BEP-20 address are skipped and reported
+  under `skipped_no_address` (count + amount) in the `payout/create` response, so nothing silently
+  vanishes.
+- Batch records live in `payout_batches` (`app/models/payout_batch.py`). Run `python migrate_v20.py`
+  once on existing DBs; `create_tables.py` covers fresh installs.
+- On-chain verification (`VERIFY_ONCHAIN_TX`) is not wired for this rail (same as `pack/status`
+  today) — `payout/status` trusts the admin-supplied `tx_hash`.
+
+**Automatic alternative (no admin click):** `app/core/member_payout.py`'s `run_member_payout_sweep`
+does the same job unattended — it runs automatically after **every** purchase (wired into
+`pack/status`, right after the auto-repurchase sweep), paying up to 25 members per call via the same
+MultiSender contract, signed by `PLATFORM_FEE_WALLET`'s own key
+(`PLATFORM_FEE_SIGNER_PRIVATE_KEY` — set `MULTISENDER_ADDRESS` too). Handles the ERC20 `approve()`
+step itself the first time it needs more allowance. Disabled by default (empty key = internal-ledger
+-only, unchanged); best-effort — any failure is logged and swallowed, never blocks the purchase. Row-
+locks candidate wallets for the duration of the on-chain call so two purchases confirming at the same
+time can't both pay the same balance. The admin-triggered `payout/create`/`payout/status` pair above
+stays available as a manual fallback either way — both drain the same balances, so they can't
+double-pay each other's work.
 
 ---
 
@@ -569,11 +619,13 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 | `APP_ENV`                   | `development` or `production`                                 |
 | `LOG_LEVEL`                 | `DEBUG` / `INFO` / `WARNING` / `ERROR` — log verbosity (default `INFO`) |
 | `CORS_ORIGINS`              | Comma-separated allowed frontend origins, or `*`. Set to your frontend URL in production |
-| `PLATFORM_FEE_WALLET`       | BEP-20 wallet that receives the pack-purchase platform fee (**set before go-live**); also the fallback for the four wallets below |
-| `STREAM_POOL_WALLET`        | Receives the Stream 30% pool (falls back to `PLATFORM_FEE_WALLET`)             |
-| `BOOST_POOL_WALLET`         | Receives the Boost 9% pool (falls back to `PLATFORM_FEE_WALLET`)               |
+| `PLATFORM_FEE_WALLET`       | BEP-20 wallet that receives the pack-purchase platform fee, the 10% Core software fee, and the Stream 30% + Boost-pool 9% shares (**set before go-live**); also the fallback for the two wallets below. Fund it with its own BNB for gas if `PLATFORM_FEE_SIGNER_PRIVATE_KEY` is set — no separate gas wallet |
 | `ADMIN_INCOME_WALLET`       | Receives the 1% Boost-allocation admin cut (falls back to `PLATFORM_FEE_WALLET`) |
-| `REPURCHASE_RESERVE_WALLET` | Receives the 20% repurchase reserve (falls back to `PLATFORM_FEE_WALLET`)      |
+| `REPURCHASE_RESERVE_WALLET` | Receives the 20% repurchase reserve (falls back to `PLATFORM_FEE_WALLET`); fund this address with its own BNB for gas — no separate gas wallet |
+| `BSC_RPC_URL`               | RPC endpoint for the auto-repurchase settlement broadcast; defaults to BSC testnet, matching the mock `USDT_CONTRACT` this repo ships with |
+| `REPURCHASE_SIGNER_PRIVATE_KEY` | Private key that signs the auto-repurchase on-chain settlement (`app/core/onchain.py`). **Live private key — never commit a real one.** Leave empty to keep auto-repurchase internal-ledger-only (default, safe) |
+| `MULTISENDER_ADDRESS`       | MultiSender contract used by the automatic member-payout sweep (same contract the frontend uses for purchases) |
+| `PLATFORM_FEE_SIGNER_PRIVATE_KEY` | Private key that signs the automatic member-payout sweep (`app/core/member_payout.py`), runs after every purchase. **Live private key — never commit a real one; must be `PLATFORM_FEE_WALLET`'s own key.** Leave empty to keep member earnings internal-ledger-only (default, safe) — the admin-triggered `payout/create`/`payout/status` pair stays available regardless |
 | `USDT_CONTRACT`             | USDT token contract on the active chain (returned by `pack/purchase`)         |
 | `USDT_DECIMALS`             | USDT token decimals (e.g. 18)                                                  |
 | `PAYOUT_CURRENCY` / `PAYOUT_NETWORK` | Currency / network labels returned by `pack/purchase` (USDT / BEP-20) |

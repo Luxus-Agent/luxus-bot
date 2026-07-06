@@ -43,6 +43,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from app.core.onchain import send_repurchase_settlement
 from app.core.pack_payout import compute_pack_split
 from app.core.wallet_ops import credit_wallet, get_or_create_wallet
 from app.models.agent import AGENT_TIER_PLATFORM_FEE, AGENT_TIER_PRICES
@@ -154,13 +155,21 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
     reserve.balance = balance - threshold
     ref = f"repurchase_u{user.id}_t{tier}"
 
+    # Settle on-chain: move the consumed reserve (price + fee) from the reserve
+    # signer wallet to PLATFORM_FEE_WALLET, so it's actually available for the
+    # member-payout rail later. Best-effort — returns None (disabled or failed)
+    # without raising; the internal accounting above and below always applies
+    # regardless, matching today's behavior when this isn't configured.
+    tx_hash = send_repurchase_settlement(threshold, tier, ref)
+    tx_note = f" (on-chain tx {tx_hash[:12]}…)" if tx_hash else ""
+
     db.add(Transaction(
         user_id=user.id,
         agent_tier=tier,
         transaction_type=TransactionType.REPURCHASE_BUY,
         amount=price,
         reference_id=ref,
-        notes=f"Auto-repurchase Agent {tier} (${price})",
+        notes=f"Auto-repurchase Agent {tier} (${price}){tx_note}",
     ))
     db.add(Transaction(
         user_id=user.id,
@@ -168,7 +177,7 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
         transaction_type=TransactionType.REPURCHASE_GAS,
         amount=platform_fee,
         reference_id=ref,
-        notes=f"Auto-repurchase platform fee (Agent {tier})",
+        notes=f"Auto-repurchase platform fee (Agent {tier}){tx_note}",
     ))
 
     # Distribute exactly like a normal purchase (uplines earn + build reserve).

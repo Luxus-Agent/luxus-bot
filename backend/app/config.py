@@ -27,14 +27,12 @@ class Settings(BaseSettings):
     # USDT token contract on the active chain (decimals as given by the client).
     USDT_CONTRACT: str = "0xb2681F1CA80e080827d5f275648D2d2e2684f0C8"
     USDT_DECIMALS: int = 18
-    # Wallet that receives the platform-fee portion of each pack purchase. Set this
-    # in .env before go-live; when empty the platform_fee recipient address is null.
+    # Wallet that receives the platform-fee portion of each pack purchase — the flat
+    # per-tier fee, the 10% Core software fee, and the Stream (30%) + Boost-pool (9%)
+    # shares (those matrix pools are tracked internally, not held in a separate
+    # on-chain wallet). Set this in .env before go-live; when empty the platform_fee
+    # recipient address is null.
     PLATFORM_FEE_WALLET: str = ""
-    # Platform-held pool wallets that receive the Stream (30%) and Boost (9%)
-    # portions of each purchase on-chain. These pools are drawn down by the Stream /
-    # Boost matrix engines. When empty they fall back to PLATFORM_FEE_WALLET.
-    STREAM_POOL_WALLET: str = ""
-    BOOST_POOL_WALLET: str = ""
     # Admin income wallet — receives the 1% Boost-allocation admin cut on each
     # purchase. When empty it falls back to PLATFORM_FEE_WALLET.
     ADMIN_INCOME_WALLET: str = ""
@@ -43,13 +41,40 @@ class Settings(BaseSettings):
     # repurchase. When empty it falls back to PLATFORM_FEE_WALLET.
     REPURCHASE_RESERVE_WALLET: str = ""
 
-    @property
-    def stream_pool_wallet(self) -> str:
-        return self.STREAM_POOL_WALLET or self.PLATFORM_FEE_WALLET
+    # ── Auto-repurchase on-chain broadcast ───────────────────────────────────
+    # RPC endpoint used to broadcast the settlement transfer below. Defaults to
+    # BSC TESTNET's public endpoint, matching the mock USDT_CONTRACT this project
+    # ships with (0xb268... / 6 decimals is a testnet token, not real mainnet
+    # USDT) — override to a mainnet RPC only once USDT_CONTRACT is the real
+    # mainnet token and the signer wallet holds real funds.
+    BSC_RPC_URL: str = "https://data-seed-prebsc-1-s1.binance.org:8545/"
+    # Private key of the wallet that signs the auto-repurchase settlement
+    # transfer — this must be REPURCHASE_RESERVE_WALLET's own key, since the
+    # ERC20 transfer is sent FROM whichever address this key controls, and that
+    # same wallet also pays its own BNB gas for the transaction — fund that
+    # address with BNB directly (manually; there is no automated top-up). Left
+    # empty by default: auto-repurchase then stays internal-ledger-only
+    # (today's behavior), no transaction is ever attempted. THIS IS A LIVE
+    # PRIVATE KEY — never commit a real one; treat this exactly like SECRET_KEY.
+    REPURCHASE_SIGNER_PRIVATE_KEY: str = ""
 
-    @property
-    def boost_pool_wallet(self) -> str:
-        return self.BOOST_POOL_WALLET or self.PLATFORM_FEE_WALLET
+    # ── Automatic member payout (Stream/Boost/Core earnings -> members) ──────
+    # MultiSender contract used to pay every member's withdrawable balance out
+    # in one batched call — same contract/ABI the frontend already uses for
+    # pack purchases (frontend/src/config/contracts.js), called here from the
+    # backend instead. Defaults to the same testnet contract already deployed
+    # for this project.
+    MULTISENDER_ADDRESS: str = "0xbe417c4936453fAC6D6c8d36b0d161a1AA4Ff624"
+    # Private key of PLATFORM_FEE_WALLET — signs the automatic member-payout
+    # transaction (runs after every purchase, no admin approval step). This
+    # wallet also pays its own BNB gas for the approve() + sendERC20DifferentValue()
+    # calls — fund PLATFORM_FEE_WALLET's address with BNB directly (manually,
+    # same as REPURCHASE_SIGNER_PRIVATE_KEY's wallet above; no automated top-up).
+    # Left empty by default: member earnings then stay purely internal-ledger,
+    # and the admin-triggered POST /distribution/payout/create + /payout/status
+    # pair remains the only way to pay members out. THIS IS A LIVE PRIVATE
+    # KEY — never commit a real one; treat this exactly like SECRET_KEY.
+    PLATFORM_FEE_SIGNER_PRIVATE_KEY: str = ""
 
     @property
     def admin_income_wallet(self) -> str:

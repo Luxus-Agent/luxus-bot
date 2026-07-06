@@ -5,6 +5,7 @@ from app.models.wallet import Wallet, WalletType
 from app.models.transaction import Transaction, TransactionType
 from app.models.platform_setting import PlatformSetting
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
+from app.models.payout_batch import PayoutBatch, PayoutBatchStatus
 from app.models.matrix import (
     MatrixPosition,
     MatrixCounter,
@@ -26,6 +27,8 @@ __all__ = [
     "PlatformSetting",
     "PackPurchase",
     "PackPurchaseStatus",
+    "PayoutBatch",
+    "PayoutBatchStatus",
     "MatrixPosition",
     "MatrixCounter",
     "MatrixLevelQueue",

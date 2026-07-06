@@ -46,22 +46,24 @@ def mirror_onchain_earning_split(
 ) -> tuple[Decimal, Decimal, Decimal]:
     """
     Apply the 70/20/10 wallet rule to a Core commission (per the client spec —
-    "if a user gets income, it should be split as 70/20/10").
+    "if a user gets income, it should be split as 70/20/10") — WITHOUT crediting
+    the 70% main share to an internal wallet, because on this on-chain rail that
+    70% was already paid directly, on-chain, from the buyer's own wallet straight
+    to this user's wallet at purchase time (see pack_purchase's "upline" recipient
+    in app/api/distribution.py). Crediting it again here would double-pay it once
+    an automatic/admin payout sweep later drains internal wallet balances.
 
     From the gross Core share:
       • 10% software fee  → platform (recorded as a SOFTWARE_FEE transaction)
-      • 20% repurchase    → held in the user's per-tier REPURCHASE wallet
-      • 70% main          → the user's per-tier MAIN wallet (their spendable share)
-
-    On the on-chain rail these wallet figures mirror what actually moves on-chain:
-    the upline's own wallet receives the 70% main; the 20% reserve and 10% fee are
-    paid on-chain to platform-held wallets (the reserve is held for the user's
-    auto-repurchase, the fee is platform profit). The MAIN/REPURCHASE balances
-    therefore track real per-user holdings, not just display.
+      • 20% repurchase    → held in the user's per-tier REPURCHASE wallet (this
+        20% really was paid on-chain to the pooled REPURCHASE_RESERVE_WALLET, not
+        to the user directly, so tracking each user's share internally is correct)
+      • 70% main          → NOT credited to any wallet (already delivered on-chain)
 
     The caller writes the CORE_INCOME row for the user's net income
-    (main + repurchase). This function writes the SOFTWARE_FEE row and adjusts the
-    wallet balances.
+    (main + repurchase) — that ledger row (not a wallet balance) is what
+    GET /wallet/earnings sums for "Total Earnings", so the earnings display is
+    unaffected by this function not touching Wallet.MAIN.
 
     Returns (main_credit, repurchase, software_fee).
     """
@@ -70,9 +72,6 @@ def mirror_onchain_earning_split(
     software_fee = (gross * SOFTWARE_FEE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
     repurchase = (gross * REPURCHASE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
     main_credit = gross - software_fee - repurchase
-
-    main_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.MAIN)
-    main_wallet.balance = Decimal(str(main_wallet.balance)) + main_credit
 
     repurchase_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.REPURCHASE)
     repurchase_wallet.balance = Decimal(str(repurchase_wallet.balance)) + repurchase

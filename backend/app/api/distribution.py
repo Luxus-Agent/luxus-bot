@@ -23,12 +23,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.api.admin import get_admin_user
 from app.api.deps import get_current_user, require_platform_active
 from app.config import settings
-from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE
+from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE, debit_withdrawable
 from app.database import get_db
 from app.models.agent import AGENT_TIER_PLATFORM_FEE, AGENT_TIER_PRICES, AgentPurchase
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
+from app.models.payout_batch import PayoutBatch, PayoutBatchStatus
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
 from app.models.wallet import Wallet, WalletType
@@ -313,6 +315,13 @@ class PackStatusRequest(BaseModel):
     failure_reason: str | None = Field(None, description="Optional, when status='failed'.")
 
 
+class PayoutStatusRequest(BaseModel):
+    batch_id: str = Field(..., description='The batch id returned by payout/create ("pob_...").')
+    status: str = Field(..., description='"success" or "failed".')
+    tx_hash: str | None = Field(None, description="Blockchain tx hash (required on success).")
+    failure_reason: str | None = Field(None, description="Optional, when status='failed'.")
+
+
 def _platform_user_id(db: Session) -> int | None:
     """The platform/admin user that owns pool-funding + admin-income ledger rows.
     Returns the lowest-id admin, or None if no admin exists yet."""
@@ -583,26 +592,10 @@ def pack_purchase(
             "amount": _two_places(fee_total),
         })
 
-    # Stream pool (30%) — parked in a platform-held wallet, drawn down by the
-    # Stream matrix engine. Falls back to PLATFORM_FEE_WALLET when unset.
-    stream_wallet = _pool_address(settings.stream_pool_wallet)
-    recipients.append({
-        "role": "stream_pool",
-        "level": None,
-        "wallet_address": stream_wallet,
-        "has_wallet_address": stream_wallet is not None,
-        "amount": _two_places(split.stream_amount),
-    })
-
-    # Boost pool (9%) — platform-held, drawn down by the Boost matrix engine.
-    boost_wallet = _pool_address(settings.boost_pool_wallet)
-    recipients.append({
-        "role": "boost_pool",
-        "level": None,
-        "wallet_address": boost_wallet,
-        "has_wallet_address": boost_wallet is not None,
-        "amount": _two_places(split.boost_amount),
-    })
+    # Stream (30%) + Boost pool (9%) — these matrix pools are tracked internally
+    # by the Stream/Boost engines, not held in their own on-chain wallet, so they
+    # fold into the platform-fee bucket below.
+    platform_amount += split.stream_amount + split.boost_amount
 
     # Admin income (1%) — the admin cut of the Boost 10% allocation.
     admin_wallet = _pool_address(settings.admin_income_wallet)
@@ -614,9 +607,9 @@ def pack_purchase(
         "amount": _two_places(split.admin_amount),
     })
 
-    # Platform fee — the flat per-tier purchase fee (always present) plus any
-    # unroutable Core halves (no eligible upline). Goes to the platform profit
-    # wallet. Omitted only when zero (never, given the flat fee).
+    # Platform fee — the flat per-tier purchase fee, the Stream (30%) + Boost pool
+    # (9%) shares, plus any unroutable Core halves (no eligible upline). Goes to
+    # the platform profit wallet. Omitted only when zero (never, given the flat fee).
     if platform_amount > 0:
         pf_wallet = _pool_address(settings.PLATFORM_FEE_WALLET)
         recipients.append({
@@ -739,6 +732,14 @@ def pack_status(
         # uplines those repurchases credit. Runs in this same transaction.
         from app.core.repurchase import sweep_auto_repurchases
         sweep_auto_repurchases(db)
+
+        # Automatic member payout: pay every member's current withdrawable
+        # balance (Stream/Boost/Core earnings) out to their own on-chain
+        # wallet, no admin approval step. Disabled unless
+        # PLATFORM_FEE_SIGNER_PRIVATE_KEY is set — best-effort, never blocks
+        # this request. See app/core/member_payout.py.
+        from app.core.member_payout import run_member_payout_sweep
+        run_member_payout_sweep(db)
     else:
         record.status = PackPurchaseStatus.FAILED
         record.failure_reason = (payload.failure_reason or "Unspecified failure")[:500]
@@ -755,4 +756,176 @@ def pack_status(
         "purchase_id": record.order_id,
         "status": record.status.value,
         "recorded_at": record.recorded_at.isoformat() + "Z",
+    }
+
+
+# ── Member payout (Stream/Boost/Core earnings -> members' own wallets) ──────
+#
+# pack/purchase + pack/status move money buyer -> platform (+ uplines) on-chain.
+# This pair runs the same MultiSender contract in reverse: platform wallet ->
+# every member with a positive withdrawable balance. Admin-only.
+
+
+@router.post("/payout/create")
+def payout_create(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """
+    API 1 (member payout) — snapshot every user's current withdrawable balance
+    (MAIN wallet earnings + ACCOUNT balance) and return the recipient list for
+    the platform wallet to pay out on-chain, via the same MultiSender contract
+    used for pack purchases (sendERC20DifferentValue) — just called by the
+    platform wallet instead of a buyer.
+
+    Refuses to create a new batch while one is already PENDING, so two
+    overlapping snapshots can never debit the same balance twice.
+    """
+    existing_pending = (
+        db.query(PayoutBatch)
+        .filter(PayoutBatch.status == PayoutBatchStatus.PENDING)
+        .first()
+    )
+    if existing_pending:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Batch {existing_pending.batch_id} is still pending — resolve it via "
+                "POST /distribution/payout/status before creating a new one."
+            ),
+        )
+
+    users = db.query(User).order_by(User.id.asc()).all()
+    user_ids = [u.id for u in users]
+    totals = _wallet_totals(db, user_ids)
+    verified_fallback = _verified_addresses(db, user_ids)
+
+    recipients: list[dict] = []
+    skipped_count = 0
+    skipped_total = Decimal("0")
+    for user in users:
+        withdrawable = totals[user.id]["main"] + totals[user.id]["account"]
+        if withdrawable <= 0:
+            continue
+        addr = user.wallet_address or verified_fallback.get(user.id)
+        if not addr or not _BEP20_RE.match(addr):
+            skipped_count += 1
+            skipped_total += withdrawable
+            continue
+        recipients.append({
+            "user_id": user.id,
+            "username": user.username,
+            "wallet_address": addr,
+            "amount": _two_places(withdrawable),
+        })
+
+    if not recipients:
+        raise HTTPException(
+            status_code=400,
+            detail="Nothing to distribute — no positive withdrawable balance with a valid wallet address.",
+        )
+
+    total_amount = sum((Decimal(str(r["amount"])) for r in recipients), Decimal("0"))
+    batch_id = f"pob_{uuid.uuid4().hex[:12]}"
+    batch = PayoutBatch(
+        batch_id=batch_id,
+        created_by_id=admin.id,
+        total_amount=total_amount,
+        status=PayoutBatchStatus.PENDING,
+        recipients_json=json.dumps(recipients),
+    )
+    db.add(batch)
+    db.commit()
+
+    logger.info(
+        "PAYOUT create: batch=%s admin=%s recipients=%d total=%s skipped=%d ($%s)",
+        batch_id, admin.username, len(recipients), total_amount, skipped_count, skipped_total,
+    )
+
+    return {
+        "batch_id": batch_id,
+        "currency": settings.PAYOUT_CURRENCY,
+        "network": settings.PAYOUT_NETWORK,
+        "token_contract": settings.USDT_CONTRACT,
+        "decimals": settings.USDT_DECIMALS,
+        "total_amount": _two_places(total_amount),
+        "recipients": recipients,
+        "skipped_no_address": {
+            "count": skipped_count,
+            "amount": _two_places(skipped_total),
+        },
+    }
+
+
+@router.post("/payout/status")
+def payout_status(
+    payload: PayoutStatusRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """
+    API 2 (member payout) — record the outcome of the on-chain MultiSender
+    distribution for a payout batch.
+
+    On success: debits each recipient's withdrawable balance (MAIN wallets,
+    lowest tier first, then ACCOUNT — the same drain order `debit_withdrawable`
+    uses for a manual withdrawal) by exactly the amount in the batch snapshot,
+    so the next wallet-map call won't report that money as still owed. This is
+    the step that turns "credited internally" into "actually paid" — idempotent,
+    PENDING-guarded, so a batch can only ever be settled once.
+    """
+    status_val = (payload.status or "").strip().lower()
+    if status_val not in ("success", "failed"):
+        raise HTTPException(status_code=400, detail="status must be 'success' or 'failed'.")
+
+    batch = db.query(PayoutBatch).filter_by(batch_id=payload.batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="batch_id not found.")
+    if batch.status != PayoutBatchStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch already recorded as '{batch.status.value}'.",
+        )
+
+    if status_val == "success":
+        if not payload.tx_hash or not _TXHASH_RE.match(payload.tx_hash):
+            raise HTTPException(
+                status_code=400, detail="A valid tx_hash (0x + 64 hex) is required on success."
+            )
+
+        try:
+            recipients = json.loads(batch.recipients_json or "[]")
+        except (ValueError, TypeError):
+            recipients = []
+
+        tx_short = payload.tx_hash[:12]
+        for r in recipients:
+            amount = Decimal(str(r.get("amount") or 0))
+            if amount <= 0:
+                continue
+            debit_withdrawable(
+                db, r["user_id"], amount,
+                reference_id=batch.batch_id,
+                notes=f"On-chain earnings payout — batch {batch.batch_id} (tx {tx_short}…)",
+            )
+
+        batch.status = PayoutBatchStatus.SUCCESS
+        batch.tx_hash = payload.tx_hash
+        batch.failure_reason = None
+    else:
+        batch.status = PayoutBatchStatus.FAILED
+        batch.failure_reason = (payload.failure_reason or "Unspecified failure")[:500]
+
+    batch.recorded_at = datetime.utcnow()
+    db.commit()
+
+    logger.info(
+        "PAYOUT status: batch=%s admin=%s → %s tx=%s",
+        batch.batch_id, admin.username, batch.status.value, batch.tx_hash,
+    )
+
+    return {
+        "batch_id": batch.batch_id,
+        "status": batch.status.value,
+        "recorded_at": batch.recorded_at.isoformat() + "Z",
     }

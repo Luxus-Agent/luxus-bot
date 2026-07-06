@@ -70,10 +70,13 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
 
 ## On-chain Pack Rail (the only purchase path)
 
-- `POST /distribution/pack/purchase` (JWT, `require_platform_active`) → returns recipient split (sums to price). Roles: `buyer`, `upline` (70% + `gross_amount`), `repurchase_reserve`, `software_fee`, `stream_pool`, `boost_pool`, `admin`, `platform_fee`.
+- `POST /distribution/pack/purchase` (JWT, `require_platform_active`) → returns recipient split (sums to price). Roles: `buyer`, `upline` (70% + `gross_amount`), `repurchase_reserve`, `software_fee`, `admin`, `platform_fee` (the latter also carries the Stream 30% + Boost-pool 9% shares — tracked internally, no separate on-chain wallet).
 - `POST /distribution/pack/status` → records success(tx_hash)/failed; on success runs ownership + ledger + matrices + repurchase (idempotent, PENDING-guarded).
 - `GET /distribution/wallet-map` → read-only user+downline wallet/profit map for MultiSender. Distribute against `profit.withdrawable`.
-- Wallet/pool config (`.env`, each falls back to `PLATFORM_FEE_WALLET`): `STREAM_POOL_WALLET`, `BOOST_POOL_WALLET`, `ADMIN_INCOME_WALLET`, `REPURCHASE_RESERVE_WALLET`. **Set distinct addresses before go-live.**
+- Wallet config (`.env`): `PLATFORM_FEE_WALLET`, `ADMIN_INCOME_WALLET` / `REPURCHASE_RESERVE_WALLET` (each falls back to `PLATFORM_FEE_WALLET`). **Set distinct addresses before go-live**, and fund `REPURCHASE_RESERVE_WALLET` + `PLATFORM_FEE_WALLET` with BNB directly — each pays its own gas for its automated send (no separate gas wallet).
+- `POST /distribution/payout/create` + `/payout/status` (admin-only) — runs the same MultiSender contract in reverse (platform wallet -> every member with a positive withdrawable balance) to actually pay out accumulated internal earnings. Mirrors `pack/purchase`/`pack/status`'s PENDING-guarded lifecycle; on success debits each recipient via `debit_withdrawable` so the money isn't offered again.
+- Auto-repurchase's on-chain settlement (`app/core/onchain.py`) is unattended by design (no admin approval step) — set `REPURCHASE_SIGNER_PRIVATE_KEY` (**live private key, treat like `SECRET_KEY`, never commit**) + `BSC_RPC_URL` to enable; empty key keeps it internal-ledger-only, today's default. Best-effort: any broadcast failure is logged and swallowed, never blocks a purchase.
+- Member earnings can also pay out automatically, no admin click: `app/core/member_payout.py`'s `run_member_payout_sweep` runs after every purchase (wired into `pack/status`, after the repurchase sweep), paying up to 25 members/call via MultiSender, signed by `PLATFORM_FEE_WALLET`'s key (`PLATFORM_FEE_SIGNER_PRIVATE_KEY` + `MULTISENDER_ADDRESS`). Row-locks candidate wallets through the on-chain call so concurrent purchases can't double-pay the same balance. Empty key = internal-ledger-only (default); the admin `payout/create`/`payout/status` pair stays available regardless — both drain the same balances, so they can't double-pay each other.
 
 ## Removed (do not reintroduce without asking)
 
@@ -89,7 +92,7 @@ conda activate luxus && cd backend && uvicorn app.main:app --reload   # :8000, /
 # Frontend
 cd frontend && npm run dev                                            # :3000
 # Fresh DB: python create_tables.py && python seed_admin.py
-# Existing DB migrations: migrate_v14/v15/v17/v18/v19.py; backfill_repurchase_reserve.py
+# Existing DB migrations: migrate_v14/v15/v17/v18/v19/v20.py; backfill_repurchase_reserve.py
 ```
 
 - **Touch only what you must** — this is a financial system; keep changes scoped.
