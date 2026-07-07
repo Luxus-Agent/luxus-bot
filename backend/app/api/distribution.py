@@ -732,14 +732,6 @@ def pack_status(
         # uplines those repurchases credit. Runs in this same transaction.
         from app.core.repurchase import sweep_auto_repurchases
         sweep_auto_repurchases(db)
-
-        # Automatic member payout: pay every member's current withdrawable
-        # balance (Stream/Boost/Core earnings) out to their own on-chain
-        # wallet, no admin approval step. Disabled unless
-        # PLATFORM_FEE_SIGNER_PRIVATE_KEY is set — best-effort, never blocks
-        # this request. See app/core/member_payout.py.
-        from app.core.member_payout import run_member_payout_sweep
-        run_member_payout_sweep(db)
     else:
         record.status = PackPurchaseStatus.FAILED
         record.failure_reason = (payload.failure_reason or "Unspecified failure")[:500]

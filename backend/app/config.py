@@ -58,24 +58,6 @@ class Settings(BaseSettings):
     # PRIVATE KEY — never commit a real one; treat this exactly like SECRET_KEY.
     REPURCHASE_SIGNER_PRIVATE_KEY: str = ""
 
-    # ── Automatic member payout (Stream/Boost/Core earnings -> members) ──────
-    # MultiSender contract used to pay every member's withdrawable balance out
-    # in one batched call — same contract/ABI the frontend already uses for
-    # pack purchases (frontend/src/config/contracts.js), called here from the
-    # backend instead. Defaults to the same testnet contract already deployed
-    # for this project.
-    MULTISENDER_ADDRESS: str = "0xbe417c4936453fAC6D6c8d36b0d161a1AA4Ff624"
-    # Private key of PLATFORM_FEE_WALLET — signs the automatic member-payout
-    # transaction (runs after every purchase, no admin approval step). This
-    # wallet also pays its own BNB gas for the approve() + sendERC20DifferentValue()
-    # calls — fund PLATFORM_FEE_WALLET's address with BNB directly (manually,
-    # same as REPURCHASE_SIGNER_PRIVATE_KEY's wallet above; no automated top-up).
-    # Left empty by default: member earnings then stay purely internal-ledger,
-    # and the admin-triggered POST /distribution/payout/create + /payout/status
-    # pair remains the only way to pay members out. THIS IS A LIVE PRIVATE
-    # KEY — never commit a real one; treat this exactly like SECRET_KEY.
-    PLATFORM_FEE_SIGNER_PRIVATE_KEY: str = ""
-
     @property
     def admin_income_wallet(self) -> str:
         return self.ADMIN_INCOME_WALLET or self.PLATFORM_FEE_WALLET

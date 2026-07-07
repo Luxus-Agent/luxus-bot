@@ -483,18 +483,6 @@ POST /distribution/payout/status   → Admin JWT. Body: { batch_id, status, tx_h
 - On-chain verification (`VERIFY_ONCHAIN_TX`) is not wired for this rail (same as `pack/status`
   today) — `payout/status` trusts the admin-supplied `tx_hash`.
 
-**Automatic alternative (no admin click):** `app/core/member_payout.py`'s `run_member_payout_sweep`
-does the same job unattended — it runs automatically after **every** purchase (wired into
-`pack/status`, right after the auto-repurchase sweep), paying up to 25 members per call via the same
-MultiSender contract, signed by `PLATFORM_FEE_WALLET`'s own key
-(`PLATFORM_FEE_SIGNER_PRIVATE_KEY` — set `MULTISENDER_ADDRESS` too). Handles the ERC20 `approve()`
-step itself the first time it needs more allowance. Disabled by default (empty key = internal-ledger
--only, unchanged); best-effort — any failure is logged and swallowed, never blocks the purchase. Row-
-locks candidate wallets for the duration of the on-chain call so two purchases confirming at the same
-time can't both pay the same balance. The admin-triggered `payout/create`/`payout/status` pair above
-stays available as a manual fallback either way — both drain the same balances, so they can't
-double-pay each other's work.
-
 ---
 
 ## Tech Stack
@@ -619,13 +607,11 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 | `APP_ENV`                   | `development` or `production`                                 |
 | `LOG_LEVEL`                 | `DEBUG` / `INFO` / `WARNING` / `ERROR` — log verbosity (default `INFO`) |
 | `CORS_ORIGINS`              | Comma-separated allowed frontend origins, or `*`. Set to your frontend URL in production |
-| `PLATFORM_FEE_WALLET`       | BEP-20 wallet that receives the pack-purchase platform fee, the 10% Core software fee, and the Stream 30% + Boost-pool 9% shares (**set before go-live**); also the fallback for the two wallets below. Fund it with its own BNB for gas if `PLATFORM_FEE_SIGNER_PRIVATE_KEY` is set — no separate gas wallet |
+| `PLATFORM_FEE_WALLET`       | BEP-20 wallet that receives the pack-purchase platform fee, the 10% Core software fee, and the Stream 30% + Boost-pool 9% shares (**set before go-live**); also the fallback for the two wallets below |
 | `ADMIN_INCOME_WALLET`       | Receives the 1% Boost-allocation admin cut (falls back to `PLATFORM_FEE_WALLET`) |
 | `REPURCHASE_RESERVE_WALLET` | Receives the 20% repurchase reserve (falls back to `PLATFORM_FEE_WALLET`); fund this address with its own BNB for gas — no separate gas wallet |
 | `BSC_RPC_URL`               | RPC endpoint for the auto-repurchase settlement broadcast; defaults to BSC testnet, matching the mock `USDT_CONTRACT` this repo ships with |
 | `REPURCHASE_SIGNER_PRIVATE_KEY` | Private key that signs the auto-repurchase on-chain settlement (`app/core/onchain.py`). **Live private key — never commit a real one.** Leave empty to keep auto-repurchase internal-ledger-only (default, safe) |
-| `MULTISENDER_ADDRESS`       | MultiSender contract used by the automatic member-payout sweep (same contract the frontend uses for purchases) |
-| `PLATFORM_FEE_SIGNER_PRIVATE_KEY` | Private key that signs the automatic member-payout sweep (`app/core/member_payout.py`), runs after every purchase. **Live private key — never commit a real one; must be `PLATFORM_FEE_WALLET`'s own key.** Leave empty to keep member earnings internal-ledger-only (default, safe) — the admin-triggered `payout/create`/`payout/status` pair stays available regardless |
 | `USDT_CONTRACT`             | USDT token contract on the active chain (returned by `pack/purchase`)         |
 | `USDT_DECIMALS`             | USDT token decimals (e.g. 18)                                                  |
 | `PAYOUT_CURRENCY` / `PAYOUT_NETWORK` | Currency / network labels returned by `pack/purchase` (USDT / BEP-20) |
