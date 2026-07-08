@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -57,3 +57,15 @@ class User(Base):
     wallets = relationship("Wallet", back_populates="user")
     transactions = relationship("Transaction", back_populates="user")
     wallet_addresses = relationship("WalletAddress", back_populates="user")
+
+    __table_args__ = (
+        # Case-insensitive uniqueness (checksummed vs lowercase input refer to
+        # the same wallet) — NULLs excluded, so legacy rows without a wallet
+        # address don't conflict with each other.
+        Index(
+            "ix_users_wallet_address_lower",
+            text("lower(wallet_address)"),
+            unique=True,
+            postgresql_where=text("wallet_address IS NOT NULL"),
+        ),
+    )

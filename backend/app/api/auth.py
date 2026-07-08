@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,28 @@ def check_username(username: str, db: Session = Depends(get_db)):
     return {"available": not taken}
 
 
+def _wallet_address_taken(db: Session, wallet_address: str) -> bool:
+    """Case-insensitive lookup — BEP-20 addresses may be entered/connected in
+    either checksummed or lowercase form, and both refer to the same wallet."""
+    return (
+        db.query(User)
+        .filter(func.lower(User.wallet_address) == wallet_address.lower())
+        .first()
+        is not None
+    )
+
+
+# ── Wallet address availability check ─────────────────────────────────────────
+
+@router.get("/check-wallet-address")
+def check_wallet_address(wallet_address: str, db: Session = Depends(get_db)):
+    """Return whether a BEP-20 wallet address is free to register with. Each
+    wallet may only be attached to one account — used for live registration
+    feedback, mirroring /auth/check-username."""
+    taken = _wallet_address_taken(db, wallet_address)
+    return {"available": not taken}
+
+
 # ── Register ──────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -59,6 +82,8 @@ async def register(
         raise HTTPException(status_code=400, detail="Email already registered")
     if db.query(User).filter_by(username=payload.username).first():
         raise HTTPException(status_code=400, detail="Username already taken")
+    if payload.wallet_address and _wallet_address_taken(db, payload.wallet_address):
+        raise HTTPException(status_code=400, detail="Wallet address already registered to another account")
 
     # Sponsor username is required — every user must register under a sponsor (Q7)
     sponsor = db.query(User).filter_by(username=payload.sponsor_username).first()
