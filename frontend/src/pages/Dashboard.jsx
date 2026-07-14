@@ -211,7 +211,6 @@ export default function Dashboard() {
                   const repBal = rep ? rep.reserve : parseFloat(repW?.balance || 0)
                   // Target the real threshold (price + platform fee), not the bare price.
                   const repTarget = rep ? rep.threshold : TIER_PRICES[tier]
-                  const repFee = rep ? rep.platform_fee : 0
                   const progress = rep ? rep.progress_percent : Math.min(100, (repBal / TIER_PRICES[tier]) * 100)
                   return (
                     <div
@@ -255,11 +254,6 @@ export default function Dashboard() {
                               style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #00D4B4, #00FFD4)' }}
                             />
                           </div>
-                          {repFee > 0 && (
-                            <p className="text-right mt-1" style={{ color: '#4A5568', fontSize: '10px' }}>
-                              target incl. ${repFee.toFixed(2)} platform fee
-                            </p>
-                          )}
                         </div>
                       </div>
                     </div>

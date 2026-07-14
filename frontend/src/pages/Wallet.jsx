@@ -145,7 +145,6 @@ export default function Wallet() {
               const rBal = rep ? rep.reserve : parseFloat(rw?.balance || 0)
               // Target the real threshold (price + platform fee), not the bare price.
               const rTarget = rep ? rep.threshold : TIER_PRICES[tier]
-              const rFee = rep ? rep.platform_fee : 0
               const progress = rep ? rep.progress_percent : Math.min(100, (rBal / TIER_PRICES[tier]) * 100)
               return (
                 <div key={tier} className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
@@ -175,11 +174,6 @@ export default function Wallet() {
                           style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #FFB547, #FFD700)' }}
                         />
                       </div>
-                      {rFee > 0 && (
-                        <p className="text-right mt-1" style={{ color: '#4A5568', fontSize: '10px' }}>
-                          target incl. ${rFee.toFixed(2)} platform fee
-                        </p>
-                      )}
                     </div>
                   </div>
                 </div>
