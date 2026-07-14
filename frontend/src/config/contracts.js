@@ -7,7 +7,10 @@
 import multisenderAbi from './multisenderAbi.json'
 
 // MultiSender contract (sendERC20DifferentValue → transferFrom buyer → each recipient).
-export const MULTISENDER_ADDRESS = import.meta.env.VITE_MULTISENDER_ADDRESS || ''
+// Hardcoded fallback so a missing/unset VITE_MULTISENDER_ADDRESS on a server build
+// never breaks purchases — env var still overrides this when set.
+const DEFAULT_MULTISENDER_ADDRESS = '0xbe417c4936453fAC6D6c8d36b0d161a1AA4Ff624'
+export const MULTISENDER_ADDRESS = import.meta.env.VITE_MULTISENDER_ADDRESS || DEFAULT_MULTISENDER_ADDRESS
 
 // Mock USDT token used for testing. Preferred source is the purchase API
 // response (token_contract); this is the fallback when the API omits it.
