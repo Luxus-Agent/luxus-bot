@@ -13,8 +13,11 @@ const DEFAULT_MULTISENDER_ADDRESS = '0xbe417c4936453fAC6D6c8d36b0d161a1AA4Ff624'
 export const MULTISENDER_ADDRESS = import.meta.env.VITE_MULTISENDER_ADDRESS || DEFAULT_MULTISENDER_ADDRESS
 
 // Mock USDT token used for testing. Preferred source is the purchase API
-// response (token_contract); this is the fallback when the API omits it.
-export const USDT_ADDRESS = import.meta.env.VITE_USDT_ADDRESS || ''
+// response (token_contract); falls back to VITE_USDT_ADDRESS, then this
+// hardcoded default (must match the backend's USDT_CONTRACT) so a missing
+// server env var never blanks out the wallet balance.
+const DEFAULT_USDT_ADDRESS = '0xb2681F1CA80e080827d5f275648D2d2e2684f0C8'
+export const USDT_ADDRESS = import.meta.env.VITE_USDT_ADDRESS || DEFAULT_USDT_ADDRESS
 
 // Token decimals fallback when the purchase API doesn't return `decimals`.
 export const USDT_DECIMALS = Number(import.meta.env.VITE_USDT_DECIMALS || 6)
