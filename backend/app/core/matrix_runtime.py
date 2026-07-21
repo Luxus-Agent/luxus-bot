@@ -106,12 +106,29 @@ def _enqueue_all(db: Session, payouts: list[PendingPayout], sponsors: list[Pendi
 
 
 def _credit_row_payout(db: Session, row: MatrixPendingPayout) -> None:
-    """Credit a completed matrix level to the owner's wallet (70/20/10)."""
+    """
+    Credit a completed matrix level to the owner's wallet (70/20/10).
+    A frozen (is_active=False) or deleted owner is treated like an
+    ineligible Core upline: the payout is retained by the platform as
+    profit instead of reaching a frozen/removed account.
+    """
     tx_type = (
         TransactionType.STREAM_PAYOUT
         if row.system_type == SystemType.STREAM
         else TransactionType.BOOST_PAYOUT
     )
+    owner = db.query(User).filter_by(id=row.owner_user_id).first()
+    if owner is None or not owner.is_active:
+        db.add(Transaction(
+            user_id=row.owner_user_id,
+            agent_tier=row.agent_tier,
+            transaction_type=TransactionType.PLATFORM_PROFIT,
+            amount=Decimal(str(row.amount)),
+            reference_id=f"matrix_pos_{row.matrix_position_id}_L{row.level}",
+            notes=f"{row.system_type.value} L{row.level} payout — owner frozen, retained by platform",
+        ))
+        return
+
     credit_wallet(
         db=db,
         user_id=row.owner_user_id,

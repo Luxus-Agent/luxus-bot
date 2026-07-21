@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user
-from app.core.platform_state import get_platform_setting, set_platform_frozen
+from app.core.platform_state import ensure_platform_active, get_platform_setting, set_platform_frozen
 from app.core.wallet_ops import (
     ACCOUNT_TIER,
     credit_account,
@@ -140,6 +140,8 @@ def freeze_user(
     user = db.query(User).filter_by(id=user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="Cannot freeze an admin account.")
     user.is_active = False
     db.commit()
     db.refresh(user)
@@ -194,6 +196,8 @@ def delete_user(
     # Lazy imports for the dependent models (kept local to this destructive op)
     from app.models.wallet_address import WalletAddress
     from app.models.platform_setting import PlatformSetting
+    from app.models.matrix import MatrixPendingPayout, MatrixPosition, MatrixQueueSlot
+    from app.models.pack_purchase import PackPurchase
 
     username = user.username
 
@@ -220,7 +224,18 @@ def delete_user(
             ),
         ).update({Transaction.user_id: admin.id}, synchronize_session=False)
 
-        # 4. Delete all remaining rows owned by this user (children first)
+        # 4. Delete all remaining rows owned by this user (children first).
+        #    Matrix queue slots are safe to remove outright: matrix_engine's
+        #    level-completion walk already treats a missing slot at head_position
+        #    as a no-op skip (defensive `if head_slot is None: continue`), so a
+        #    deleted user's position is simply skipped when its turn comes,
+        #    without disrupting the shared queue for everyone else.
+        db.query(MatrixPendingPayout).filter(
+            MatrixPendingPayout.owner_user_id == user_id
+        ).delete(synchronize_session=False)
+        db.query(MatrixQueueSlot).filter(MatrixQueueSlot.user_id == user_id).delete(synchronize_session=False)
+        db.query(MatrixPosition).filter(MatrixPosition.user_id == user_id).delete(synchronize_session=False)
+        db.query(PackPurchase).filter(PackPurchase.buyer_id == user_id).delete(synchronize_session=False)
         db.query(WalletAddress).filter(WalletAddress.user_id == user_id).delete(synchronize_session=False)
         db.query(Transaction).filter(Transaction.user_id == user_id).delete(synchronize_session=False)
         db.query(Wallet).filter(Wallet.user_id == user_id).delete(synchronize_session=False)
@@ -420,6 +435,8 @@ def treasury_transfer(
     Send funds from the admin's treasury (account balance) to a user's account
     balance, identified by username. No fee, no OTP — credited in full instantly.
     """
+    ensure_platform_active(db)
+
     if body.to_username.lower() == admin.username.lower():
         raise HTTPException(status_code=400, detail="Cannot transfer to your own admin account.")
 
@@ -530,6 +547,8 @@ def admin_credit_wallet(
     Manually credit a user's MAIN wallet (with the 70/20/10 split applied).
     Records as ADMIN_CREDIT for audit traceability.
     """
+    ensure_platform_active(db)
+
     user = db.query(User).filter_by(id=body.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -558,6 +577,8 @@ def admin_debit_wallet(
     Manually debit a user's MAIN wallet.
     Raises 400 if balance is insufficient.
     """
+    ensure_platform_active(db)
+
     user = db.query(User).filter_by(id=body.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")

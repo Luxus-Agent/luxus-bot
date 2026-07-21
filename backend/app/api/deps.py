@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.platform_state import PLATFORM_FROZEN_MESSAGE, is_platform_frozen
 from app.core.security import decode_access_token
 from app.database import get_db
 from app.models.user import User
@@ -23,14 +24,6 @@ def get_current_user(
     return user
 
 
-# HTTP 423 Locked — the platform is temporarily frozen by an admin.
-PLATFORM_FROZEN_MESSAGE = (
-    "The platform is temporarily frozen by the administrator. "
-    "Deposits, withdrawals, transfers, and agent purchases are paused. "
-    "Please try again later."
-)
-
-
 def require_platform_active(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -42,8 +35,6 @@ def require_platform_active(
     """
     if current_user.is_admin:
         return current_user
-
-    from app.core.platform_state import is_platform_frozen
 
     if is_platform_frozen(db):
         raise HTTPException(

@@ -232,6 +232,12 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
     if not user.is_email_verified:
         logger.warning("AUTH login_failed: email not verified user_id=%d email=%s", user.id, user.email)
         raise HTTPException(status_code=403, detail="Please verify your email before logging in")
+    if not user.is_active:
+        logger.warning("AUTH login_failed: account frozen user_id=%d username=%s", user.id, user.username)
+        raise HTTPException(
+            status_code=403,
+            detail="Your account has been frozen by the administrator. Please contact support.",
+        )
     logger.info("AUTH login: user_id=%d username=%s", user.id, user.username)
     return {"access_token": create_access_token(user.id)}
 

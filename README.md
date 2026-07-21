@@ -32,7 +32,7 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
 - 🔁 **Automatic repurchase** — a 20% per-tier reserve auto re-buys the same tier at its price+gas threshold, unbounded and compounding through uplines.
 - 🌳 **Username-based sponsor tree** — every user registers under a sponsor; live sponsor-existence + wallet-address validation on the register form.
 - 🧮 **70 / 20 / 10 wallet rule** — every commission splits into main wallet / repurchase reserve / software fee.
-- 🛡️ **Admin controls** — per-user freeze, treasury transfer, and a global platform-freeze kill switch (HTTP 423 on purchases while frozen).
+- 🛡️ **Admin controls** — per-user freeze/delete, treasury transfer, and a global platform-freeze kill switch that blocks all money movement (purchases, settlement, matrix/repurchase payouts, admin payouts and treasury) with HTTP 423 while frozen.
 - 📊 **Real-time earnings & distribution map** — ledger-sourced totals plus a read-only `wallet-map` endpoint that feeds the MultiSender payout.
 - ✉️ **Email OTP** — verification on register, password reset, and BEP-20 address confirmation.
 
@@ -591,9 +591,10 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 
 **Admin capabilities:**
 - Platform-wide stats (platform profit, total deposited by users, total invested by users) and transaction history (resolved to usernames)
-- View per-user details (agents bought, account balance, revenue generated); freeze / unfreeze individual users
+- View per-user details (agents bought, account balance, revenue generated); freeze / unfreeze individual users (blocks login and all money movement to/from them — Core, sponsor-share, and Stream/Boost matrix payouts they'd otherwise receive are retained as platform profit instead); admins can't be frozen or deleted
+- **Delete user** — hard delete; re-parents their downline to keep the sponsor tree connected, preserves realized platform profit by re-attributing it to the admin, and removes their wallets/transactions/purchases/matrix positions so it doesn't fail on a foreign-key constraint
 - **Treasury** — *Send to User* by username, instantly and fee-free (kept fully separate from the user deposit/transfer/withdraw flows). *(The *Generate* / fund-minting feature and the "Treasury Balance" dashboard card were removed; the `ADMIN_GENERATE` ledger type is retained only for historical reporting.)*
-- **Global freeze (kill switch)** — one click pauses all user deposits, withdrawals, transfers, and purchases platform-wide; only an admin can lift it
+- **Global freeze (kill switch)** — one click pauses all money movement platform-wide, for admins too: new purchases, purchase settlement (ownership + ledger + matrix cascade + auto-repurchase), the member-payout rail, and admin treasury/wallet-credit/wallet-debit. Only an admin can lift it (freeze/unfreeze itself is never blocked)
 - Review and manage all withdrawal requests
 
 ---
@@ -664,6 +665,8 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - Transfer fee is **1%** — sender is debited the full amount; recipient receives 99%.
 - First transfer to a new recipient requires email OTP confirmation.
 - **Admin Treasury** (*Send to User*) and the **global freeze** kill switch are admin-only and separate from user flows. *(The Treasury *Generate* feature + dashboard "Treasury Balance" card were removed; `POST /admin/generate` no longer exists, though the `admin_generate` ledger type stays for historical data.)*
+- **Platform freeze scope:** `require_platform_active` (admin bypass) gates the buyer-facing `pack/purchase` + `pack/status`; `ensure_platform_active` (no bypass, applies to admins too) gates `payout/create`, `payout/status`, `admin/transfer`, `admin/wallet/credit`, and `admin/wallet/debit` — see `app/core/platform_state.py`. A `PENDING` pack purchase left over from before a freeze simply waits — `pack/status` re-processes it normally once unfrozen.
+- **Per-user freeze** (`User.is_active=False`) is checked at `/auth/login` (clear 403 "account frozen" message, not a token followed by a confusing failure) and by `get_current_user` for every other endpoint. A frozen user's Core, sponsor-share, and Stream/Boost matrix payouts are retained as platform profit rather than credited to them (`app/core/proactive.py`, `app/core/matrix_runtime.py`), and their auto-repurchase reserve is held, not consumed.
 - **All timestamps are displayed in IST (`Asia/Kolkata`).** The backend stores naive UTC; the frontend converts via `frontend/src/utils/datetime.js` (`formatDateTimeIST` / `formatDateIST` / `formatTimeIST`). Storage stays UTC — only the display is localized to Indian time.
 - **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views (`Transactions.jsx`, `Wallet.jsx`, `admin/AdminTransactions.jsx`) classify them into Income / Expense / System groups using **lowercase** keys; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income. *(`Wallet.jsx` previously used UPPERCASE keys, which matched nothing and rendered every row as a green "+" — fixed to lowercase.)*
 - **On-chain "Wallet Balance"** shown on the Dashboard, Wallet, and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases **do** populate internal wallets: on `pack/status` success each Core commission is credited 70/20/10 (`mirror_onchain_earning_split`) and the Stream/Boost matrix payouts credit via `credit_wallet`, so main / repurchase-reserve balances fill and on-chain activity also shows in transaction history and the income chart.

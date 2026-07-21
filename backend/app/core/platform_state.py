@@ -2,13 +2,21 @@
 Helpers for the platform-wide freeze (kill switch).
 
 A single PlatformSetting row (id=1) stores whether the platform is frozen.
-When frozen, all user money-movement flows are paused; admins can lift it.
+When frozen, all money-movement flows are paused; admins can lift it.
 """
 from datetime import datetime
 
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.platform_setting import PLATFORM_SETTING_ID, PlatformSetting
+
+# HTTP 423 Locked — the platform is temporarily frozen by an admin.
+PLATFORM_FROZEN_MESSAGE = (
+    "The platform is temporarily frozen by the administrator. "
+    "Deposits, withdrawals, transfers, and agent purchases are paused. "
+    "Please try again later."
+)
 
 
 def get_platform_setting(db: Session) -> PlatformSetting:
@@ -25,6 +33,22 @@ def get_platform_setting(db: Session) -> PlatformSetting:
 def is_platform_frozen(db: Session) -> bool:
     """True if the global kill switch is engaged."""
     return get_platform_setting(db).is_frozen
+
+
+def ensure_platform_active(db: Session) -> None:
+    """
+    Raise HTTP 423 if the global kill switch is engaged. NO admin bypass —
+    unlike `require_platform_active` (the FastAPI dependency gating regular
+    user purchase endpoints, which lets admins keep operating), this is for
+    every code path that actually moves money — settlement, matrix payouts,
+    auto-repurchase, and admin-triggered payout/treasury actions — so freeze
+    is a true full stop regardless of who or what triggers it.
+    """
+    if is_platform_frozen(db):
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail=PLATFORM_FROZEN_MESSAGE,
+        )
 
 
 def set_platform_frozen(

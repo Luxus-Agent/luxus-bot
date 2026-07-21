@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.api.admin import get_admin_user
 from app.api.deps import get_current_user, require_platform_active
 from app.config import settings
+from app.core.platform_state import ensure_platform_active
 from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE, debit_withdrawable
 from app.database import get_db
 from app.models.agent import AGENT_TIER_PLATFORM_FEE, AGENT_TIER_PRICES, AgentPurchase
@@ -653,7 +654,7 @@ def pack_purchase(
 def pack_status(
     payload: PackStatusRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_platform_active),
 ):
     """
     API 2 — record the outcome of the on-chain transfer for a pack purchase.
@@ -773,6 +774,8 @@ def payout_create(
     Refuses to create a new batch while one is already PENDING, so two
     overlapping snapshots can never debit the same balance twice.
     """
+    ensure_platform_active(db)
+
     existing_pending = (
         db.query(PayoutBatch)
         .filter(PayoutBatch.status == PayoutBatchStatus.PENDING)
@@ -866,6 +869,8 @@ def payout_status(
     the step that turns "credited internally" into "actually paid" — idempotent,
     PENDING-guarded, so a batch can only ever be settled once.
     """
+    ensure_platform_active(db)
+
     status_val = (payload.status or "").strip().lower()
     if status_val not in ("success", "failed"):
         raise HTTPException(status_code=400, detail="status must be 'success' or 'failed'.")
