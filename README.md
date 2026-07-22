@@ -13,6 +13,7 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
 - [Auth Flow](#auth-flow)
 - [Deposit & Purchase Flow](#deposit--purchase-flow)
 - [Matrix System](#matrix-system)
+- [Revenue Engine Visualization](#revenue-engine-visualization-admin--user)
 - [Withdrawal Flow](#withdrawal-flow)
 - [TokenPocket Distribution Endpoint](#tokenpocket-distribution-endpoint)
 - [On-Chain Pack Purchase](#on-chain-pack-purchase)
@@ -34,6 +35,7 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
 - 🧮 **70 / 20 / 10 wallet rule** — every commission splits into main wallet / repurchase reserve / software fee.
 - 🛡️ **Admin controls** — per-user freeze/delete, treasury transfer, and a global platform-freeze kill switch that blocks all money movement (purchases, settlement, matrix/repurchase payouts, admin payouts and treasury) with HTTP 423 while frozen.
 - 📊 **Real-time earnings & distribution map** — ledger-sourced totals plus a read-only `wallet-map` endpoint that feeds the MultiSender payout.
+- 🔍 **Revenue engine visualization** — admin sees Core compression/odd-even routing (any user) plus live Stream/Boost matrix queues; users get a self-scoped Core routing preview. All read-only. See [Revenue Engine Visualization](#revenue-engine-visualization-admin--user).
 - ✉️ **Email OTP** — verification on register, password reset, and BEP-20 address confirmation.
 
 ---
@@ -272,6 +274,42 @@ L3 queue (threshold 27): same pattern, 27 fresh joiners per payout
 A real purchase adds **one entry to all three of its tier's level-queues at once** (a member's downline growth counts toward L1, L2, and L3 simultaneously — the "3 x 3" of the spec). The re-entries a level-completion grants feed back **only into that same level's own queue** — never into the other two. That separation is what keeps the system bounded: each level's own re-entries are a contracting 1-in-3 series (Stream/Boost's `L1/L2/L3 ReBirth` counts are exactly 1/3/9 against thresholds 3/9/27) when they can't cross-feed into the other levels. `app/core/matrix_engine.py` implements this (`MatrixLevelQueue` + `MatrixQueueSlot`); `app/core/matrix_runtime.py` drives it per purchase, via a durable `MatrixPendingPayout` backlog so a busy queue never makes a single purchase request hang — any backlog left over after a bounded per-call budget is picked up by the next purchase automatically.
 
 Concurrency is protected via PostgreSQL `SELECT FOR UPDATE` on `MatrixLevelQueue` and `MatrixQueueSlot` rows, preventing race conditions under parallel activations.
+
+---
+
+## Revenue Engine Visualization (Admin & User)
+
+Read-only dashboards that make the Core/Stream/Boost rules above inspectable instead of purely
+theoretical — none of the endpoints below mutate any persisted state.
+
+**Admin** — `/admin/revenue-engines` (nav: **Revenue Engines**):
+
+```
+GET /admin/matrix/overview              → fill-state snapshot of every Stream (tier 1-4) and
+                                           Boost (global, tier 1) level-queue: percent-to-next-
+                                           payout, wallet/re-entry amounts, lifetime completions
+GET /admin/matrix/queue-slots           → ordered queue contents for one (system, tier, level)
+  ?system_type=stream|boost&tier=&level=  starting from the current head position — who's
+                                           occupying each position, which are re-entries
+GET /admin/core/simulate                → preview of the Core 60% compression + odd/even split
+  ?username=&tier=                        if `username` bought `tier` right now — for ANY user
+```
+
+**User** — `/revenue-engine` (nav: **Revenue Engine**) — Core only; Stream/Boost are platform-
+wide queues, not something an individual routes, so they're omitted here:
+
+```
+GET /wallet/core-preview?tier=          → same Core simulation as the admin version, scoped to
+                                           the logged-in user only (no username param)
+```
+
+The Core simulator **peeks** at `User.core_route_count` (`+1`, never persisted) to resolve
+odd/even the same way `app/core/pack_payout.compute_pack_split` does at a real purchase, and
+additionally reports each hop's compression-skipped uplines (frozen / tier-too-low) for display.
+Shared simulation logic lives in `app/core/core_preview.py` (used by both the admin and user
+endpoints, so admin's arbitrary-username capability and the user's self-only capability never
+drift apart); the shared Core explainer diagram + routing-chain UI lives in
+`frontend/src/components/CoreRoutingViz.jsx`.
 
 ---
 
@@ -595,6 +633,7 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - **Delete user** — hard delete; re-parents their downline to keep the sponsor tree connected, preserves realized platform profit by re-attributing it to the admin, and removes their wallets/transactions/purchases/matrix positions so it doesn't fail on a foreign-key constraint
 - **Treasury** — *Send to User* by username, instantly and fee-free (kept fully separate from the user deposit/transfer/withdraw flows). *(The *Generate* / fund-minting feature and the "Treasury Balance" dashboard card were removed; the `ADMIN_GENERATE` ledger type is retained only for historical reporting.)*
 - **Global freeze (kill switch)** — one click pauses all money movement platform-wide, for admins too: new purchases, purchase settlement (ownership + ledger + matrix cascade + auto-repurchase), the member-payout rail, and admin treasury/wallet-credit/wallet-debit. Only an admin can lift it (freeze/unfreeze itself is never blocked)
+- **Revenue Engines page** (`/admin/revenue-engines`) — Core compression/odd-even routing simulator for any username, plus live Stream/Boost matrix queue fill-state and contents. See [Revenue Engine Visualization](#revenue-engine-visualization-admin--user)
 - Review and manage all withdrawal requests
 
 ---
@@ -668,5 +707,8 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - **Platform freeze scope:** `require_platform_active` (admin bypass) gates the buyer-facing `pack/purchase` + `pack/status`; `ensure_platform_active` (no bypass, applies to admins too) gates `payout/create`, `payout/status`, `admin/transfer`, `admin/wallet/credit`, and `admin/wallet/debit` — see `app/core/platform_state.py`. A `PENDING` pack purchase left over from before a freeze simply waits — `pack/status` re-processes it normally once unfrozen.
 - **Per-user freeze** (`User.is_active=False`) is checked at `/auth/login` (clear 403 "account frozen" message, not a token followed by a confusing failure) and by `get_current_user` for every other endpoint. A frozen user's Core, sponsor-share, and Stream/Boost matrix payouts are retained as platform profit rather than credited to them (`app/core/proactive.py`, `app/core/matrix_runtime.py`), and their auto-repurchase reserve is held, not consumed.
 - **All timestamps are displayed in IST (`Asia/Kolkata`).** The backend stores naive UTC; the frontend converts via `frontend/src/utils/datetime.js` (`formatDateTimeIST` / `formatDateIST` / `formatTimeIST`). Storage stays UTC — only the display is localized to Indian time.
-- **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views (`Transactions.jsx`, `Wallet.jsx`, `admin/AdminTransactions.jsx`) classify them into Income / Expense / System groups using **lowercase** keys; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income. *(`Wallet.jsx` previously used UPPERCASE keys, which matched nothing and rendered every row as a green "+" — fixed to lowercase.)*
-- **On-chain "Wallet Balance"** shown on the Dashboard, Wallet, and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases **do** populate internal wallets: on `pack/status` success each Core commission is credited 70/20/10 (`mirror_onchain_earning_split`) and the Stream/Boost matrix payouts credit via `credit_wallet`, so main / repurchase-reserve balances fill and on-chain activity also shows in transaction history and the income chart.
+- **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views (`Transactions.jsx`, `admin/AdminTransactions.jsx`) classify them into Income / Expense / System groups using **lowercase** keys; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income.
+- **On-chain "Wallet Balance"** shown on the Dashboard and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases **do** populate internal wallets: on `pack/status` success each Core commission is credited 70/20/10 (`mirror_onchain_earning_split`) and the Stream/Boost matrix payouts credit via `credit_wallet`, so main / repurchase-reserve balances fill and on-chain activity also shows in transaction history and the income chart.
+- **There is no standalone user Wallet page.** Its balances/reserve cards and transaction history were redundant with the Dashboard and Transactions pages, so it was removed (`/wallet` route, nav entry, and `pages/Wallet.jsx` all deleted) — don't reintroduce it without asking. Balances live on the Dashboard; full transaction history is on `/transactions`.
+- **Direct Referrals** on the Dashboard is a click-to-expand dropdown (not just a count) listing every direct referral with username + active/frozen status, sourced from the existing `GET /auth/referrals` (`referrals: [...]`) response.
+- **Wallet-connect widget** in the topbar (`<appkit-button>`) is hidden for admin accounts — it's only relevant to the on-chain purchase flow, which admins don't use; every admin action is pure backend/JWT logic against backend-configured wallet addresses.

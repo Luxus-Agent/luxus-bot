@@ -24,15 +24,19 @@ frontend/src/
   api/client.js          # Axios + JWT interceptor (VITE_API_URL || '/api')
   context/AuthContext.jsx # login (token + /auth/me), logout
   hooks/useUsdtBalance.js # live on-chain USDT balance (wagmi balanceOf)
-  pages/ + pages/admin/   # user + admin dashboards
+  components/CoreRoutingViz.jsx # shared Core explainer diagram + routing-chain UI (admin + user)
+  pages/RevenueEngine.jsx # user: self-scoped Core routing preview (no Stream/Boost — platform-wide)
+  pages/ + pages/admin/   # user + admin dashboards (admin: AdminRevenueEngines.jsx — Core/Stream/Boost viz)
+                          # NOTE: no standalone Wallet page — balances/history live in Dashboard + Transactions
 backend/app/
   api/auth.py            # register (sponsor_username), verify-email, login (username), reset
-  api/wallet.py          # balances / transactions / earnings / repurchase / BEP-20 address
+  api/wallet.py          # balances / transactions / earnings / repurchase / BEP-20 address / core-preview
   api/agents.py          # GET /agents/purchases (read-only ownership)
-  api/admin.py           # users, freeze/unfreeze, treasury transfer, platform freeze, manual credit
+  api/admin.py           # users, freeze/unfreeze, treasury transfer, platform freeze, manual credit, matrix/core viz
   api/distribution.py    # wallet-map + on-chain pack rail (/pack/purchase, /pack/status)
   core/pack_payout.py    # Core 60% split (compression + odd/even); also Stream/Boost/admin rates
   core/proactive.py      # Core eligibility/compression helpers
+  core/core_preview.py   # read-only Core routing simulator shared by admin + user endpoints
   core/matrix_engine.py + matrix_runtime.py  # Stream + Boost 3x3 matrices (LIVE)
   core/repurchase.py     # auto-repurchase sweep (LIVE)
   core/wallet_ops.py     # credit_wallet (70/20/10), mirror_onchain_earning_split, ledger earnings
@@ -56,6 +60,16 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
   Boost reserve accrues in tier-1. Frozen/inactive reserves are held. See `core/repurchase.py`.
 
 > Payout schedules per tier/level are in @README.md (Revenue Mechanics).
+
+## Revenue Engine Visualization (read-only)
+
+- **Admin** `/admin/revenue-engines`: Core compression/odd-even simulator for **any** username
+  (`GET /admin/core/simulate`) + Stream/Boost matrix queue fill-state and contents
+  (`GET /admin/matrix/overview`, `GET /admin/matrix/queue-slots`).
+- **User** `/revenue-engine`: same Core simulator, **self-scoped only** (`GET /wallet/core-preview`,
+  no username param) — no Stream/Boost tab (those queues are platform-wide, not per-user).
+- Both only **peek** at `core_route_count` (never persist) — safe to run repeatedly. Shared logic:
+  `core/core_preview.py`; shared UI: `frontend/src/components/CoreRoutingViz.jsx`.
 
 ## Conventions — YOU MUST
 
@@ -83,6 +97,7 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
 - Celery/Redis + `app/workers/`. Admin treasury *Generate* / mint feature.
 - Automatic (unattended) member-payout sweep (`app/core/member_payout.py`, `PLATFORM_FEE_SIGNER_PRIVATE_KEY`, `MULTISENDER_ADDRESS` backend config) — never wired to a funded key, so it never actually ran. The admin-triggered `payout/create`/`payout/status` pair is the only member-payout rail now.
 - Legacy tables (`deposits`, `withdrawal_requests`, `webhook_events`, `transfer_verifications`) left in DB, no longer read.
+- Standalone user `/wallet` page (`pages/Wallet.jsx`) — balances/reserve + transaction history were redundant with Dashboard + Transactions; nav entry, route, and file all removed.
 
 ## Workflow
 

@@ -6,22 +6,23 @@ import toast from 'react-hot-toast'
 import Logo from './Logo'
 import { useAppKitAccount, useDisconnect } from '@reown/appkit/react'
 import {
-  LayoutDashboard, Wallet,
+  LayoutDashboard,
   Users, BarChart3, History, Bot, LogOut, Menu, X,
-  ChevronRight, ShieldCheck, User, ShieldAlert, Lock, Unlock, AlertTriangle
+  ChevronRight, ShieldCheck, User, ShieldAlert, Lock, Unlock, AlertTriangle, Network
 } from 'lucide-react'
 
 const userNav = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/agents',    label: 'Buy Agents', icon: Bot },
-  { path: '/wallet',   label: 'Wallet',      icon: Wallet },
+  { path: '/revenue-engine', label: 'Revenue Engine', icon: Network },
   { path: '/transactions', label: 'Transactions', icon: History },
 ]
 
 const adminNav = [
-  { path: '/admin',              label: 'Overview',     icon: LayoutDashboard },
-  { path: '/admin/users',        label: 'Users',        icon: Users },
-  { path: '/admin/transactions', label: 'Transactions', icon: BarChart3 },
+  { path: '/admin',                 label: 'Overview',       icon: LayoutDashboard },
+  { path: '/admin/users',           label: 'Users',          icon: Users },
+  { path: '/admin/revenue-engines', label: 'Revenue Engines', icon: Network },
+  { path: '/admin/transactions',    label: 'Transactions',   icon: BarChart3 },
 ]
 
 function SidebarNav({ nav, onClose }) {
@@ -410,8 +411,9 @@ function AppShell({ nav, children, badge }) {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* Reown AppKit wallet widget — Connect when disconnected, account when connected */}
-            <appkit-button balance="hide" size="sm" />
+            {/* Reown AppKit wallet widget — only relevant to the on-chain purchase
+                flow, which admins don't use, so it's hidden on admin pages. */}
+            {!isAdmin && <appkit-button balance="hide" size="sm" />}
             {isAdmin && (
               <PlatformFreezeControl frozen={platform.is_frozen} onChanged={refreshPlatform} />
             )}

@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.core_preview import simulate_core_split
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
@@ -380,4 +381,24 @@ def delete_address(
     )
     db.delete(wa)
     db.commit()
+    return {"deleted": True}
+
+
+# ── Core routing preview ──────────────────────────────────────────────────────
+
+@router.get("/core-preview")
+def core_preview(
+    tier: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Read-only preview of where the CURRENT user's own Core 60% would route if
+    they bought `tier` right now — same simulation the admin "Revenue Engines"
+    page uses, scoped to the logged-in user (no username lookup, no admin
+    privilege needed). Only peeks at core_route_count; never persists.
+    """
+    if tier not in (1, 2, 3, 4):
+        raise HTTPException(status_code=400, detail="tier must be 1-4.")
+    return simulate_core_split(db, current_user, tier)
     return {"message": "Address removed."}

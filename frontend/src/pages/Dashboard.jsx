@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
 import {
   Coins, TrendingUp, Bot,
-  Copy, Check, Users, ChevronRight
+  Copy, Check, Users, ChevronRight, ChevronDown
 } from 'lucide-react'
 import { useUsdtBalance } from '../hooks/useUsdtBalance'
 import toast from 'react-hot-toast'
@@ -40,6 +40,72 @@ function StatCard({ icon: Icon, label, value, sub, color = '#00D4B4', onClick })
   )
 }
 
+/** Direct Referrals stat card with a click-to-expand dropdown listing every referral. */
+function ReferralsCard({ count, referrals }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div className="relative" ref={ref}>
+      <div
+        className="rounded-xl p-5 transition-all cursor-pointer"
+        style={{ background: '#141922', border: '1px solid #1E2A38' }}
+        onClick={() => setOpen(v => !v)}
+      >
+        <div className="flex items-start justify-between mb-3">
+          <div
+            className="w-10 h-10 rounded-lg flex items-center justify-center"
+            style={{ background: 'rgba(155,89,182,0.1)', border: '1px solid rgba(155,89,182,0.19)' }}
+          >
+            <Users size={20} style={{ color: '#9B59B6' }} />
+          </div>
+          <ChevronDown
+            size={16}
+            style={{ color: '#4A5568', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
+          />
+        </div>
+        <p className="text-xs font-medium mb-1" style={{ color: '#8899AA' }}>Direct Referrals</p>
+        <p className="text-2xl font-bold text-white">{count}</p>
+        <p className="text-xs mt-1" style={{ color: '#4A5568' }}>Users you invited</p>
+      </div>
+
+      {open && (
+        <div
+          className="absolute left-0 right-0 top-full mt-2 rounded-xl overflow-hidden z-50 max-h-64 overflow-y-auto"
+          style={{ background: '#0E1117', border: '1px solid #1E2A38', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}
+        >
+          {referrals.length === 0 ? (
+            <p className="px-4 py-3 text-xs" style={{ color: '#4A5568' }}>No referrals yet</p>
+          ) : (
+            <div className="row-divide">
+              {referrals.map(r => (
+                <div key={r.username} className="flex items-center justify-between px-4 py-2.5">
+                  <span className="text-sm text-white truncate">@{r.username}</span>
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ml-2"
+                    style={{
+                      background: r.is_active ? 'rgba(0,212,180,0.12)' : 'rgba(255,77,106,0.12)',
+                      color: r.is_active ? '#00D4B4' : '#FF4D6A',
+                    }}
+                  >
+                    {r.is_active ? 'Active' : 'Frozen'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const { user } = useAuth()
   const [wallets, setWallets] = useState([])
@@ -48,6 +114,7 @@ export default function Dashboard() {
   const [repurchase, setRepurchase] = useState({ tiers: [] })
   const [earnings, setEarnings] = useState({ total_earned: 0 })
   const [referralCount, setReferralCount] = useState(0)
+  const [referrals, setReferrals] = useState([])
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
   const { balance: usdtBalance, loading: usdtLoading, isConnected, configured } = useUsdtBalance()
@@ -67,6 +134,7 @@ export default function Dashboard() {
       setWallets(wb.data)
       setPurchases(pb.data)
       setReferralCount(rb.data.count || 0)
+      setReferrals(rb.data.referrals || [])
       setIncome(ib.data || { total: 0, buckets: [] })
       setRepurchase(rpb.data || { tiers: [] })
       setEarnings(eb.data || { total_earned: 0 })
@@ -157,13 +225,7 @@ export default function Dashboard() {
             sub="Commissions paid on-chain"
             color="#00FFD4"
           />
-          <StatCard
-            icon={Users}
-            label="Direct Referrals"
-            value={referralCount}
-            sub="Users you invited"
-            color="#9B59B6"
-          />
+          <ReferralsCard count={referralCount} referrals={referrals} />
           <StatCard
             icon={Bot}
             label="Highest Agent"

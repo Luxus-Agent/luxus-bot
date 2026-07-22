@@ -24,6 +24,8 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user
+from app.core.core_preview import simulate_core_split
+from app.core.matrix_engine import PAYOUT_CONFIG, tier_multiplier
 from app.core.platform_state import ensure_platform_active, get_platform_setting, set_platform_frozen
 from app.core.wallet_ops import (
     ACCOUNT_TIER,
@@ -36,6 +38,7 @@ from app.core.wallet_ops import (
 )
 from app.database import get_db
 from app.models.agent import AgentPurchase
+from app.models.matrix import MatrixLevelQueue, MatrixQueueSlot, SystemType
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
 from app.models.wallet import Wallet
@@ -594,3 +597,138 @@ def admin_debit_wallet(
     db.commit()
 
     return {"message": f"${float(body.amount):.4f} debited from user #{body.user_id} tier {body.agent_tier}"}
+
+
+# ── Revenue Engine Visualization (Core / Stream / Boost) ─────────────────────
+#
+# Read-only endpoints powering the admin "Revenue Engines" dashboard page:
+# Stream/Boost queue fill-state + contents, and a Core compression/odd-even
+# routing simulator. None of these mutate any persisted state.
+
+@router.get("/matrix/overview")
+def matrix_overview(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """
+    Fill-state snapshot of every Stream (per-tier 1-4) and Boost (global,
+    tier 1) level-queue — percent-to-next-payout, wallet/re-entry amounts,
+    lifetime completions. Missing queues (never touched yet) report as empty.
+    """
+    rows = db.query(MatrixLevelQueue).all()
+    by_key = {(r.agent_tier, r.system_type, r.level): r for r in rows}
+
+    def level_state(system_type: SystemType, tier: int, level: int) -> dict:
+        cfg = PAYOUT_CONFIG[system_type][level]
+        row = by_key.get((tier, system_type, level))
+        head = row.head_position if row else 1
+        next_pos = row.next_position if row else 1
+        completions = head - 1
+        required_total = 1 + cfg.threshold * (completions + 1)
+        total_joined = next_pos - 1
+        filled = min(cfg.threshold, max(0, cfg.threshold - (required_total - total_joined)))
+        multiplier = tier_multiplier(tier)
+        return {
+            "level": level,
+            "threshold": cfg.threshold,
+            "filled": filled,
+            "percent": round(100 * filled / cfg.threshold, 1),
+            "completions": completions,
+            "total_joined": total_joined,
+            "wallet_amount": float(cfg.wallet_amount * multiplier),
+            "reentry_amount": float(cfg.reentry_amount * multiplier),
+            "reentry_count": cfg.reentry_count,
+            "sponsor_on_completion": float(cfg.sponsor_on_completion * multiplier),
+        }
+
+    return {
+        "stream": {
+            str(tier): [level_state(SystemType.STREAM, tier, lvl) for lvl in (1, 2, 3)]
+            for tier in (1, 2, 3, 4)
+        },
+        "boost": {"1": [level_state(SystemType.BOOST, 1, lvl) for lvl in (1, 2, 3)]},
+    }
+
+
+@router.get("/matrix/queue-slots")
+def matrix_queue_slots(
+    system_type: str,
+    tier: int,
+    level: int,
+    limit: int = 40,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """
+    Ordered queue contents for one (system, tier, level) starting from the
+    current head position — the actual member list behind the "queue format"
+    visualization (who's occupying each position, which are re-entries).
+    """
+    try:
+        sys_enum = SystemType(system_type.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="system_type must be 'stream' or 'boost'.")
+    if level not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="level must be 1, 2, or 3.")
+    if sys_enum == SystemType.BOOST:
+        tier = 1  # Boost always runs a single global queue on tier 1.
+    limit = max(1, min(limit, 100))
+
+    queue = db.query(MatrixLevelQueue).filter_by(agent_tier=tier, system_type=sys_enum, level=level).first()
+    head = queue.head_position if queue else 1
+    next_pos = queue.next_position if queue else 1
+
+    slots = (
+        db.query(MatrixQueueSlot)
+        .filter(
+            MatrixQueueSlot.agent_tier == tier,
+            MatrixQueueSlot.system_type == sys_enum,
+            MatrixQueueSlot.level == level,
+            MatrixQueueSlot.position_number >= head,
+        )
+        .order_by(MatrixQueueSlot.position_number)
+        .limit(limit)
+        .all()
+    )
+    user_ids = {s.user_id for s in slots}
+    usernames = dict(
+        db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()
+    ) if user_ids else {}
+
+    return {
+        "system_type": sys_enum.value,
+        "agent_tier": tier,
+        "level": level,
+        "threshold": PAYOUT_CONFIG[sys_enum][level].threshold,
+        "head_position": head,
+        "next_position": next_pos,
+        "slots": [
+            {
+                "position_number": s.position_number,
+                "username": usernames.get(s.user_id, f"user{s.user_id}"),
+                "is_dummy": s.is_dummy,
+                "is_head": s.position_number == head,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in slots
+        ],
+    }
+
+
+@router.get("/core/simulate")
+def core_simulate(
+    username: str,
+    tier: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """
+    Read-only preview of the Core 60% compression + odd/even split if
+    `username` bought `tier` right now (admin can inspect any user).
+    """
+    if tier not in (1, 2, 3, 4):
+        raise HTTPException(status_code=400, detail="tier must be 1-4.")
+    buyer = db.query(User).filter_by(username=username).first()
+    if not buyer:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return simulate_core_split(db, buyer, tier)
