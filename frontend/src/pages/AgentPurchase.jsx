@@ -43,7 +43,7 @@ export default function AgentPurchase() {
   const [purchasing, setPurchasing] = useState(null)
   const [confirmTier, setConfirmTier] = useState(null)  // tier awaiting confirm-modal approval
   const { address, isConnected } = useAppKitAccount()
-  const { balance: usdtBalance, loading: usdtLoading, configured: usdtConfigured } = useUsdtBalance()
+  const { balance: usdtBalance, loading: usdtLoading, configured: usdtConfigured, refetch: refetchUsdtBalance } = useUsdtBalance()
 
   // Account (spendable) balance lives in the 'account' wallet from /wallet/balances.
   const accountBalanceFrom = (wallets) =>
@@ -162,6 +162,7 @@ export default function AgentPurchase() {
       })
 
       toast.success(`Agent ${tierId} purchased!`)
+      refetchUsdtBalance()
       const [p, b] = await Promise.all([api.get('/agents/purchases'), api.get('/wallet/balances')])
       setPurchases(p.data)
       setAccountBalance(accountBalanceFrom(b.data))
