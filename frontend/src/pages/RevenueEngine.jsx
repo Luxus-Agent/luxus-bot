@@ -28,9 +28,10 @@ function UserCoreSimulator() {
 
   return (
     <div className="rounded-xl p-6" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-      <h3 className="font-semibold text-white mb-1">Where Would My Purchase Go?</h3>
+      <h3 className="font-semibold text-white mb-1">Purchase Distribution Preview</h3>
       <p className="text-xs mb-4" style={{ color: '#8899AA' }}>
-        Pick a tier to preview where your own Core 60% would route right now — read-only, doesn't affect real payouts.
+        Preview how your 60% purchase commission would be distributed for the selected tier.
+        This simulation does not generate actual commission payouts.
       </p>
       <div className="flex gap-2 mb-5">
         {[1, 2, 3, 4].map(t => (

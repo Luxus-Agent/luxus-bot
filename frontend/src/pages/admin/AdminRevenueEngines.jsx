@@ -30,9 +30,10 @@ function CoreSimulator() {
 
   return (
     <div className="rounded-xl p-6" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-      <h3 className="font-semibold text-white mb-1">Live Routing Simulator</h3>
+      <h3 className="font-semibold text-white mb-1">Purchase Distribution Preview</h3>
       <p className="text-xs mb-4" style={{ color: '#8899AA' }}>
-        Preview where a purchase's Core 60% would land right now for any user — read-only, never affects real payouts.
+        Preview how a 60% purchase commission would be distributed for any user and tier.
+        This simulation does not generate actual commission payouts.
       </p>
       <div className="flex flex-col sm:flex-row gap-3 mb-5">
         <input

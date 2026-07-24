@@ -23,7 +23,7 @@ function DiagramArrow({ label }) {
     <div className="flex flex-col items-center">
       <div style={{ width: 2, height: 18, background: '#2A3A4A' }} />
       <ChevronDown size={14} style={{ color: '#2A3A4A' }} />
-      {label && <p className="text-xs text-center max-w-[220px] mt-1" style={{ color: '#4A5568' }}>{label}</p>}
+      {label && <p className="text-xs text-center max-w-[220px] mt-1" style={{ color: '#8899AA' }}>{label}</p>}
     </div>
   )
 }
@@ -31,24 +31,59 @@ function DiagramArrow({ label }) {
 export function CoreExplainerDiagram() {
   return (
     <div className="rounded-xl p-6" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-      <h3 className="font-semibold text-white mb-1">How Core Routing Works</h3>
+      <h3 className="font-semibold text-white mb-1">How Your Commission Is Distributed</h3>
       <p className="text-xs mb-6" style={{ color: '#8899AA' }}>
-        Compression picks the nearest eligible upline for each 30% half; odd/even then decides whether
-        that upline keeps it or it passes further up the sponsor chain.
+        Each 30% share is routed independently through the sponsor network. Sponsors with the
+        required agent tier may receive the commission, while others have it passed to the next
+        eligible sponsor based on the routing rules.
       </p>
       <div className="flex flex-col items-center">
         <DiagramNode label="Buyer" sub="purchases a tier" color="#00D4B4" />
-        <DiagramArrow label="60% Core → two 30% halves, walk up the sponsor chain" />
-        <DiagramNode label="Eligible Upline" sub="compression: highest active tier ≥ buyer's tier" color="#3498DB" />
+        <DiagramArrow />
+        <DiagramNode label="Purchase Complete" color="#00D4B4" />
+        <DiagramArrow label="60% Core Commission — splits into two 30% shares, routed independently" />
+        <DiagramNode label="First 30% Share" sub="starts at the Direct Sponsor" color="#3498DB" />
+        <DiagramArrow />
+        <DiagramNode label="Required Agent?" sub="active, not frozen, tier ≥ buyer's tier" color="#8899AA" />
         <div className="flex items-start gap-12 mt-1">
           <div className="flex flex-col items-center">
-            <DiagramArrow label="Odd count" />
-            <DiagramNode label="Credited" sub="kept — paid to wallet" color="#00D4B4" />
+            <DiagramArrow label="Yes" />
+            <DiagramNode label="Odd / Even" sub="checked at this sponsor" color="#3498DB" />
+            <div className="flex items-start gap-8 mt-1">
+              <div className="flex flex-col items-center">
+                <DiagramArrow label="Odd" />
+                <DiagramNode label="Credited" sub="paid to wallet" color="#00D4B4" />
+              </div>
+              <div className="flex flex-col items-center">
+                <DiagramArrow label="Even" />
+                <DiagramNode label="Pass Up" sub="try the next eligible sponsor" color="#FFB547" />
+                <div className="flex items-start gap-8 mt-1">
+                  <div className="flex flex-col items-center">
+                    <DiagramArrow label="Eligible sponsor above" />
+                    <DiagramNode label="Next Eligible" sub="repeats Odd/Even there" color="#3498DB" />
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <DiagramArrow label="None above" />
+                    <DiagramNode label="Keeps It" sub="stays with this sponsor" color="#00D4B4" />
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <div className="flex flex-col items-center">
-            <DiagramArrow label="Even count" />
-            <DiagramNode label="Passed Up" sub="next eligible upline (compressed)" color="#FFB547" />
+            <DiagramArrow label="No" />
+            <DiagramNode label="Next Sponsor" sub="required-agent check repeats" color="#8899AA" />
           </div>
+        </div>
+        <div className="max-w-lg mt-5 space-y-2">
+          <p className="text-xs text-center" style={{ color: '#8899AA' }}>
+            If no sponsor up the entire chain ever qualifies, that 30% share is retained as platform
+            profit instead of being credited back to the buyer.
+          </p>
+          <p className="text-xs text-center" style={{ color: '#8899AA' }}>
+            The second 30% share runs these same rules again, but starts its search one level above
+            wherever the first share ended up — not back at the Direct Sponsor.
+          </p>
         </div>
       </div>
     </div>
@@ -80,7 +115,7 @@ function SkipChain({ items }) {
       {items.map(s => (
         <div key={s.username} className="flex items-center gap-1.5">
           <ChainPill label={`@${s.username}`} tone="skip" />
-          <span className="text-xs" style={{ color: '#4A5568' }}>✕ {s.reason}</span>
+          <span className="text-xs" style={{ color: '#8899AA' }}>✕ {s.reason}</span>
           <ChevronRight size={12} style={{ color: '#2A3A4A' }} />
         </div>
       ))}
@@ -117,7 +152,7 @@ export function CoreHalfChain({ title, half }) {
 
           {half.parity === 'even' && <SkipChain items={half.passup_skipped} />}
           {half.passup_fallback_to_candidate && (
-            <p className="text-xs mb-3" style={{ color: '#4A5568' }}>No eligible upline above — falls back to the candidate.</p>
+            <p className="text-xs mb-3" style={{ color: '#8899AA' }}>No eligible upline above — falls back to the candidate.</p>
           )}
 
           <div className="flex items-center gap-2">
