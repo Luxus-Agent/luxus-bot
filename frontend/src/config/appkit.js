@@ -52,7 +52,7 @@ export const appKit = createAppKit({
   },
   themeMode: 'dark',
   themeVariables: {
-    '--w3m-accent': '#00D4B4',
+    '--w3m-accent': 'var(--accent)',
     '--w3m-border-radius-master': '2px',
   },
   includeWalletIds: [

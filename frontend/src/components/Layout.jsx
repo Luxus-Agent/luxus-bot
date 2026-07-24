@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 import api from '../api/client'
 import toast from 'react-hot-toast'
 import Logo from './Logo'
@@ -31,7 +32,7 @@ function SidebarNav({ nav, onClose }) {
   return (
     <div className="flex flex-col h-full">
       {/* Logo */}
-      <div className="px-6 py-5 border-b" style={{ borderColor: '#1E2A38' }}>
+      <div className="px-6 py-5 border-b" style={{ borderColor: 'var(--border)' }}>
         <Logo size={26} />
       </div>
 
@@ -41,7 +42,7 @@ function SidebarNav({ nav, onClose }) {
           if (item.divider) {
             return (
               <div key={`divider-${i}`} className="pt-4 pb-1 px-3">
-                <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#2A3A4A' }}>
+                <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
                   {item.divider}
                 </p>
               </div>
@@ -56,8 +57,8 @@ function SidebarNav({ nav, onClose }) {
               onClick={onClose}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium"
               style={active
-                ? { background: 'rgba(0,212,180,0.1)', color: '#00D4B4', borderLeft: '2px solid #00D4B4', paddingLeft: '10px' }
-                : { color: '#8899AA', borderLeft: '2px solid transparent' }
+                ? { background: 'rgba(var(--accent-rgb),0.1)', color: 'var(--accent)', borderLeft: '2px solid var(--accent)', paddingLeft: '10px' }
+                : { color: 'var(--text-secondary)', borderLeft: '2px solid transparent' }
               }
             >
               <Icon size={17} />
@@ -69,7 +70,7 @@ function SidebarNav({ nav, onClose }) {
       </nav>
 
       {/* User info strip — no logout button, logout is in topbar dropdown */}
-      <div className="px-3 pb-4 pt-2 border-t" style={{ borderColor: '#1E2A38' }}>
+      <div className="px-3 pb-4 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
         <UserInfoStrip />
       </div>
     </div>
@@ -79,10 +80,10 @@ function SidebarNav({ nav, onClose }) {
 function UserInfoStrip() {
   const { user } = useAuth()
   return (
-    <div className="px-3 py-2.5 rounded-lg" style={{ background: '#0E1117' }}>
-      <p className="text-xs" style={{ color: '#4A5568' }}>Signed in as</p>
+    <div className="px-3 py-2.5 rounded-lg" style={{ background: 'var(--bg-surface)' }}>
+      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Signed in as</p>
       <p className="text-sm font-semibold text-white truncate">{user?.username}</p>
-      <p className="text-xs truncate" style={{ color: '#4A5568' }}>{user?.email}</p>
+      <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{user?.email}</p>
     </div>
   )
 }
@@ -103,9 +104,9 @@ function ProfileDropdown({ user, isAdmin, logout, navigate }) {
         onClick={() => setOpen(v => !v)}
         className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all"
         style={{
-          background: open ? 'rgba(0,212,180,0.25)' : 'rgba(0,212,180,0.12)',
-          color: '#00D4B4',
-          border: '1px solid rgba(0,212,180,0.2)',
+          background: open ? 'rgba(var(--accent-rgb),0.25)' : 'rgba(var(--accent-rgb),0.12)',
+          color: 'var(--accent)',
+          border: '1px solid rgba(var(--accent-rgb),0.2)',
         }}
       >
         {(user?.username || 'U')[0].toUpperCase()}
@@ -114,26 +115,26 @@ function ProfileDropdown({ user, isAdmin, logout, navigate }) {
       {open && (
         <div
           className="absolute right-0 top-10 w-52 rounded-xl overflow-hidden z-50"
-          style={{ background: '#141922', border: '1px solid #1E2A38', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}
+          style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}
         >
           {/* User info */}
-          <div className="px-4 py-3 border-b" style={{ borderColor: '#1E2A38' }}>
+          <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
             <div className="flex items-center gap-2 mb-1">
               <div
                 className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }}
+                style={{ background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)' }}
               >
                 {(user?.username || 'U')[0].toUpperCase()}
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-white truncate">{user?.username}</p>
-                <p className="text-xs truncate" style={{ color: '#4A5568' }}>{user?.email}</p>
+                <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{user?.email}</p>
               </div>
             </div>
             {isAdmin && (
               <span
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold mt-1"
-                style={{ background: 'rgba(0,212,180,0.1)', color: '#00D4B4', border: '1px solid rgba(0,212,180,0.25)' }}
+                style={{ background: 'rgba(var(--accent-rgb),0.1)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb),0.25)' }}
               >
                 <ShieldCheck size={11} /> ADMIN
               </span>
@@ -144,8 +145,8 @@ function ProfileDropdown({ user, isAdmin, logout, navigate }) {
           <div className="p-1.5">
             <button
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all"
-              style={{ color: '#8899AA' }}
-              onMouseEnter={e => e.currentTarget.style.background = '#1E2A38'}
+              style={{ color: 'var(--text-secondary)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--border)'}
               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               onClick={() => { setOpen(false); navigate('/profile') }}
             >
@@ -153,7 +154,7 @@ function ProfileDropdown({ user, isAdmin, logout, navigate }) {
               Profile
             </button>
 
-            <div className="my-1" style={{ height: '1px', background: '#1E2A38' }} />
+            <div className="my-1" style={{ height: '1px', background: 'var(--border)' }} />
 
             <button
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all"
@@ -186,7 +187,7 @@ function FrozenBanner({ reason, isAdmin }) {
           ? 'All user agent purchases are paused. Use the “Frozen” button to resume.'
           : 'Agent purchases are temporarily paused. Please try again later.'}
         {/* Reason is admin-only — the public status endpoint never sends it to users. */}
-        {reason ? <span style={{ color: '#8899AA' }}> — {reason}</span> : null}
+        {reason ? <span style={{ color: 'var(--text-secondary)' }}> — {reason}</span> : null}
       </p>
     </div>
   )
@@ -238,13 +239,13 @@ function PlatformFreezeControl({ frozen, onChanged }) {
           <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.75)' }} onClick={() => !loading && setOpen(false)} />
           <div
             className="relative w-full max-w-md rounded-2xl p-6"
-            style={{ background: '#141922', border: '1px solid #1E2A38', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+            style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
           >
             <div className="flex items-center gap-3 mb-3">
               <div
                 className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
                 style={frozen
-                  ? { background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }
+                  ? { background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)' }
                   : { background: 'rgba(255,77,106,0.12)', color: '#FF4D6A' }}
               >
                 {frozen ? <Unlock size={20} /> : <ShieldAlert size={20} />}
@@ -254,7 +255,7 @@ function PlatformFreezeControl({ frozen, onChanged }) {
               </h2>
             </div>
 
-            <p className="text-sm mb-4" style={{ color: '#8899AA' }}>
+            <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
               {frozen
                 ? 'This will immediately re-enable agent purchases for all users.'
                 : 'This is an emergency stop. While frozen, all users are blocked from agent purchases. Read-only access stays available. Only you can resume.'}
@@ -262,7 +263,7 @@ function PlatformFreezeControl({ frozen, onChanged }) {
 
             {!frozen && (
               <div className="mb-4">
-                <label className="block text-xs font-medium mb-1.5" style={{ color: '#8899AA' }}>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                   Reason (optional)
                 </label>
                 <input
@@ -271,9 +272,9 @@ function PlatformFreezeControl({ frozen, onChanged }) {
                   onChange={e => setReason(e.target.value)}
                   placeholder="e.g. Suspicious activity under investigation"
                   className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
-                  style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
+                  style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                   onFocus={e => e.target.style.borderColor = '#FF4D6A'}
-                  onBlur={e => e.target.style.borderColor = '#1E2A38'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
               </div>
             )}
@@ -283,7 +284,7 @@ function PlatformFreezeControl({ frozen, onChanged }) {
                 onClick={() => setOpen(false)}
                 disabled={loading}
                 className="px-4 py-2 rounded-lg text-sm font-medium transition-all"
-                style={{ background: '#1E2A38', color: '#8899AA' }}
+                style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
               >
                 Cancel
               </button>
@@ -292,7 +293,7 @@ function PlatformFreezeControl({ frozen, onChanged }) {
                 disabled={loading}
                 className="px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2"
                 style={frozen
-                  ? { background: '#00D4B4', color: '#000' }
+                  ? { background: 'var(--accent)', color: '#000' }
                   : { background: '#FF4D6A', color: '#fff' }}
               >
                 {loading
@@ -305,6 +306,22 @@ function PlatformFreezeControl({ frozen, onChanged }) {
         </div>
       )}
     </>
+  )
+}
+
+/** Sun/moon toggle for the dark ↔ light theme, shown in both the user and admin topbars. */
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme()
+  return (
+    <button
+      onClick={toggleTheme}
+      title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      aria-label="Toggle theme"
+      className="w-8 h-8 rounded-full flex items-center justify-center text-base leading-none transition-all"
+      style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}
+    >
+      {theme === 'dark' ? '☀️' : '🌙'}
+    </button>
   )
 }
 
@@ -356,14 +373,14 @@ function AppShell({ nav, children, badge }) {
   }, [isAdmin])
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: '#080B10' }}>
+    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg-page)' }}>
       {/* Disconnect any wallet that isn't the user's registered address */}
       <WalletGuard />
 
       {/* Desktop sidebar */}
       <aside
         className="hidden lg:flex flex-col w-60 flex-shrink-0"
-        style={{ background: '#0E1117', borderRight: '1px solid #1E2A38' }}
+        style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
       >
         <SidebarNav nav={nav} onClose={() => {}} />
       </aside>
@@ -378,11 +395,11 @@ function AppShell({ nav, children, badge }) {
           />
           <aside
             className="relative z-10 flex flex-col w-64"
-            style={{ background: '#0E1117', borderRight: '1px solid #1E2A38' }}
+            style={{ background: 'var(--bg-surface)', borderRight: '1px solid var(--border)' }}
           >
             <button
               className="absolute top-4 right-4 p-1.5 rounded-lg"
-              style={{ color: '#4A5568' }}
+              style={{ color: 'var(--text-muted)' }}
               onClick={() => setOpen(false)}
             >
               <X size={18} />
@@ -397,11 +414,11 @@ function AppShell({ nav, children, badge }) {
         {/* Topbar */}
         <header
           className="flex items-center gap-3 px-5 py-3.5 flex-shrink-0"
-          style={{ background: '#0E1117', borderBottom: '1px solid #1E2A38' }}
+          style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)' }}
         >
           <button
             className="lg:hidden p-1.5 rounded-lg"
-            style={{ color: '#8899AA' }}
+            style={{ color: 'var(--text-secondary)' }}
             onClick={() => setOpen(true)}
           >
             <Menu size={20} />
@@ -411,6 +428,7 @@ function AppShell({ nav, children, badge }) {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
             {/* Reown AppKit wallet widget — only relevant to the on-chain purchase
                 flow, which admins don't use, so it's hidden on admin pages. */}
             {!isAdmin && <appkit-button balance="hide" size="sm" />}
@@ -420,7 +438,7 @@ function AppShell({ nav, children, badge }) {
             {badge && (
               <span
                 className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold"
-                style={{ background: 'rgba(0,212,180,0.1)', color: '#00D4B4', border: '1px solid rgba(0,212,180,0.25)' }}
+                style={{ background: 'rgba(var(--accent-rgb),0.1)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb),0.25)' }}
               >
                 {badge}
               </span>

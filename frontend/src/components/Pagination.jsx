@@ -4,10 +4,10 @@ const BTN = {
   base: {
     minWidth: 32, height: 32, borderRadius: 8, fontSize: 13, fontWeight: 500,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    cursor: 'pointer', border: '1px solid #1E2A38', background: '#141922', color: '#8899AA',
+    cursor: 'pointer', border: '1px solid var(--border)', background: 'var(--bg-panel)', color: 'var(--text-secondary)',
     padding: '0 8px',
   },
-  active: { background: '#00D4B4', color: '#000', borderColor: '#00D4B4' },
+  active: { background: 'var(--accent)', color: '#000', borderColor: 'var(--accent)' },
   disabled: { opacity: 0.35, cursor: 'not-allowed' },
 }
 
@@ -31,8 +31,8 @@ export default function Pagination({ page, totalPages, onChange }) {
   }
 
   return (
-    <div className="flex items-center justify-between pt-3" style={{ borderTop: '1px solid #1E2A38' }}>
-      <p className="text-xs" style={{ color: '#4A5568' }}>
+    <div className="flex items-center justify-between pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
         Page {page} of {totalPages}
       </p>
       <div className="flex items-center gap-1.5">
@@ -46,7 +46,7 @@ export default function Pagination({ page, totalPages, onChange }) {
 
         {withEllipsis.map((p, i) =>
           p === '...' ? (
-            <span key={`e${i}`} style={{ color: '#4A5568', fontSize: 13, padding: '0 2px' }}>…</span>
+            <span key={`e${i}`} style={{ color: 'var(--text-muted)', fontSize: 13, padding: '0 2px' }}>…</span>
           ) : (
             <button
               key={p}

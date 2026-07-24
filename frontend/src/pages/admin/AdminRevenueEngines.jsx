@@ -29,9 +29,9 @@ function CoreSimulator() {
   }
 
   return (
-    <div className="rounded-xl p-6" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+    <div className="rounded-xl p-6" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
       <h3 className="font-semibold text-white mb-1">Purchase Distribution Preview</h3>
-      <p className="text-xs mb-4" style={{ color: '#8899AA' }}>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
         Preview how a 60% purchase commission would be distributed for any user and tier.
         This simulation does not generate actual commission payouts.
       </p>
@@ -42,13 +42,13 @@ function CoreSimulator() {
           onKeyDown={e => e.key === 'Enter' && run()}
           placeholder="Username"
           className="flex-1 px-3 py-2.5 rounded-lg text-sm outline-none"
-          style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
         />
         <select
           value={tier}
           onChange={e => setTier(Number(e.target.value))}
           className="px-3 py-2.5 rounded-lg text-sm outline-none"
-          style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
         >
           {[1, 2, 3, 4].map(t => <option key={t} value={t}>Agent {t}</option>)}
         </select>
@@ -56,7 +56,7 @@ function CoreSimulator() {
           onClick={run}
           disabled={loading || !username.trim()}
           className="px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50"
-          style={{ background: '#00D4B4', color: '#000' }}
+          style={{ background: 'var(--accent)', color: '#000' }}
         >
           {loading ? 'Simulating…' : 'Simulate'}
         </button>
@@ -79,7 +79,7 @@ function CoreSimulator() {
 function QueueList({ slots, color }) {
   return (
     <div className="max-h-72 overflow-y-auto pr-1">
-      <p className="text-xs mb-3" style={{ color: '#4A5568' }}>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
         Head position {slots.head_position} pays out once {slots.threshold} more members join behind it.
       </p>
       <div className="space-y-1">
@@ -87,13 +87,13 @@ function QueueList({ slots, color }) {
           <div key={s.position_number} className="flex items-center gap-2">
             <div
               className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-              style={{ background: s.is_head ? color : '#1E2A38', border: s.is_head ? 'none' : '1px solid #2A3A4A' }}
+              style={{ background: s.is_head ? color : 'var(--border)', border: s.is_head ? 'none' : '1px solid var(--border-subtle)' }}
             />
             <div
               className="flex-1 flex items-center justify-between px-3 py-2 rounded-lg text-xs"
               style={{
-                background: s.is_head ? `${color}12` : '#0E1117',
-                border: `1px solid ${s.is_head ? color + '50' : '#1E2A38'}`,
+                background: s.is_head ? `color-mix(in srgb, ${color} 12%, transparent)` : 'var(--bg-surface)',
+                border: `1px solid ${s.is_head ? `color-mix(in srgb, ${color} 50%, transparent)` : 'var(--border)'}`,
               }}
             >
               <span className="text-white font-medium">#{s.position_number} · @{s.username}</span>
@@ -104,7 +104,7 @@ function QueueList({ slots, color }) {
                   </span>
                 )}
                 {s.is_head && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: `${color}20`, color }}>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>
                     NEXT TO PAY
                   </span>
                 )}
@@ -140,35 +140,35 @@ function LevelCard({ label, data, color, systemType, tier }) {
   }
 
   return (
-    <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+    <div className="rounded-xl p-4" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
       <div className="flex items-center justify-between mb-2">
         <p className="text-sm font-semibold text-white">{label}</p>
-        <span className="text-xs" style={{ color: '#8899AA' }}>{data.filled}/{data.threshold} new joins</span>
+        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{data.filled}/{data.threshold} new joins</span>
       </div>
-      <div className="h-2 rounded-full overflow-hidden mb-3" style={{ background: '#0E1117' }}>
+      <div className="h-2 rounded-full overflow-hidden mb-3" style={{ background: 'var(--bg-surface)' }}>
         <div className="h-full rounded-full transition-all" style={{ width: `${data.percent}%`, background: color }} />
       </div>
-      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 text-xs mb-3" style={{ color: '#8899AA' }}>
+      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
         <p>Wallet payout: <span className="text-white">${data.wallet_amount.toFixed(2)}</span></p>
         <p>Completions: <span className="text-white">{data.completions}</span></p>
         <p>Re-entry: <span className="text-white">${data.reentry_amount.toFixed(2)} × {data.reentry_count}</span></p>
         <p>Total joined: <span className="text-white">{data.total_joined}</span></p>
       </div>
       {data.sponsor_on_completion > 0 && (
-        <p className="text-xs mb-3" style={{ color: '#4A5568' }}>Sponsor share on completion: ${data.sponsor_on_completion.toFixed(2)}</p>
+        <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>Sponsor share on completion: ${data.sponsor_on_completion.toFixed(2)}</p>
       )}
       <button onClick={toggle} className="text-xs font-medium" style={{ color }}>
         {expanded ? 'Hide Queue ↑' : 'View Queue ↓'}
       </button>
 
       {expanded && (
-        <div className="mt-3 pt-3" style={{ borderTop: '1px solid #1E2A38' }}>
+        <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
           {loadingSlots ? (
-            <p className="text-xs" style={{ color: '#8899AA' }}>Loading…</p>
+            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Loading…</p>
           ) : slots && slots.slots.length ? (
             <QueueList slots={slots} color={color} />
           ) : (
-            <p className="text-xs" style={{ color: '#4A5568' }}>No entries yet.</p>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No entries yet.</p>
           )}
         </div>
       )}
@@ -190,8 +190,8 @@ function MatrixTab({ systemType, color, tiers, overview }) {
               onClick={() => setTier(t)}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold"
               style={tier === t
-                ? { background: `${color}18`, color, border: `1px solid ${color}50` }
-                : { background: '#141922', color: '#8899AA', border: '1px solid #1E2A38' }}
+                ? { background: `color-mix(in srgb, ${color} 18%, transparent)`, color, border: `1px solid color-mix(in srgb, ${color} 50%, transparent)` }
+                : { background: 'var(--bg-panel)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
             >
               Agent {t}
             </button>
@@ -199,7 +199,7 @@ function MatrixTab({ systemType, color, tiers, overview }) {
         </div>
       )}
       {tiers.length === 1 && (
-        <p className="text-xs" style={{ color: '#4A5568' }}>Boost runs a single global queue (always Agent 1) — no per-tier split.</p>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Boost runs a single global queue (always Agent 1) — no per-tier split.</p>
       )}
       <div className="grid md:grid-cols-3 gap-4">
         {tierData.map(levelData => (
@@ -220,7 +220,7 @@ function MatrixTab({ systemType, color, tiers, overview }) {
 // ── Page ───────────────────────────────────────────────────────────────────
 
 const TABS = [
-  { key: 'core', label: 'Core Agent', color: '#00D4B4' },
+  { key: 'core', label: 'Core Agent', color: 'var(--accent)' },
   { key: 'stream', label: 'Stream Agent', color: '#3498DB' },
   { key: 'boost', label: 'Boost Agent', color: '#9B59B6' },
 ]
@@ -242,7 +242,7 @@ export default function AdminRevenueEngines() {
       <div className="space-y-6 fade-in">
         <div>
           <h1 className="text-2xl font-bold text-white">Revenue Engines</h1>
-          <p className="text-sm mt-1" style={{ color: '#8899AA' }}>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
             Core compression/odd-even routing and Stream/Boost matrix queues
           </p>
         </div>
@@ -254,8 +254,8 @@ export default function AdminRevenueEngines() {
               onClick={() => setTab(t.key)}
               className="px-4 py-2 rounded-lg text-sm font-semibold transition-all"
               style={tab === t.key
-                ? { background: `${t.color}18`, color: t.color, border: `1px solid ${t.color}50` }
-                : { background: '#141922', color: '#8899AA', border: '1px solid #1E2A38' }}
+                ? { background: `color-mix(in srgb, ${t.color} 18%, transparent)`, color: t.color, border: `1px solid color-mix(in srgb, ${t.color} 50%, transparent)` }
+                : { background: 'var(--bg-panel)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
             >
               {t.label}
             </button>
@@ -264,7 +264,7 @@ export default function AdminRevenueEngines() {
 
         {loading ? (
           <div className="flex items-center justify-center h-40">
-            <div className="w-8 h-8 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: '#00D4B4' }} />
+            <div className="w-8 h-8 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: 'var(--accent)' }} />
           </div>
         ) : (
           <>

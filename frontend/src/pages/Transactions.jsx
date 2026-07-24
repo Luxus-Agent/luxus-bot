@@ -11,11 +11,11 @@ const PAGE_SIZE = 10
 // NOTE: the API serializes the TransactionType enum's lowercase *values*
 // (e.g. "agent_purchase"), so all keys/lists here must be lowercase to match.
 const TX_COLOR = {
-  deposit: '#00D4B4', core_income: '#00D4B4', stream_payout: '#00D4B4',
-  boost_payout: '#00D4B4', sponsor_milestone_income: '#00D4B4',
-  transfer_in: '#00D4B4', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
-  repurchase_hold: '#FFB547', reentry: '#8899AA', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
-  core_sent: '#8899AA', software_fee: '#8899AA', platform_profit: '#8899AA', admin_generate: '#00D4B4',
+  deposit: 'var(--accent)', core_income: 'var(--accent)', stream_payout: 'var(--accent)',
+  boost_payout: 'var(--accent)', sponsor_milestone_income: 'var(--accent)',
+  transfer_in: 'var(--accent)', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
+  repurchase_hold: '#FFB547', reentry: 'var(--text-secondary)', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
+  core_sent: 'var(--text-secondary)', software_fee: 'var(--text-secondary)', platform_profit: 'var(--text-secondary)', admin_generate: 'var(--accent)',
   withdrawal_refund: '#FFB547',
 }
 
@@ -72,7 +72,7 @@ export default function Transactions() {
   if (loading) return (
     <Layout>
       <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: '#00D4B4' }} />
+        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: 'var(--accent)' }} />
       </div>
     </Layout>
   )
@@ -82,29 +82,29 @@ export default function Transactions() {
       <div className="space-y-6 fade-in">
         <div>
           <h1 className="text-2xl font-bold text-white">Transactions</h1>
-          <p className="text-sm mt-1" style={{ color: '#8899AA' }}>Complete ledger of all account activity</p>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>Complete ledger of all account activity</p>
         </div>
 
         {/* Totals */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+          <div className="rounded-xl p-4" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
             <div className="flex items-center gap-2 mb-1">
-              <Activity size={16} style={{ color: '#8899AA' }} />
-              <p className="text-xs" style={{ color: '#8899AA' }}>Total Records</p>
+              <Activity size={16} style={{ color: 'var(--text-secondary)' }} />
+              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Total Records</p>
             </div>
             <p className="text-2xl font-bold text-white">{transactions.length}</p>
           </div>
-          <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+          <div className="rounded-xl p-4" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
             <div className="flex items-center gap-2 mb-1">
-              <TrendingUp size={16} style={{ color: '#00D4B4' }} />
-              <p className="text-xs" style={{ color: '#8899AA' }}>Total In</p>
+              <TrendingUp size={16} style={{ color: 'var(--accent)' }} />
+              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Total In</p>
             </div>
-            <p className="text-2xl font-bold" style={{ color: '#00D4B4' }}>${totalIn.toFixed(2)}</p>
+            <p className="text-2xl font-bold" style={{ color: 'var(--accent)' }}>${totalIn.toFixed(2)}</p>
           </div>
-          <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+          <div className="rounded-xl p-4" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
             <div className="flex items-center gap-2 mb-1">
               <TrendingDown size={16} style={{ color: '#FF4D6A' }} />
-              <p className="text-xs" style={{ color: '#8899AA' }}>Total Out</p>
+              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Total Out</p>
             </div>
             <p className="text-2xl font-bold" style={{ color: '#FF4D6A' }}>${totalOut.toFixed(2)}</p>
           </div>
@@ -116,7 +116,7 @@ export default function Transactions() {
             value={filterGroup}
             onChange={e => { setFilterGroup(e.target.value); setFilterType('all'); setPage(1) }}
             className="px-3 py-1.5 rounded-lg text-xs outline-none"
-            style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
+            style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
           >
             <option value="all">All Groups</option>
             {Object.keys(TX_GROUPS).map(g => <option key={g} value={g}>{g}</option>)}
@@ -125,22 +125,22 @@ export default function Transactions() {
             value={filterType}
             onChange={e => { setFilterType(e.target.value); setPage(1) }}
             className="px-3 py-1.5 rounded-lg text-xs outline-none"
-            style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
+            style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
           >
             <option value="all">All Types</option>
             {txTypes.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
           </select>
-          <span className="px-3 py-1.5 text-xs" style={{ color: '#4A5568' }}>
+          <span className="px-3 py-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
             {filtered.length} record{filtered.length !== 1 ? 's' : ''}
           </span>
         </div>
 
         {/* Table */}
-        <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+        <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           {/* Header */}
           <div
             className="hidden sm:grid grid-cols-5 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider"
-            style={{ background: '#0E1117', color: '#4A5568', borderBottom: '1px solid #1E2A38' }}
+            style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}
           >
             <span className="col-span-2">Type</span>
             <span>Tier</span>
@@ -149,7 +149,7 @@ export default function Transactions() {
           </div>
 
           {filtered.length === 0 ? (
-            <div className="p-8 text-center" style={{ color: '#8899AA' }}>
+            <div className="p-8 text-center" style={{ color: 'var(--text-secondary)' }}>
               <Activity size={32} className="mx-auto mb-2 opacity-30" />
               <p className="text-sm">No transactions found</p>
             </div>
@@ -159,14 +159,14 @@ export default function Transactions() {
                 const isNeg = EXPENSE.includes(tx.transaction_type)
                 const isIncome = INCOME.includes(tx.transaction_type)
                 const sign = isNeg ? '−' : isIncome ? '+' : ''
-                const amountColor = isNeg ? '#FF4D6A' : isIncome ? '#00D4B4' : '#8899AA'
-                const color = TX_COLOR[tx.transaction_type] || '#8899AA'
+                const amountColor = isNeg ? '#FF4D6A' : isIncome ? 'var(--accent)' : 'var(--text-secondary)'
+                const color = TX_COLOR[tx.transaction_type] || 'var(--text-secondary)'
                 return (
                   <div key={tx.id} className="flex sm:grid sm:grid-cols-5 items-center gap-3 px-4 py-3">
                     <div className="col-span-2 flex items-center gap-2 min-w-0">
                       <div
                         className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0"
-                        style={{ background: `${color}18`, color }}
+                        style={{ background: `color-mix(in srgb, ${color} 18%, transparent)`, color }}
                       >
                         {sign || '·'}
                       </div>
@@ -174,13 +174,13 @@ export default function Transactions() {
                         <p className="text-sm font-medium text-white truncate">
                           {tx.transaction_type.replace(/_/g, ' ')}
                         </p>
-                        {tx.notes && <p className="text-xs truncate" style={{ color: '#4A5568' }}>{tx.notes}</p>}
+                        {tx.notes && <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{tx.notes}</p>}
                       </div>
                     </div>
-                    <span className="hidden sm:block text-xs" style={{ color: '#8899AA' }}>
+                    <span className="hidden sm:block text-xs" style={{ color: 'var(--text-secondary)' }}>
                       {tx.agent_tier === 0 ? 'Account' : `Agent ${tx.agent_tier}`}
                     </span>
-                    <span className="hidden sm:block text-xs" style={{ color: '#4A5568' }}>
+                    <span className="hidden sm:block text-xs" style={{ color: 'var(--text-muted)' }}>
                       {formatDateIST(tx.created_at)}
                     </span>
                     <p

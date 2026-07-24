@@ -17,7 +17,7 @@ const TIERS = [
   {
     id: 1, base: 10, fee: 1, price: 11, name: 'Agent 1',
     core: '$6.00', stream: '$20.00', boost: '$5.70',
-    color: '#00D4B4', desc: 'Entry level AI agent with full revenue mechanics',
+    color: 'var(--accent)', desc: 'Entry level AI agent with full revenue mechanics',
   },
   {
     id: 2, base: 20, fee: 2, price: 22, name: 'Agent 2',
@@ -195,7 +195,7 @@ export default function AgentPurchase() {
   if (loading) return (
     <Layout>
       <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: '#00D4B4' }} />
+        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: 'var(--accent)' }} />
       </div>
     </Layout>
   )
@@ -206,47 +206,47 @@ export default function AgentPurchase() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-white">Buy AI Agents</h1>
-            <p className="text-sm mt-1" style={{ color: '#8899AA' }}>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
               Purchase triggers 3 parallel revenue mechanisms automatically
             </p>
           </div>
           <div
             className="px-4 py-3 rounded-xl flex items-center gap-3"
-            style={{ background: '#141922', border: '1px solid #00D4B433' }}
+            style={{ background: 'var(--bg-panel)', border: '1px solid rgba(var(--accent-rgb), 0.2)' }}
           >
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: '#00D4B418' }}>
-              <Coins size={18} style={{ color: '#00D4B4' }} />
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(var(--accent-rgb), 0.094)' }}>
+              <Coins size={18} style={{ color: 'var(--accent)' }} />
             </div>
             <div>
-              <p className="text-xs" style={{ color: '#8899AA' }}>Wallet Balance</p>
-              <p className="text-xl font-bold" style={{ color: '#00D4B4' }}>
+              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Wallet Balance</p>
+              <p className="text-xl font-bold" style={{ color: 'var(--accent)' }}>
                 {!usdtConfigured ? (
                   <span className="text-sm" style={{ color: '#FFB547' }}>Not configured</span>
                 ) : !isConnected ? (
-                  <span className="text-sm" style={{ color: '#8899AA' }}>Connect wallet</span>
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>Connect wallet</span>
                 ) : usdtLoading ? (
-                  <span className="text-sm" style={{ color: '#8899AA' }}>Loading…</span>
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>Loading…</span>
                 ) : usdtBalance == null ? (
-                  <span className="text-sm" style={{ color: '#8899AA' }}>—</span>
+                  <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>—</span>
                 ) : (
                   `$${usdtBalance.toFixed(2)}`
                 )}
               </p>
-              <p className="text-xs" style={{ color: '#4A5568' }}>On-chain USDT (BSC)</p>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>On-chain USDT (BSC)</p>
             </div>
           </div>
         </div>
 
         {/* Revenue Split Info */}
-        <div className="rounded-xl p-4" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+        <div className="rounded-xl p-4" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           <p className="text-sm font-semibold text-white mb-3">Revenue Split on Every Purchase</p>
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: 'Core Agent', pct: '60%', icon: Zap, color: '#00D4B4' },
+              { label: 'Core Agent', pct: '60%', icon: Zap, color: 'var(--accent)' },
               { label: 'Stream Agent', pct: '30%', icon: TrendingUp, color: '#3498DB' },
               { label: 'Boost Agent', pct: '10%', icon: Activity, color: '#9B59B6' },
             ].map(({ label, pct, icon: Icon, color }) => (
-              <div key={label} className="rounded-lg p-3 text-center" style={{ background: '#0E1117' }}>
+              <div key={label} className="rounded-lg p-3 text-center" style={{ background: 'var(--bg-surface)' }}>
                 <Icon size={18} className="mx-auto mb-1" style={{ color }} />
                 <p className="text-xs font-bold" style={{ color }}>{pct}</p>
                 <p className="text-xs font-medium text-white">{label}</p>
@@ -266,28 +266,28 @@ export default function AgentPurchase() {
               <div
                 key={tier.id}
                 className="rounded-xl overflow-hidden transition-all"
-                style={{ background: '#141922', border: `1px solid ${tier.color}30` }}
+                style={{ background: 'var(--bg-panel)', border: `1px solid color-mix(in srgb, ${tier.color} 30%, transparent)` }}
               >
                 {/* Header */}
-                <div className="p-4 pb-3" style={{ background: `${tier.color}0A` }}>
+                <div className="p-4 pb-3" style={{ background: `color-mix(in srgb, ${tier.color} 4%, transparent)` }}>
                   <div className="flex items-center justify-between mb-2">
                     <div
                       className="w-10 h-10 rounded-xl flex items-center justify-center"
-                      style={{ background: `${tier.color}20`, border: `1px solid ${tier.color}40` }}
+                      style={{ background: `color-mix(in srgb, ${tier.color} 20%, transparent)`, border: `1px solid color-mix(in srgb, ${tier.color} 40%, transparent)` }}
                     >
                       <Bot size={20} style={{ color: tier.color }} />
                     </div>
                     {owned ? (
                       <span
                         className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                        style={{ background: `${tier.color}20`, color: tier.color }}
+                        style={{ background: `color-mix(in srgb, ${tier.color} 20%, transparent)`, color: tier.color }}
                       >
                         OWNED
                       </span>
                     ) : !unlocked && (
                       <span
                         className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                        style={{ background: '#1E2A38', color: '#4A5568' }}
+                        style={{ background: 'var(--border)', color: 'var(--text-muted)' }}
                       >
                         LOCKED
                       </span>
@@ -295,20 +295,20 @@ export default function AgentPurchase() {
                   </div>
                   <h3 className="text-lg font-bold text-white">{tier.name}</h3>
                   <p className="text-2xl font-bold" style={{ color: tier.color }}>${tier.price}</p>
-                  <p className="text-xs" style={{ color: '#4A5568' }}>${tier.base} + ${tier.fee} platform fee</p>
-                  <p className="text-xs mt-1" style={{ color: '#8899AA' }}>{tier.desc}</p>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>${tier.base} + ${tier.fee} platform fee</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>{tier.desc}</p>
                 </div>
 
                 {/* Payouts */}
                 <div className="px-4 py-3 space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: '#4A5568' }}>Max Payouts</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Max Payouts</p>
                   {[
                     { label: 'Core Agent Total', val: tier.core },
                     { label: 'Stream Agent Total', val: tier.stream },
                     { label: 'Boost Agent Total', val: tier.boost },
                   ].map(({ label, val }) => (
                     <div key={label} className="flex justify-between text-xs">
-                      <span style={{ color: '#8899AA' }}>{label}</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
                       <span className="font-semibold text-white">{val}</span>
                     </div>
                   ))}
@@ -321,8 +321,8 @@ export default function AgentPurchase() {
                     disabled={disabled}
                     className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
                     style={{
-                      background: isBuying ? `${tier.color}40` : (owned ? `${tier.color}20` : (unlocked && isConnected ? tier.color : '#1E2A38')),
-                      color: owned ? tier.color : (unlocked && isConnected && !isBuying ? '#000' : '#4A5568'),
+                      background: isBuying ? `color-mix(in srgb, ${tier.color} 40%, transparent)` : (owned ? `color-mix(in srgb, ${tier.color} 20%, transparent)` : (unlocked && isConnected ? tier.color : 'var(--border)')),
+                      color: owned ? tier.color : (unlocked && isConnected && !isBuying ? '#000' : 'var(--text-muted)'),
                       cursor: disabled ? 'not-allowed' : 'pointer',
                     }}
                   >
@@ -339,7 +339,7 @@ export default function AgentPurchase() {
                     )}
                   </button>
                   {!owned && unlocked && !isConnected && (
-                    <p className="text-xs mt-1.5 text-center" style={{ color: '#4A5568' }}>
+                    <p className="text-xs mt-1.5 text-center" style={{ color: 'var(--text-muted)' }}>
                       Connect your wallet to purchase
                     </p>
                   )}
@@ -359,21 +359,21 @@ export default function AgentPurchase() {
             />
             <div
               className="relative w-full max-w-sm rounded-2xl p-6"
-              style={{ background: '#141922', border: '1px solid #1E2A38', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+              style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
             >
               <div className="flex items-center gap-3 mb-3">
                 <div
                   className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }}
+                  style={{ background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)' }}
                 >
                   <ShoppingCart size={20} />
                 </div>
                 <h2 className="text-lg font-bold text-white">Confirm purchase</h2>
               </div>
-              <p className="text-sm mb-5" style={{ color: '#8899AA' }}>
+              <p className="text-sm mb-5" style={{ color: 'var(--text-secondary)' }}>
                 Buy <span className="text-white font-semibold">{confirmTier.name}</span> for{' '}
                 <span className="text-white font-semibold">${confirmTier.price}</span>{' '}
-                <span style={{ color: '#4A5568' }}>(${confirmTier.base} + ${confirmTier.fee} platform fee)</span>?
+                <span style={{ color: 'var(--text-muted)' }}>(${confirmTier.base} + ${confirmTier.fee} platform fee)</span>?
                 Payment is sent on-chain in USDT from your connected wallet to the referral payout addresses.
               </p>
               <div className="flex gap-3">
@@ -381,7 +381,7 @@ export default function AgentPurchase() {
                   type="button"
                   onClick={() => setConfirmTier(null)}
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all"
-                  style={{ background: '#1E2A38', color: '#8899AA' }}
+                  style={{ background: 'var(--border)', color: 'var(--text-secondary)' }}
                 >
                   Cancel
                 </button>
@@ -389,7 +389,7 @@ export default function AgentPurchase() {
                   type="button"
                   onClick={() => { const t = confirmTier; setConfirmTier(null); executePurchase(t) }}
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
-                  style={{ background: '#00D4B4', color: '#000' }}
+                  style={{ background: 'var(--accent)', color: '#000' }}
                 >
                   <ShoppingCart size={14} /> Confirm
                 </button>

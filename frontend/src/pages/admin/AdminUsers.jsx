@@ -88,12 +88,12 @@ export default function AdminUsers() {
   if (loading) return (
     <Layout>
       <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: '#00D4B4' }} />
+        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: 'var(--accent)' }} />
       </div>
     </Layout>
   )
 
-  const inputStyle = { background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }
+  const inputStyle = { background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }
 
   return (
     <Layout>
@@ -101,10 +101,10 @@ export default function AdminUsers() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-white">User Management</h1>
-            <p className="text-sm mt-1" style={{ color: '#8899AA' }}>{users.length} total users</p>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{users.length} total users</p>
           </div>
           <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#4A5568' }} />
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
             <input
               type="text"
               placeholder="Search users..."
@@ -112,17 +112,17 @@ export default function AdminUsers() {
               onChange={e => { setSearch(e.target.value); setPage(1) }}
               className="pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none w-64"
               style={inputStyle}
-              onFocus={e => e.target.style.borderColor = '#00D4B4'}
-              onBlur={e => e.target.style.borderColor = '#1E2A38'}
+              onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
             />
           </div>
         </div>
 
-        <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+        <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           {/* Table Header */}
           <div
             className="hidden sm:grid grid-cols-5 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
-            style={{ background: '#0E1117', color: '#4A5568', borderBottom: '1px solid #1E2A38' }}
+            style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}
           >
             <span className="col-span-2">User</span>
             <span>Status</span>
@@ -142,16 +142,16 @@ export default function AdminUsers() {
                     <div className="col-span-2 flex items-center gap-3 min-w-0">
                       <div
                         className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-                        style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }}
+                        style={{ background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)' }}
                       >
                         {(user.username || 'U')[0].toUpperCase()}
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <p className="text-sm font-medium text-white truncate">{user.username}</p>
-                          {user.is_admin && <ShieldCheck size={12} style={{ color: '#00D4B4' }} />}
+                          {user.is_admin && <ShieldCheck size={12} style={{ color: 'var(--accent)' }} />}
                         </div>
-                        <p className="text-xs truncate" style={{ color: '#4A5568' }}>{user.email}</p>
+                        <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{user.email}</p>
                       </div>
                     </div>
 
@@ -159,7 +159,7 @@ export default function AdminUsers() {
                       <span
                         className="text-xs px-2 py-0.5 rounded-full font-medium"
                         style={user.is_active
-                          ? { background: 'rgba(0,212,180,0.12)', color: '#00D4B4' }
+                          ? { background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)' }
                           : { background: 'rgba(255,77,106,0.12)', color: '#FF4D6A' }
                         }
                       >
@@ -167,20 +167,20 @@ export default function AdminUsers() {
                       </span>
                     </div>
 
-                    <div className="hidden sm:block text-xs" style={{ color: '#8899AA' }}>
+                    <div className="hidden sm:block text-xs" style={{ color: 'var(--text-secondary)' }}>
                       {user.sponsor_username ? `@${user.sponsor_username}` : '—'}
                     </div>
 
                     <div className="flex items-center gap-1.5 ml-auto sm:ml-0 sm:justify-end flex-wrap">
                       {/* Admin rows have no details / freeze controls */}
                       {isAdminRow ? (
-                        <span className="text-xs" style={{ color: '#2A3A4A' }}>—</span>
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>
                       ) : (
                         <>
                           <button
                             onClick={() => toggleExpand(user.id)}
                             className="p-1.5 rounded-lg transition-all"
-                            style={{ color: '#8899AA', background: '#0E1117' }}
+                            style={{ color: 'var(--text-secondary)', background: 'var(--bg-surface)' }}
                             title="View details"
                           >
                             {expanded === user.id ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
@@ -190,7 +190,7 @@ export default function AdminUsers() {
                             className="p-1.5 rounded-lg"
                             style={user.is_active
                               ? { color: '#FF4D6A', background: 'rgba(255,77,106,0.1)' }
-                              : { color: '#00D4B4', background: 'rgba(0,212,180,0.1)' }
+                              : { color: 'var(--accent)', background: 'rgba(var(--accent-rgb),0.1)' }
                             }
                             title={user.is_active ? 'Freeze user' : 'Unfreeze user'}
                           >
@@ -214,28 +214,28 @@ export default function AdminUsers() {
                     <div className="px-5 pb-4" style={{ background: '#0A0D12' }}>
                       {!summary ? (
                         <div className="py-4 flex justify-center">
-                          <div className="w-6 h-6 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: '#00D4B4' }} />
+                          <div className="w-6 h-6 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: 'var(--accent)' }} />
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-3">
-                          <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-                            <Bot size={16} style={{ color: '#00D4B4' }} className="flex-shrink-0" />
+                          <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+                            <Bot size={16} style={{ color: 'var(--accent)' }} className="flex-shrink-0" />
                             <div>
-                              <p className="text-xs" style={{ color: '#8899AA' }}>Agents Bought</p>
+                              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Agents Bought</p>
                               <p className="text-sm font-semibold text-white">{summary.agents_count}</p>
                             </div>
                           </div>
-                          <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+                          <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
                             <Wallet size={16} style={{ color: '#FFB547' }} className="flex-shrink-0" />
                             <div>
-                              <p className="text-xs" style={{ color: '#8899AA' }}>Account Balance</p>
+                              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Account Balance</p>
                               <p className="text-sm font-semibold text-white">${summary.account_balance.toFixed(2)}</p>
                             </div>
                           </div>
-                          <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
-                            <TrendingUp size={16} style={{ color: '#00FFD4' }} className="flex-shrink-0" />
+                          <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+                            <TrendingUp size={16} style={{ color: 'var(--accent-glow)' }} className="flex-shrink-0" />
                             <div>
-                              <p className="text-xs" style={{ color: '#8899AA' }}>Revenue Generated</p>
+                              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Revenue Generated</p>
                               <p className="text-sm font-semibold text-white">${summary.revenue_generated.toFixed(2)}</p>
                             </div>
                           </div>

@@ -4,8 +4,8 @@ import { UserLayout, AdminLayout } from '../components/Layout'
 import { User, Mail, LogOut, Calendar, Users } from 'lucide-react'
 
 const CARD = {
-  background: '#0E1117',
-  border: '1px solid #1E2A38',
+  background: 'var(--bg-surface)',
+  border: '1px solid var(--border)',
   borderRadius: 16,
   padding: '24px',
 }
@@ -14,16 +14,16 @@ function Row({ icon: Icon, label, children, last }) {
   return (
     <div
       className="flex items-start gap-3 py-4"
-      style={last ? {} : { borderBottom: '1px solid #1E2A38' }}
+      style={last ? {} : { borderBottom: '1px solid var(--border)' }}
     >
       <div
         className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center"
-        style={{ background: 'rgba(0,212,180,0.08)' }}
+        style={{ background: 'rgba(var(--accent-rgb),0.08)' }}
       >
-        <Icon size={16} style={{ color: '#00D4B4' }} />
+        <Icon size={16} style={{ color: 'var(--accent)' }} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium mb-1" style={{ color: '#4A5568' }}>{label}</p>
+        <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
         <div className="text-sm font-medium" style={{ color: '#E2E8F0' }}>{children}</div>
       </div>
     </div>
@@ -54,7 +54,7 @@ export default function Profile() {
         {/* Header */}
         <div>
           <h1 className="text-xl font-bold text-white">My Profile</h1>
-          <p className="text-sm mt-0.5" style={{ color: '#4A5568' }}>Your account information</p>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>Your account information</p>
         </div>
 
         {/* Avatar */}
@@ -63,16 +63,16 @@ export default function Profile() {
             className="flex-shrink-0 flex items-center justify-center rounded-full font-bold text-2xl"
             style={{
               width: 64, height: 64,
-              background: 'rgba(0,212,180,0.12)',
-              color: '#00D4B4',
-              border: '2px solid rgba(0,212,180,0.25)',
+              background: 'rgba(var(--accent-rgb),0.12)',
+              color: 'var(--accent)',
+              border: '2px solid rgba(var(--accent-rgb),0.25)',
             }}
           >
             {(user.username || 'U')[0].toUpperCase()}
           </div>
           <div>
             <p className="text-base font-bold text-white">{user.username}</p>
-            <p className="text-sm" style={{ color: '#8899AA' }}>{user.email}</p>
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{user.email}</p>
           </div>
         </div>
 

@@ -1,20 +1,71 @@
 @import "tailwindcss";
 
+/* ── Theme tokens ──────────────────────────────────────────────────────────
+   Dark is the default (`:root`) and matches the original hardcoded values
+   exactly. Light is a warm, Claude-style cream palette, applied when
+   `<html data-theme="light">` is set (see ThemeContext). The brand accent
+   (--accent) swaps from teal to Claude's coral/orange in light mode; the
+   other status hues (red/amber/blue/purple) stay constant across both themes
+   since several components build alpha-suffixed hex from them (`${color}18`)
+   — anywhere that needed to keep working with a var() accent was switched to
+   `color-mix()` instead (see CoreRoutingViz/Dashboard/AdminDashboard/
+   AdminRevenueEngines/Transactions/AgentPurchase). */
+:root {
+  --bg-page: #080B10;
+  --bg-surface: #0E1117;
+  --bg-panel: #141922;
+  --bg-panel-rgb: 20, 25, 34;
+  --border: #1E2A38;
+  --border-subtle: #2A3A4A;
+  --text-primary: #FFFFFF;
+  --text-secondary: #8899AA;
+  --text-muted: #4A5568;
+  --text-muted-rgb: 74, 85, 104;
+  --accent: #00D4B4;
+  --accent-rgb: 0, 212, 180;
+  --accent-glow: #00FFD4;
+}
+
+:root[data-theme="light"] {
+  --bg-page: #F5F3EC;
+  --bg-surface: #EFEBDD;
+  --bg-panel: #E9E3D2;
+  --bg-panel-rgb: 233, 227, 210;
+  --border: #DDD5C0;
+  --border-subtle: #E3DBC7;
+  --text-primary: #1A1815;
+  --text-secondary: #57503F;
+  --text-muted: #8C8371;
+  --text-muted-rgb: 140, 131, 113;
+  --accent: #D97757;
+  --accent-rgb: 217, 119, 87;
+  --accent-glow: #E89A7D;
+}
+
 * {
   box-sizing: border-box;
 }
 
 body {
-  background-color: #080B10;
-  color: #FFFFFF;
+  background-color: var(--bg-page);
+  color: var(--text-primary);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   margin: 0;
   padding: 0;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 #root {
   width: 100%;
   min-height: 100vh;
+}
+
+/* Tailwind's `text-white` utility is used for headings/primary text
+   throughout the app; override it in light mode so it follows the theme
+   instead of staying hardcoded white. Higher specificity (attribute
+   selector) wins over Tailwind's plain `.text-white` without `!important`. */
+:root[data-theme="light"] .text-white {
+  color: var(--text-primary);
 }
 
 ::-webkit-scrollbar {
@@ -25,43 +76,43 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1E2A38;
+  background: var(--border);
   border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #00D4B4;
+  background: var(--accent);
 }
 /* Firefox: thin scrollbar with a transparent track (no light line on scroll) */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #1E2A38 transparent;
+  scrollbar-color: var(--border) transparent;
 }
 
 .glow-text {
-  text-shadow: 0 0 20px rgba(0, 212, 180, 0.5);
+  text-shadow: 0 0 20px rgba(var(--accent-rgb), 0.5);
 }
 
 .glow-border {
-  box-shadow: 0 0 20px rgba(0, 212, 180, 0.15);
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.15);
 }
 
 .card-glass {
-  background: rgba(20, 25, 34, 0.8);
+  background: rgba(var(--bg-panel-rgb), 0.8);
   backdrop-filter: blur(10px);
-  border: 1px solid #1E2A38;
+  border: 1px solid var(--border);
   border-radius: 12px;
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #00D4B4, #00FFD4);
+  background: linear-gradient(135deg, var(--accent), var(--accent-glow));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 @keyframes pulse-green {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 180, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(0, 212, 180, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(var(--accent-rgb), 0); }
 }
 
 .pulse-green {
@@ -79,13 +130,13 @@ body {
 
 /* Subtle row separators that match the card border tone (not white). */
 .row-divide > * + * {
-  border-top: 1px solid #1E2A38;
+  border-top: 1px solid var(--border);
 }
 
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {
-  -webkit-box-shadow: 0 0 0px 1000px #141922 inset;
-  -webkit-text-fill-color: #ffffff;
+  -webkit-box-shadow: 0 0 0px 1000px var(--bg-panel) inset;
+  -webkit-text-fill-color: var(--text-primary);
   transition: background-color 5000s ease-in-out 0s;
 }

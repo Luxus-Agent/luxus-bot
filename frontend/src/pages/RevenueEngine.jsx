@@ -27,9 +27,9 @@ function UserCoreSimulator() {
   }
 
   return (
-    <div className="rounded-xl p-6" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+    <div className="rounded-xl p-6" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
       <h3 className="font-semibold text-white mb-1">Purchase Distribution Preview</h3>
-      <p className="text-xs mb-4" style={{ color: '#8899AA' }}>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
         Preview how your 60% purchase commission would be distributed for the selected tier.
         This simulation does not generate actual commission payouts.
       </p>
@@ -40,15 +40,15 @@ function UserCoreSimulator() {
             onClick={() => run(t)}
             className="px-4 py-2 rounded-lg text-sm font-semibold"
             style={tier === t && result
-              ? { background: 'rgba(0,212,180,0.18)', color: '#00D4B4', border: '1px solid rgba(0,212,180,0.5)' }
-              : { background: '#0E1117', color: '#8899AA', border: '1px solid #1E2A38' }}
+              ? { background: 'rgba(var(--accent-rgb),0.18)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb),0.5)' }
+              : { background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
           >
             Agent {t}
           </button>
         ))}
       </div>
 
-      {loading && <p className="text-xs" style={{ color: '#8899AA' }}>Simulating…</p>}
+      {loading && <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Simulating…</p>}
       {error && <p className="text-xs mb-4" style={{ color: '#FF4D6A' }}>{error}</p>}
 
       {result && !loading && (
@@ -67,7 +67,7 @@ export default function RevenueEngine() {
       <div className="space-y-6 fade-in">
         <div>
           <h1 className="text-2xl font-bold text-white">Revenue Engine</h1>
-          <p className="text-sm mt-1" style={{ color: '#8899AA' }}>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
             How the Core Agent's compression + odd/even routing decides who your purchases pay
           </p>
         </div>

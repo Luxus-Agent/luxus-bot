@@ -28,18 +28,18 @@ export default function ForgotPassword() {
   if (sent) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4"
-        style={{ background: 'linear-gradient(135deg, #080B10 0%, #0E1117 50%, #080B10 100%)' }}>
+        style={{ background: 'linear-gradient(135deg, var(--bg-page) 0%, var(--bg-surface) 50%, var(--bg-page) 100%)' }}>
         <div className="w-full max-w-md">
           <div className="flex justify-center mb-8"><Logo size={36} /></div>
-          <div className="rounded-2xl p-8" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+          <div className="rounded-2xl p-8" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
             <h1 className="text-2xl font-bold text-white mb-2 text-center">OTP Sent</h1>
-            <p className="text-sm mb-6 text-center" style={{ color: '#8899AA' }}>
+            <p className="text-sm mb-6 text-center" style={{ color: 'var(--text-secondary)' }}>
               Check your email for the password reset OTP
             </p>
             <button
               onClick={() => navigate(`/reset-password?email=${encodeURIComponent(email)}`)}
               className="w-full py-3 rounded-xl font-semibold text-sm"
-              style={{ background: '#00D4B4', color: '#000' }}
+              style={{ background: 'var(--accent)', color: '#000' }}
             >
               Enter OTP
             </button>
@@ -52,19 +52,19 @@ export default function ForgotPassword() {
   return (
     <div
       className="min-h-screen flex items-center justify-center px-4"
-      style={{ background: 'linear-gradient(135deg, #080B10 0%, #0E1117 50%, #080B10 100%)' }}
+      style={{ background: 'linear-gradient(135deg, var(--bg-page) 0%, var(--bg-surface) 50%, var(--bg-page) 100%)' }}
     >
       <div className="w-full max-w-md">
         <div className="flex justify-center mb-8"><Logo size={36} /></div>
-        <div className="rounded-2xl p-8" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+        <div className="rounded-2xl p-8" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           <div
             className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 mx-auto"
-            style={{ background: 'rgba(0,212,180,0.12)', border: '1px solid rgba(0,212,180,0.3)' }}
+            style={{ background: 'rgba(var(--accent-rgb),0.12)', border: '1px solid rgba(var(--accent-rgb),0.3)' }}
           >
-            <KeyRound size={28} style={{ color: '#00D4B4' }} />
+            <KeyRound size={28} style={{ color: 'var(--accent)' }} />
           </div>
           <h1 className="text-2xl font-bold text-white mb-1 text-center">Forgot Password</h1>
-          <p className="text-sm mb-6 text-center" style={{ color: '#8899AA' }}>
+          <p className="text-sm mb-6 text-center" style={{ color: 'var(--text-secondary)' }}>
             Enter your email to receive a reset OTP
           </p>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -75,21 +75,21 @@ export default function ForgotPassword() {
               onChange={e => setEmail(e.target.value)}
               placeholder="you@example.com"
               className="w-full px-4 py-3 rounded-xl text-sm outline-none"
-              style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
-              onFocus={e => e.target.style.borderColor = '#00D4B4'}
-              onBlur={e => e.target.style.borderColor = '#1E2A38'}
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+              onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
             />
             <button
               type="submit"
               disabled={loading}
               className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
-              style={{ background: loading ? 'rgba(0,212,180,0.3)' : '#00D4B4', color: loading ? '#8899AA' : '#000' }}
+              style={{ background: loading ? 'rgba(var(--accent-rgb),0.3)' : 'var(--accent)', color: loading ? 'var(--text-secondary)' : '#000' }}
             >
               {loading ? <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin" /> : 'Send Reset OTP'}
             </button>
           </form>
-          <p className="mt-4 text-center text-sm" style={{ color: '#8899AA' }}>
-            <Link to="/login" className="flex items-center justify-center gap-1" style={{ color: '#00D4B4' }}>
+          <p className="mt-4 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <Link to="/login" className="flex items-center justify-center gap-1" style={{ color: 'var(--accent)' }}>
               <ArrowLeft size={14} /> Back to Login
             </Link>
           </p>

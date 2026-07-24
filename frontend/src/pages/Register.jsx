@@ -144,9 +144,9 @@ export default function Register() {
   }
 
   const inputBase = {
-    background: '#0E1117',
-    border: '1px solid #1E2A38',
-    color: '#fff',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-primary)',
   }
 
   const inputClass = 'w-full px-4 py-3 rounded-xl text-sm outline-none transition-all'
@@ -159,11 +159,11 @@ export default function Register() {
   return (
     <div
       className="min-h-screen flex items-center justify-center px-4 py-8"
-      style={{ background: 'linear-gradient(135deg, #080B10 0%, #0E1117 50%, #080B10 100%)' }}
+      style={{ background: 'linear-gradient(135deg, var(--bg-page) 0%, var(--bg-surface) 50%, var(--bg-page) 100%)' }}
     >
       <div
         className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full pointer-events-none"
-        style={{ background: 'radial-gradient(circle, rgba(0,212,180,0.05) 0%, transparent 70%)' }}
+        style={{ background: 'radial-gradient(circle, rgba(var(--accent-rgb),0.05) 0%, transparent 70%)' }}
       />
 
       <div className="w-full max-w-md relative">
@@ -171,15 +171,15 @@ export default function Register() {
           <Logo size={36} />
         </div>
 
-        <div className="rounded-2xl p-8" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+        <div className="rounded-2xl p-8" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           <h1 className="text-2xl font-bold text-white mb-1">Create Account</h1>
-          <p className="text-sm mb-6" style={{ color: '#8899AA' }}>Join Luxus — all fields are required</p>
+          <p className="text-sm mb-6" style={{ color: 'var(--text-secondary)' }}>Join Luxus — all fields are required</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
 
             {/* Sponsor Username */}
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
                 Sponsor Username              </label>
               <div className="relative">
                 <input
@@ -192,19 +192,19 @@ export default function Register() {
                   style={{
                     ...inputBase,
                     paddingRight: '2.75rem',
-                    borderColor: sponsorStatus === 'invalid' ? '#FF4D6A' : sponsorStatus === 'valid' ? '#00D4B4' : '#1E2A38',
+                    borderColor: sponsorStatus === 'invalid' ? '#FF4D6A' : sponsorStatus === 'valid' ? 'var(--accent)' : 'var(--border)',
                   }}
-                  onFocus={e => { if (!sponsorStatus || sponsorStatus === 'checking') e.target.style.borderColor = '#00D4B4' }}
-                  onBlur={e => { e.target.style.borderColor = sponsorStatus === 'invalid' ? '#FF4D6A' : sponsorStatus === 'valid' ? '#00D4B4' : '#1E2A38' }}
+                  onFocus={e => { if (!sponsorStatus || sponsorStatus === 'checking') e.target.style.borderColor = 'var(--accent)' }}
+                  onBlur={e => { e.target.style.borderColor = sponsorStatus === 'invalid' ? '#FF4D6A' : sponsorStatus === 'valid' ? 'var(--accent)' : 'var(--border)' }}
                 />
                 {sponsorStatus === 'checking' && (
                   <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <Loader size={16} style={{ color: '#8899AA' }} className="animate-spin" />
+                    <Loader size={16} style={{ color: 'var(--text-secondary)' }} className="animate-spin" />
                   </div>
                 )}
                 {sponsorStatus === 'valid' && (
                   <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <CheckCircle size={16} style={{ color: '#00D4B4' }} />
+                    <CheckCircle size={16} style={{ color: 'var(--accent)' }} />
                   </div>
                 )}
                 {sponsorStatus === 'invalid' && (
@@ -219,13 +219,13 @@ export default function Register() {
                 </p>
               )}
               {sponsorStatus === 'valid' && (
-                <p className="text-xs mt-1" style={{ color: '#00D4B4' }}>Sponsor found</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--accent)' }}>Sponsor found</p>
               )}
             </div>
 
             {/* BEP-20 Wallet Address */}
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
                 BEP-20 Wallet Address
               </label>
 
@@ -233,28 +233,28 @@ export default function Register() {
                 /* Connected: show the address read-only with a disconnect option */
                 <div
                   className="rounded-xl px-4 py-3 flex items-center gap-3"
-                  style={{ ...inputBase, borderColor: walletTaken ? '#FF4D6A' : 'rgba(0,212,180,0.45)' }}
+                  style={{ ...inputBase, borderColor: walletTaken ? '#FF4D6A' : 'rgba(var(--accent-rgb),0.45)' }}
                 >
                   <div
                     className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                    style={{ background: walletTaken ? 'rgba(255,77,106,0.12)' : 'rgba(0,212,180,0.12)' }}
+                    style={{ background: walletTaken ? 'rgba(255,77,106,0.12)' : 'rgba(var(--accent-rgb),0.12)' }}
                   >
-                    <Wallet size={16} style={{ color: walletTaken ? '#FF4D6A' : '#00D4B4' }} />
+                    <Wallet size={16} style={{ color: walletTaken ? '#FF4D6A' : 'var(--accent)' }} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs" style={{ color: walletTaken ? '#FF4D6A' : '#00D4B4' }}>
+                    <p className="text-xs" style={{ color: walletTaken ? '#FF4D6A' : 'var(--accent)' }}>
                       {walletTaken ? 'Already registered' : 'Wallet connected'}
                     </p>
                     <p
                       className="text-sm truncate"
-                      style={{ color: '#fff', fontFamily: 'monospace' }}
+                      style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}
                       title={address}
                     >
                       {address}
                     </p>
                   </div>
                   {walletStatus === 'checking' && (
-                    <Loader size={16} style={{ color: '#8899AA' }} className="animate-spin flex-shrink-0" />
+                    <Loader size={16} style={{ color: 'var(--text-secondary)' }} className="animate-spin flex-shrink-0" />
                   )}
                   <button
                     type="button"
@@ -278,20 +278,20 @@ export default function Register() {
                       style={{
                         ...inputBase,
                         paddingRight: '2.75rem',
-                        borderColor: (walletInvalid || walletTaken) ? '#FF4D6A' : walletStatus === 'available' ? '#00D4B4' : '#1E2A38',
+                        borderColor: (walletInvalid || walletTaken) ? '#FF4D6A' : walletStatus === 'available' ? 'var(--accent)' : 'var(--border)',
                         fontFamily: 'monospace',
                       }}
-                      onFocus={e => { if (!walletInvalid && !walletTaken) e.target.style.borderColor = '#00D4B4' }}
-                      onBlur={e => { e.target.style.borderColor = (walletInvalid || walletTaken) ? '#FF4D6A' : walletStatus === 'available' ? '#00D4B4' : '#1E2A38' }}
+                      onFocus={e => { if (!walletInvalid && !walletTaken) e.target.style.borderColor = 'var(--accent)' }}
+                      onBlur={e => { e.target.style.borderColor = (walletInvalid || walletTaken) ? '#FF4D6A' : walletStatus === 'available' ? 'var(--accent)' : 'var(--border)' }}
                     />
                     {walletStatus === 'checking' && (
                       <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                        <Loader size={16} style={{ color: '#8899AA' }} className="animate-spin" />
+                        <Loader size={16} style={{ color: 'var(--text-secondary)' }} className="animate-spin" />
                       </div>
                     )}
                     {walletStatus === 'available' && (
                       <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                        <CheckCircle size={16} style={{ color: '#00D4B4' }} />
+                        <CheckCircle size={16} style={{ color: 'var(--accent)' }} />
                       </div>
                     )}
                     {walletTaken && (
@@ -301,15 +301,15 @@ export default function Register() {
                     )}
                   </div>
                   <div className="flex items-center gap-3 my-2">
-                    <div className="flex-1 h-px" style={{ background: '#1E2A38' }} />
-                    <span className="text-xs" style={{ color: '#4A5568' }}>or</span>
-                    <div className="flex-1 h-px" style={{ background: '#1E2A38' }} />
+                    <div className="flex-1 h-px" style={{ background: 'var(--border)' }} />
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>or</span>
+                    <div className="flex-1 h-px" style={{ background: 'var(--border)' }} />
                   </div>
                   <button
                     type="button"
                     onClick={() => openWallet()}
                     className="w-full py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all"
-                    style={{ background: 'rgba(0,212,180,0.12)', color: '#00D4B4', border: '1px solid rgba(0,212,180,0.35)' }}
+                    style={{ background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb),0.35)' }}
                   >
                     <Link2 size={16} /> Connect Wallet
                   </button>
@@ -325,9 +325,9 @@ export default function Register() {
                   This wallet address is already registered to another account
                 </p>
               ) : walletStatus === 'available' ? (
-                <p className="text-xs mt-1" style={{ color: '#00D4B4' }}>Wallet address is available</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--accent)' }}>Wallet address is available</p>
               ) : (
-                <p className="text-xs mt-1" style={{ color: '#8899AA' }}>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
                   Profits and payouts are sent to this address — double-check it.
                 </p>
               )}
@@ -335,7 +335,7 @@ export default function Register() {
 
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
                 Email              </label>
               <input
                 type="email"
@@ -345,14 +345,14 @@ export default function Register() {
                 placeholder="you@example.com"
                 className={inputClass}
                 style={inputBase}
-                onFocus={e => e.target.style.borderColor = '#00D4B4'}
-                onBlur={e => e.target.style.borderColor = '#1E2A38'}
+                onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                onBlur={e => e.target.style.borderColor = 'var(--border)'}
               />
             </div>
 
             {/* Username */}
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
                 Username              </label>
               <div className="relative">
                 <input
@@ -365,19 +365,19 @@ export default function Register() {
                   style={{
                     ...inputBase,
                     paddingRight: '2.75rem',
-                    borderColor: usernameStatus === 'taken' ? '#FF4D6A' : usernameStatus === 'available' ? '#00D4B4' : '#1E2A38',
+                    borderColor: usernameStatus === 'taken' ? '#FF4D6A' : usernameStatus === 'available' ? 'var(--accent)' : 'var(--border)',
                   }}
-                  onFocus={e => { if (!usernameStatus || usernameStatus === 'checking') e.target.style.borderColor = '#00D4B4' }}
-                  onBlur={e => { e.target.style.borderColor = usernameStatus === 'taken' ? '#FF4D6A' : usernameStatus === 'available' ? '#00D4B4' : '#1E2A38' }}
+                  onFocus={e => { if (!usernameStatus || usernameStatus === 'checking') e.target.style.borderColor = 'var(--accent)' }}
+                  onBlur={e => { e.target.style.borderColor = usernameStatus === 'taken' ? '#FF4D6A' : usernameStatus === 'available' ? 'var(--accent)' : 'var(--border)' }}
                 />
                 {usernameStatus === 'checking' && (
                   <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <Loader size={16} style={{ color: '#8899AA' }} className="animate-spin" />
+                    <Loader size={16} style={{ color: 'var(--text-secondary)' }} className="animate-spin" />
                   </div>
                 )}
                 {usernameStatus === 'available' && (
                   <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <CheckCircle size={16} style={{ color: '#00D4B4' }} />
+                    <CheckCircle size={16} style={{ color: 'var(--accent)' }} />
                   </div>
                 )}
                 {usernameStatus === 'taken' && (
@@ -392,13 +392,13 @@ export default function Register() {
                 </p>
               )}
               {usernameStatus === 'available' && (
-                <p className="text-xs mt-1" style={{ color: '#00D4B4' }}>Username is available</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--accent)' }}>Username is available</p>
               )}
             </div>
 
             {/* Password */}
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
                 Password              </label>
               <div className="relative">
                 <input
@@ -409,14 +409,14 @@ export default function Register() {
                   placeholder="Min. 8 characters"
                   className={inputClass}
                   style={{ ...inputBase, paddingRight: '3rem' }}
-                  onFocus={e => e.target.style.borderColor = '#00D4B4'}
-                  onBlur={e => e.target.style.borderColor = '#1E2A38'}
+                  onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+                  onBlur={e => e.target.style.borderColor = 'var(--border)'}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPw(v => !v)}
                   className="absolute right-4 top-1/2 -translate-y-1/2"
-                  style={{ color: '#8899AA' }}
+                  style={{ color: 'var(--text-secondary)' }}
                 >
                   {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -425,7 +425,7 @@ export default function Register() {
 
             {/* Confirm Password */}
             <div>
-              <label className="block text-sm font-medium mb-2" style={{ color: '#8899AA' }}>
+              <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>
                 Confirm Password              </label>
               <div className="relative">
                 <input
@@ -438,16 +438,16 @@ export default function Register() {
                   style={{
                     ...inputBase,
                     paddingRight: '3rem',
-                    borderColor: passwordMismatch ? '#FF4D6A' : '#1E2A38',
+                    borderColor: passwordMismatch ? '#FF4D6A' : 'var(--border)',
                   }}
-                  onFocus={e => { if (!passwordMismatch) e.target.style.borderColor = '#00D4B4' }}
-                  onBlur={e => { e.target.style.borderColor = passwordMismatch ? '#FF4D6A' : '#1E2A38' }}
+                  onFocus={e => { if (!passwordMismatch) e.target.style.borderColor = 'var(--accent)' }}
+                  onBlur={e => { e.target.style.borderColor = passwordMismatch ? '#FF4D6A' : 'var(--border)' }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowConfirm(v => !v)}
                   className="absolute right-4 top-1/2 -translate-y-1/2"
-                  style={{ color: '#8899AA' }}
+                  style={{ color: 'var(--text-secondary)' }}
                 >
                   {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -462,8 +462,8 @@ export default function Register() {
               disabled={loading || !!passwordMismatch || !walletValid || walletTaken || usernameStatus === 'taken' || sponsorStatus === 'invalid'}
               className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all mt-2"
               style={{
-                background: (loading || passwordMismatch || !walletValid || walletTaken || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'rgba(0,212,180,0.3)' : '#00D4B4',
-                color: (loading || passwordMismatch || !walletValid || walletTaken || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? '#8899AA' : '#000',
+                background: (loading || passwordMismatch || !walletValid || walletTaken || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'rgba(var(--accent-rgb),0.3)' : 'var(--accent)',
+                color: (loading || passwordMismatch || !walletValid || walletTaken || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'var(--text-secondary)' : '#000',
                 cursor: (loading || passwordMismatch || !walletValid || walletTaken || usernameStatus === 'taken' || sponsorStatus === 'invalid') ? 'not-allowed' : 'pointer',
               }}
             >
@@ -475,9 +475,9 @@ export default function Register() {
             </button>
           </form>
 
-          <p className="mt-6 text-center text-sm" style={{ color: '#8899AA' }}>
+          <p className="mt-6 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
             Already have an account?{' '}
-            <Link to="/login" style={{ color: '#00D4B4' }} className="font-medium">Sign in</Link>
+            <Link to="/login" style={{ color: 'var(--accent)' }} className="font-medium">Sign in</Link>
           </p>
         </div>
       </div>

@@ -11,11 +11,11 @@ const PAGE_SIZE = 10
 // API serializes the TransactionType enum's lowercase *values* (e.g. "agent_purchase"),
 // so all keys/lists here must be lowercase to match.
 const TX_COLOR = {
-  deposit: '#00D4B4', core_income: '#00D4B4', stream_payout: '#3498DB',
-  boost_payout: '#9B59B6', sponsor_milestone_income: '#00D4B4',
-  transfer_in: '#00D4B4', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
-  repurchase_hold: '#FFB547', reentry: '#8899AA', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
-  core_sent: '#8899AA', software_fee: '#8899AA', platform_profit: '#8899AA', admin_generate: '#00D4B4',
+  deposit: 'var(--accent)', core_income: 'var(--accent)', stream_payout: '#3498DB',
+  boost_payout: '#9B59B6', sponsor_milestone_income: 'var(--accent)',
+  transfer_in: 'var(--accent)', withdrawal: '#FF4D6A', transfer_out: '#FF4D6A',
+  repurchase_hold: '#FFB547', reentry: 'var(--text-secondary)', purchase: '#FF4D6A', agent_purchase: '#FF4D6A',
+  core_sent: 'var(--text-secondary)', software_fee: 'var(--text-secondary)', platform_profit: 'var(--text-secondary)', admin_generate: 'var(--accent)',
   withdrawal_refund: '#FFB547',
 }
 const INCOME = ['core_income', 'stream_payout', 'boost_payout', 'sponsor_milestone_income', 'transfer_in', 'deposit']
@@ -56,7 +56,7 @@ export default function AdminTransactions() {
   if (loading) return (
     <Layout>
       <div className="flex items-center justify-center h-64">
-        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: '#00D4B4' }} />
+        <div className="w-10 h-10 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: 'var(--accent)' }} />
       </div>
     </Layout>
   )
@@ -67,27 +67,27 @@ export default function AdminTransactions() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-white">Transactions Monitor</h1>
-            <p className="text-sm mt-1" style={{ color: '#8899AA' }}>
+            <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
               {transactions.length} records — ${totalVolume.toFixed(2)} total volume
             </p>
           </div>
           <div className="flex gap-2">
             <div className="relative">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#4A5568' }} />
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
               <input
                 type="text"
                 placeholder="Search..."
                 value={search}
                 onChange={e => { setSearch(e.target.value); setPage(1) }}
                 className="pl-8 pr-4 py-2 rounded-xl text-sm outline-none w-48"
-                style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
+                style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
               />
             </div>
             <select
               value={filterType}
               onChange={e => { setFilterType(e.target.value); setPage(1) }}
               className="px-3 py-2 rounded-xl text-sm outline-none"
-              style={{ background: '#141922', border: '1px solid #1E2A38', color: '#fff' }}
+              style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
             >
               <option value="all">All Types</option>
               {txTypes.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
@@ -95,10 +95,10 @@ export default function AdminTransactions() {
           </div>
         </div>
 
-        <div className="rounded-xl overflow-hidden" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+        <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           <div
             className="hidden sm:grid grid-cols-6 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
-            style={{ background: '#0E1117', color: '#4A5568', borderBottom: '1px solid #1E2A38' }}
+            style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}
           >
             <span className="col-span-2">Type</span>
             <span>User</span>
@@ -109,7 +109,7 @@ export default function AdminTransactions() {
 
           <div className="row-divide">
             {filtered.length === 0 ? (
-              <div className="p-8 text-center" style={{ color: '#8899AA' }}>
+              <div className="p-8 text-center" style={{ color: 'var(--text-secondary)' }}>
                 <Activity size={32} className="mx-auto mb-2 opacity-30" />
                 <p className="text-sm">No transactions found</p>
               </div>
@@ -118,8 +118,8 @@ export default function AdminTransactions() {
               const isNeg = EXPENSE.includes(ttype)
               const isIncome = INCOME.includes(ttype)
               const sign = isNeg ? '−' : isIncome ? '+' : ''
-              const amountColor = isNeg ? '#FF4D6A' : isIncome ? '#00D4B4' : '#8899AA'
-              const color = TX_COLOR[ttype] || '#8899AA'
+              const amountColor = isNeg ? '#FF4D6A' : isIncome ? 'var(--accent)' : 'var(--text-secondary)'
+              const color = TX_COLOR[ttype] || 'var(--text-secondary)'
               return (
                 <div key={tx.id} className="flex sm:grid sm:grid-cols-6 items-center gap-3 px-5 py-3">
                   <div className="col-span-2 flex items-center gap-2 min-w-0">
@@ -128,16 +128,16 @@ export default function AdminTransactions() {
                       <p className="text-sm font-medium text-white truncate">
                         {tx.transaction_type.replace(/_/g, ' ')}
                       </p>
-                      {tx.notes && <p className="text-xs truncate" style={{ color: '#4A5568' }}>{tx.notes}</p>}
+                      {tx.notes && <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{tx.notes}</p>}
                     </div>
                   </div>
-                  <span className="hidden sm:block text-xs truncate" style={{ color: '#8899AA' }}>
+                  <span className="hidden sm:block text-xs truncate" style={{ color: 'var(--text-secondary)' }}>
                     {tx.username ? `@${tx.username}` : `#${tx.user_id}`}
                   </span>
-                  <span className="hidden sm:block text-xs" style={{ color: '#8899AA' }}>
+                  <span className="hidden sm:block text-xs" style={{ color: 'var(--text-secondary)' }}>
                     {tx.agent_tier === 0 ? 'Acct' : `A${tx.agent_tier}`}
                   </span>
-                  <span className="hidden sm:block text-xs" style={{ color: '#4A5568' }}>
+                  <span className="hidden sm:block text-xs" style={{ color: 'var(--text-muted)' }}>
                     {formatDateIST(tx.created_at)}
                   </span>
                   <p className="text-sm font-semibold ml-auto sm:ml-0 text-right" style={{ color: amountColor }}>

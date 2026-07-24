@@ -42,21 +42,21 @@ export default function VerifyEmail() {
   return (
     <div
       className="min-h-screen flex items-center justify-center px-4"
-      style={{ background: 'linear-gradient(135deg, #080B10 0%, #0E1117 50%, #080B10 100%)' }}
+      style={{ background: 'linear-gradient(135deg, var(--bg-page) 0%, var(--bg-surface) 50%, var(--bg-page) 100%)' }}
     >
       <div className="w-full max-w-md">
         <div className="flex justify-center mb-8"><Logo size={36} /></div>
 
-        <div className="rounded-2xl p-8" style={{ background: '#141922', border: '1px solid #1E2A38' }}>
+        <div className="rounded-2xl p-8" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           <div
             className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 mx-auto"
-            style={{ background: 'rgba(0,212,180,0.12)', border: '1px solid rgba(0,212,180,0.3)' }}
+            style={{ background: 'rgba(var(--accent-rgb),0.12)', border: '1px solid rgba(var(--accent-rgb),0.3)' }}
           >
-            <MailCheck size={28} style={{ color: '#00D4B4' }} />
+            <MailCheck size={28} style={{ color: 'var(--accent)' }} />
           </div>
 
           <h1 className="text-2xl font-bold text-white mb-1 text-center">Verify Email</h1>
-          <p className="text-sm mb-6 text-center" style={{ color: '#8899AA' }}>
+          <p className="text-sm mb-6 text-center" style={{ color: 'var(--text-secondary)' }}>
             Enter the 6-digit OTP sent to <span className="text-white">{email}</span>
           </p>
 
@@ -69,9 +69,9 @@ export default function VerifyEmail() {
               onChange={e => setOtp(e.target.value.replace(/\D/g, ''))}
               placeholder="000000"
               className="w-full px-4 py-3 rounded-xl text-center text-2xl font-bold tracking-widest outline-none"
-              style={{ background: '#0E1117', border: '1px solid #1E2A38', color: '#fff' }}
-              onFocus={e => e.target.style.borderColor = '#00D4B4'}
-              onBlur={e => e.target.style.borderColor = '#1E2A38'}
+              style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+              onFocus={e => e.target.style.borderColor = 'var(--accent)'}
+              onBlur={e => e.target.style.borderColor = 'var(--border)'}
             />
 
             <button
@@ -79,8 +79,8 @@ export default function VerifyEmail() {
               disabled={loading || otp.length < 6}
               className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
               style={{
-                background: (loading || otp.length < 6) ? 'rgba(0,212,180,0.3)' : '#00D4B4',
-                color: (loading || otp.length < 6) ? '#8899AA' : '#000',
+                background: (loading || otp.length < 6) ? 'rgba(var(--accent-rgb),0.3)' : 'var(--accent)',
+                color: (loading || otp.length < 6) ? 'var(--text-secondary)' : '#000',
                 cursor: (loading || otp.length < 6) ? 'not-allowed' : 'pointer',
               }}
             >
@@ -92,14 +92,14 @@ export default function VerifyEmail() {
             onClick={handleResend}
             disabled={resending}
             className="w-full mt-3 py-3 rounded-xl font-medium text-sm flex items-center justify-center gap-2"
-            style={{ border: '1px solid #1E2A38', color: '#8899AA', background: 'transparent' }}
+            style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)', background: 'transparent' }}
           >
             <RefreshCw size={15} className={resending ? 'animate-spin' : ''} />
             Resend OTP
           </button>
 
-          <p className="mt-4 text-center text-sm" style={{ color: '#8899AA' }}>
-            <Link to="/login" style={{ color: '#00D4B4' }}>Back to Login</Link>
+          <p className="mt-4 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <Link to="/login" style={{ color: 'var(--accent)' }}>Back to Login</Link>
           </p>
         </div>
       </div>
