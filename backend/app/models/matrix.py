@@ -131,6 +131,13 @@ class MatrixQueueSlot(Base):
     position_number: Mapped[int] = mapped_column(Integer, nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     is_dummy: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Was this slot granted by a level completion (a re-entry), vs. a brand-new
+    # real purchase join? For Stream, this always matches is_dummy (Stream
+    # re-entries are dummy). For Boost, re-entries are REAL (is_dummy stays
+    # False per spec) so is_dummy alone can't tell a re-entry apart from a
+    # genuine new member — this column exists so admin views (the "A1/B1..."
+    # queue-flow diagram) can label/pair re-entries for Boost too.
+    is_reentry: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

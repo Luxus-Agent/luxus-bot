@@ -74,6 +74,100 @@ function CoreSimulator() {
   )
 }
 
+// ── Core tab: direct downline split into odd/even (left/right) columns ───────
+
+function DownlineColumn({ title, color, members }) {
+  return (
+    <div className="rounded-lg p-3" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+      <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color }}>{title}</p>
+      {members.length === 0 ? (
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>None</p>
+      ) : (
+        <div className="space-y-1.5">
+          {members.map(m => (
+            <div
+              key={m.username}
+              className="flex items-center justify-between px-3 py-2 rounded-lg text-xs"
+              style={{ background: `color-mix(in srgb, ${color} 8%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 25%, transparent)` }}
+            >
+              <span className="text-white font-medium">#{m.position} · @{m.username}</span>
+              <div className="flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
+                <span>{m.highest_active_tier > 0 ? `Agent ${m.highest_active_tier}` : 'No agent'}</span>
+                {!m.is_active && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(255,77,106,0.12)', color: '#FF4D6A' }}>
+                    FROZEN
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CoreDownlineTable() {
+  const [username, setUsername] = useState('')
+  const [result, setResult] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const run = async () => {
+    if (!username.trim()) return
+    setLoading(true); setError(''); setResult(null)
+    try {
+      const { data } = await api.get('/admin/core/downline', { params: { username: username.trim() } })
+      setResult(data)
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Lookup failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl p-6" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+      <h3 className="font-semibold text-white mb-1">Downline Odd/Even Table</h3>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
+        A sponsor's direct downline, split by join order into a left/odd and right/even column
+        (1st, 3rd, 5th referral on the left; 2nd, 4th on the right).
+      </p>
+      <div className="flex flex-col sm:flex-row gap-3 mb-5">
+        <input
+          value={username}
+          onChange={e => setUsername(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && run()}
+          placeholder="Sponsor username"
+          className="flex-1 px-3 py-2.5 rounded-lg text-sm outline-none"
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+        />
+        <button
+          onClick={run}
+          disabled={loading || !username.trim()}
+          className="px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+          style={{ background: 'var(--accent)', color: '#000' }}
+        >
+          {loading ? 'Loading…' : 'Look Up'}
+        </button>
+      </div>
+
+      {error && <p className="text-xs mb-4" style={{ color: '#FF4D6A' }}>{error}</p>}
+
+      {result && (
+        result.total === 0 ? (
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>@{result.sponsor} has no direct downline yet.</p>
+        ) : (
+          <div className="grid md:grid-cols-2 gap-4">
+            <DownlineColumn title="Left / Odd" color="var(--accent)" members={result.left_odd} />
+            <DownlineColumn title="Right / Even" color="#3498DB" members={result.right_even} />
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
 // ── Stream / Boost tab: queue fill state + queue contents ────────────────────
 
 function QueueList({ slots, color }) {
@@ -117,10 +211,107 @@ function QueueList({ slots, color }) {
   )
 }
 
+// Single vertical stack of every position in a level's queue, in true arrival
+// order, with curved connectors linking each paying position to the re-entry
+// slot(s) it spawned — the client's own "How matrix queue work?" spec diagram.
+function MatrixFlowDiagram({ systemType, tier, level, color }) {
+  const [flow, setFlow] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true); setError(''); setFlow(null)
+    api.get('/admin/matrix/queue-flow', { params: { system_type: systemType, tier, level } })
+      .then(r => { if (!cancelled) setFlow(r.data) })
+      .catch(err => { if (!cancelled) setError(err.response?.data?.detail || 'Failed to load flow') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [systemType, tier, level])
+
+  if (loading) return <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Loading…</p>
+  if (error) return <p className="text-xs" style={{ color: '#FF4D6A' }}>{error}</p>
+  if (!flow || flow.slots.length === 0) return <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No entries yet.</p>
+
+  const rowH = 34
+  const rowGap = 5
+  const stride = rowH + rowGap
+  const height = flow.slots.length * stride - rowGap
+  const yFor = pos => (pos - 1) * stride + rowH / 2
+
+  const arcs = flow.slots
+    .filter(s => s.spawned_from != null)
+    .map(s => ({ from: s.spawned_from, to: s.position_number }))
+    .sort((a, b) => a.to - b.to)
+  const gutter = 22
+  const svgWidth = gutter + Math.max(1, arcs.length) * 14
+
+  return (
+    <div className="max-h-[28rem] overflow-y-auto pr-1">
+      <div className="flex gap-1">
+        <svg width={svgWidth} height={height} className="flex-shrink-0">
+          {arcs.map((a, i) => {
+            const y1 = yFor(a.from)
+            const y2 = yFor(a.to)
+            const x0 = svgWidth
+            const xC = svgWidth - (gutter + i * 14)
+            return (
+              <path
+                key={`${a.from}-${a.to}`}
+                d={`M ${x0} ${y1} C ${xC} ${y1}, ${xC} ${y2}, ${x0} ${y2}`}
+                fill="none"
+                stroke={color}
+                strokeOpacity="0.5"
+                strokeWidth="1.5"
+              />
+            )
+          })}
+        </svg>
+        <div className="flex-1" style={{ display: 'flex', flexDirection: 'column', gap: rowGap }}>
+          {flow.slots.map(s => (
+            <div
+              key={s.position_number}
+              className="flex items-center justify-between px-3 rounded-lg text-xs"
+              style={{
+                height: rowH,
+                flexShrink: 0,
+                background: s.is_head
+                  ? `color-mix(in srgb, ${color} 16%, transparent)`
+                  : `color-mix(in srgb, ${color} 8%, transparent)`,
+                border: `1px solid ${s.is_head ? `color-mix(in srgb, ${color} 55%, transparent)` : 'var(--border)'}`,
+              }}
+            >
+              <span className="text-white font-medium">#{s.position_number} · @{s.username}</span>
+              <div className="flex items-center gap-1.5">
+                {s.is_reentry && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(255,181,71,0.12)', color: '#FFB547' }}>
+                    RE-ENTRY
+                  </span>
+                )}
+                {s.is_paid && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                    PAID
+                  </span>
+                )}
+                {s.is_head && (
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>
+                    NEXT TO PAY
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function LevelCard({ label, data, color, systemType, tier }) {
   const [expanded, setExpanded] = useState(false)
   const [slots, setSlots] = useState(null)
   const [loadingSlots, setLoadingSlots] = useState(false)
+  const [flowOpen, setFlowOpen] = useState(false)
 
   const toggle = async () => {
     if (!expanded && !slots) {
@@ -157,9 +348,14 @@ function LevelCard({ label, data, color, systemType, tier }) {
       {data.sponsor_on_completion > 0 && (
         <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>Sponsor share on completion: ${data.sponsor_on_completion.toFixed(2)}</p>
       )}
-      <button onClick={toggle} className="text-xs font-medium" style={{ color }}>
-        {expanded ? 'Hide Queue ↑' : 'View Queue ↓'}
-      </button>
+      <div className="flex items-center gap-4">
+        <button onClick={toggle} className="text-xs font-medium" style={{ color }}>
+          {expanded ? 'Hide Queue ↑' : 'View Queue ↓'}
+        </button>
+        <button onClick={() => setFlowOpen(v => !v)} className="text-xs font-medium" style={{ color }}>
+          {flowOpen ? 'Hide Flow View ↑' : 'Flow View ↓'}
+        </button>
+      </div>
 
       {expanded && (
         <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
@@ -170,6 +366,15 @@ function LevelCard({ label, data, color, systemType, tier }) {
           ) : (
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No entries yet.</p>
           )}
+        </div>
+      )}
+
+      {flowOpen && (
+        <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border)' }}>
+          <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+            Full queue in arrival order — curved lines link each paying position to the re-entry it spawned.
+          </p>
+          <MatrixFlowDiagram systemType={systemType} tier={tier} level={data.level} color={color} />
         </div>
       )}
     </div>
@@ -272,6 +477,7 @@ export default function AdminRevenueEngines() {
               <div className="space-y-4">
                 <CoreExplainerDiagram />
                 <CoreSimulator />
+                <CoreDownlineTable />
               </div>
             )}
             {tab === 'stream' && <MatrixTab systemType="stream" color="#3498DB" tiers={[1, 2, 3, 4]} overview={overview} />}

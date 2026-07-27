@@ -27,6 +27,7 @@ from app.api.admin import get_admin_user
 from app.api.deps import get_current_user, require_platform_active
 from app.config import settings
 from app.core.platform_state import ensure_platform_active
+from app.core.user_lookup import get_user_by_username, usernames_equal
 from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE, debit_withdrawable
 from app.database import get_db
 from app.models.agent import AGENT_TIER_PLATFORM_FEE, AGENT_TIER_PRICES, AgentPurchase
@@ -230,10 +231,10 @@ def wallet_map(
     """
     # Resolve the root user. Only admins may inspect someone else.
     root = current_user
-    if username and username != current_user.username:
+    if username and not usernames_equal(username, current_user.username):
         if not current_user.is_admin:
             raise HTTPException(status_code=403, detail="Only admins may query another user's map.")
-        root = db.query(User).filter_by(username=username).first()
+        root = get_user_by_username(db, username)
         if not root:
             raise HTTPException(status_code=404, detail="User not found.")
 
@@ -377,8 +378,10 @@ def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
 
     # Upline commissions. Each upline's gross Core share is split 70/20/10: 70%
     # main (paid to the upline on-chain), 20% repurchase reserve, 10% software fee
-    # (both routed on-chain to platform wallets). The user's recorded income is
-    # their net share (main + reserve = 90%); the 10% fee is platform profit.
+    # (both routed on-chain to platform wallets). Per client spec, the ledger income
+    # row (what "Total Earnings" sums) records the FULL gross share, not the net
+    # 90% left after the platform fee — the fee is still booked separately as its
+    # own SOFTWARE_FEE transaction inside mirror_onchain_earning_split.
     for r in recipients:
         if r.get("role") != "upline":
             continue
@@ -388,14 +391,12 @@ def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
         gross = Decimal(str(r.get("gross_amount", r.get("amount") or 0)))
         if not uid or gross <= 0:
             continue
-        main_credit, repurchase, _fee = mirror_onchain_earning_split(
-            db, uid, record.agent_tier, gross
-        )
+        mirror_onchain_earning_split(db, uid, record.agent_tier, gross)
         db.add(Transaction(
             user_id=uid,
             agent_tier=record.agent_tier,
             transaction_type=TransactionType.CORE_INCOME,
-            amount=main_credit + repurchase,
+            amount=gross,
             reference_id=record.order_id,
             notes=f"On-chain Core commission — {record.pack_name}{tx_suffix}",
         ))

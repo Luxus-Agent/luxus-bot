@@ -11,7 +11,7 @@ export default function AdminDashboard() {
   const [transactions, setTransactions] = useState([])
   const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0, platform_profit: 0 })
   const [metrics, setMetrics] = useState({
-    revenue: { core_income: 0, stream_payout: 0, boost_payout: 0, sponsor_share: 0, total_paid_to_users: 0, software_fees: 0 },
+    revenue: { core_income: 0, stream_payout: 0, boost_payout: 0, sponsor_share: 0, total_gross_commissions: 0, total_credited_to_wallets: 0, software_fees: 0 },
     repurchase: { count: 0, volume: 0, platform_fee: 0, reserve_held: 0 },
   })
   const [loading, setLoading] = useState(true)
@@ -153,7 +153,7 @@ export default function AdminDashboard() {
               { label: 'Stream Agent', val: metrics.revenue.stream_payout, icon: TrendingUp, color: '#3498DB' },
               { label: 'Boost Agent', val: metrics.revenue.boost_payout, icon: Activity, color: '#9B59B6' },
               { label: 'Sponsor Shares', val: metrics.revenue.sponsor_share, icon: Users, color: '#FFB547' },
-              { label: 'Total to Users', val: metrics.revenue.total_paid_to_users, icon: DollarSign, color: 'var(--accent-glow)' },
+              { label: 'Total Commissions', val: metrics.revenue.total_gross_commissions, icon: DollarSign, color: 'var(--accent-glow)' },
             ].map(({ label, val, icon: Icon, color }) => (
               <div key={label} className="rounded-xl p-4" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
                 <div className="w-9 h-9 rounded-lg flex items-center justify-center mb-3" style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}>
@@ -165,7 +165,7 @@ export default function AdminDashboard() {
             ))}
           </div>
           <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-            Net 70% wallet credits across all engines. Software fees collected: ${Number(metrics.revenue.software_fees || 0).toFixed(2)}.
+            Gross commissions across all engines (before the 70/20/10 wallet split). ${Number(metrics.revenue.total_credited_to_wallets || 0).toFixed(2)} actually credited to user main wallets; ${Number(metrics.revenue.software_fees || 0).toFixed(2)} software fees collected.
           </p>
         </div>
 

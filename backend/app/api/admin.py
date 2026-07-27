@@ -24,17 +24,22 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user
-from app.core.core_preview import simulate_core_split
+from app.core.core_preview import get_downline_odd_even, simulate_core_split
 from app.core.matrix_engine import PAYOUT_CONFIG, tier_multiplier
+from app.core.matrix_flow import get_queue_flow
 from app.core.platform_state import ensure_platform_active, get_platform_setting, set_platform_frozen
+from app.core.user_lookup import get_user_by_username
 from app.core.wallet_ops import (
     ACCOUNT_TIER,
+    REPURCHASE_RATE,
+    SOFTWARE_FEE_RATE,
     credit_account,
     credit_wallet,
     debit_account,
     debit_wallet,
     get_account_balance,
     get_ledger_earnings,
+    resolve_tx_hashes,
 )
 from app.database import get_db
 from app.models.agent import AgentPurchase
@@ -374,8 +379,12 @@ def platform_metrics(
 
       revenue:
         - core_income / stream_payout / boost_payout / sponsor_share: total
-          commissions paid to users by each engine (net 70% wallet credits)
-        - total_paid_to_users: sum of the four above
+          GROSS commissions earned via each engine (before the platform fee is
+          subtracted — per client spec, these ledger figures always show the full
+          amount, matching per-user "Total Earnings")
+        - total_gross_commissions: sum of the four above
+        - total_credited_to_wallets: the actual 70% net that landed in user MAIN
+          wallets (the other 30% is the 20% repurchase reserve + 10% software fee)
         - software_fees: 10% platform fee collected across every payout
       repurchase:
         - count / volume: number and $ of auto-repurchases executed (repurchase_buy)
@@ -397,6 +406,9 @@ def platform_metrics(
     stream = _sum_all(TransactionType.STREAM_PAYOUT)
     boost = _sum_all(TransactionType.BOOST_PAYOUT)
     sponsor = _sum_all(TransactionType.SPONSOR_MILESTONE_INCOME)
+    total_gross_commissions = round(core + stream + boost + sponsor, 4)
+    # MAIN wallet always gets the remainder after the 20% reserve + 10% fee (70%).
+    main_wallet_rate = 1 - float(REPURCHASE_RATE) - float(SOFTWARE_FEE_RATE)
 
     repurchase_count = (
         db.query(func.count(Transaction.id))
@@ -416,7 +428,8 @@ def platform_metrics(
             "stream_payout": stream,
             "boost_payout": boost,
             "sponsor_share": sponsor,
-            "total_paid_to_users": round(core + stream + boost + sponsor, 4),
+            "total_gross_commissions": total_gross_commissions,
+            "total_credited_to_wallets": round(total_gross_commissions * main_wallet_rate, 4),
             "software_fees": _sum_all(TransactionType.SOFTWARE_FEE),
         },
         "repurchase": {
@@ -443,7 +456,7 @@ def treasury_transfer(
     if body.to_username.lower() == admin.username.lower():
         raise HTTPException(status_code=400, detail="Cannot transfer to your own admin account.")
 
-    recipient = db.query(User).filter_by(username=body.to_username).first()
+    recipient = get_user_by_username(db, body.to_username)
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient user not found.")
 
@@ -522,6 +535,7 @@ def all_transactions(
     usernames = dict(
         db.query(User.id, User.username).filter(User.id.in_(user_ids)).all()
     ) if user_ids else {}
+    tx_hashes = resolve_tx_hashes(db, {t.reference_id for t in txns if t.reference_id})
 
     return [
         {
@@ -533,6 +547,7 @@ def all_transactions(
             "amount": float(t.amount),
             "notes": t.notes,
             "created_at": t.created_at.isoformat() if t.created_at else None,
+            "tx_hash": tx_hashes.get(t.reference_id),
         }
         for t in txns
     ]
@@ -715,6 +730,31 @@ def matrix_queue_slots(
     }
 
 
+@router.get("/matrix/queue-flow")
+def matrix_queue_flow(
+    system_type: str,
+    tier: int,
+    level: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """
+    Full queue-flow diagram data for one (system, tier, level): every position
+    from #1 onward, in true arrival order, with each paying position linked to
+    the re-entry slot(s) it spawned — the client's "How matrix queue work?"
+    single-stack-with-arcs picture, not the level-card summary view.
+    """
+    try:
+        sys_enum = SystemType(system_type.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="system_type must be 'stream' or 'boost'.")
+    if level not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="level must be 1, 2, or 3.")
+    if sys_enum == SystemType.BOOST:
+        tier = 1  # Boost always runs a single global queue on tier 1.
+    return get_queue_flow(db, sys_enum, tier, level)
+
+
 @router.get("/core/simulate")
 def core_simulate(
     username: str,
@@ -728,7 +768,24 @@ def core_simulate(
     """
     if tier not in (1, 2, 3, 4):
         raise HTTPException(status_code=400, detail="tier must be 1-4.")
-    buyer = db.query(User).filter_by(username=username).first()
+    buyer = get_user_by_username(db, username)
     if not buyer:
         raise HTTPException(status_code=404, detail="User not found.")
     return simulate_core_split(db, buyer, tier)
+
+
+@router.get("/core/downline")
+def core_downline(
+    username: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_admin_user),
+):
+    """
+    Read-only: `username`'s direct downline split into a left/odd and right/even
+    column by join order (1st, 3rd, 5th... referral on the left; 2nd, 4th... on
+    the right) — the Core-agent odd/even table view.
+    """
+    sponsor = get_user_by_username(db, username)
+    if not sponsor:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return get_downline_odd_even(db, sponsor)

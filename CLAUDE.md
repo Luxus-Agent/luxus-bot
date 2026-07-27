@@ -29,17 +29,19 @@ frontend/src/
   pages/ + pages/admin/   # user + admin dashboards (admin: AdminRevenueEngines.jsx — Core/Stream/Boost viz)
                           # NOTE: no standalone Wallet page — balances/history live in Dashboard + Transactions
 backend/app/
-  api/auth.py            # register (sponsor_username), verify-email, login (username), reset
-  api/wallet.py          # balances / transactions / earnings / repurchase / BEP-20 address / core-preview
+  api/auth.py            # register (sponsor_username), verify-email, login (username), reset — usernames case-insensitive
+  api/wallet.py          # balances / transactions (+ tx_hash) / earnings / repurchase / BEP-20 address / core-preview
   api/agents.py          # GET /agents/purchases (read-only ownership)
   api/admin.py           # users, freeze/unfreeze, treasury transfer, platform freeze, manual credit, matrix/core viz
   api/distribution.py    # wallet-map + on-chain pack rail (/pack/purchase, /pack/status)
   core/pack_payout.py    # Core 60% split (compression + odd/even); also Stream/Boost/admin rates
   core/proactive.py      # Core eligibility/compression helpers
-  core/core_preview.py   # read-only Core routing simulator shared by admin + user endpoints
+  core/core_preview.py   # read-only Core routing simulator (upline) + downline odd/even table, shared admin + user
   core/matrix_engine.py + matrix_runtime.py  # Stream + Boost 3x3 matrices (LIVE)
+  core/matrix_flow.py    # read-only queue-flow reconstruction (position stack + re-entry spawn pairing) for admin viz
   core/repurchase.py     # auto-repurchase sweep (LIVE)
-  core/wallet_ops.py     # credit_wallet (70/20/10), mirror_onchain_earning_split, ledger earnings
+  core/wallet_ops.py     # credit_wallet (70/20/10), mirror_onchain_earning_split, ledger earnings, tx_hash resolver
+  core/user_lookup.py    # case-insensitive username lookup/equality — use for ALL username matching, never User.username ==
   models/                # user, agent, wallet, wallet_address, transaction, pack_purchase, matrix, platform_setting
 ```
 
@@ -54,7 +56,9 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
 - **Stream 30%** → per-tier 3×3 matrix. Re-entries are **dummy** (no payout). 10% sponsor share at L2/L3.
 - **Boost 10%** = **9% matrix + 1% admin income**. **Single global queue** (always tier 1). Re-entries are **real**.
 - **Wallet rule (70 / 20 / 10):** every income credit → 70% main + 20% per-tier repurchase reserve + 10% software fee.
-  Core uses `mirror_onchain_earning_split`; Stream/Boost matrix payouts use `credit_wallet`.
+  Core uses `mirror_onchain_earning_split`; Stream/Boost matrix payouts use `credit_wallet`. The ledger income
+  `Transaction` row itself (`CORE_INCOME`/`STREAM_PAYOUT`/`BOOST_PAYOUT`/`SPONSOR_MILESTONE_INCOME`) always records
+  the **full gross commission**, not the 70% net — see Total Earnings convention below.
 - **Auto-repurchase:** when a tier's reserve hits **threshold = price + platform fee** ($11 / $22 / $55 / $111),
   the platform auto re-buys that same tier, unbounded — re-runs Core + matrices (compounding). The flat fee → platform profit.
   Boost reserve accrues in tier-1. Frozen/inactive reserves are held. See `core/repurchase.py`.
@@ -64,12 +68,18 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
 ## Revenue Engine Visualization (read-only)
 
 - **Admin** `/admin/revenue-engines`: Core compression/odd-even simulator for **any** username
-  (`GET /admin/core/simulate`) + Stream/Boost matrix queue fill-state and contents
-  (`GET /admin/matrix/overview`, `GET /admin/matrix/queue-slots`).
+  (`GET /admin/core/simulate`) + a sponsor's direct-downline odd/even table, split left/odd vs
+  right/even by join order (`GET /admin/core/downline`, `core.core_preview.get_downline_odd_even`,
+  uses `User.sponsor_position`) + Stream/Boost matrix queue fill-state and contents
+  (`GET /admin/matrix/overview`, `GET /admin/matrix/queue-slots`) + a full "queue-flow" diagram —
+  every position in true arrival order with re-entries linked back to the position that spawned
+  them (`GET /admin/matrix/queue-flow`, `core/matrix_flow.py`; "Flow View" toggle per level card).
+  Spawn pairing is reconstructed (not stored) from `MatrixQueueSlot.is_reentry` + arrival order —
+  see that module's docstring for why the reconstruction is exact, not heuristic.
 - **User** `/revenue-engine`: same Core simulator, **self-scoped only** (`GET /wallet/core-preview`,
   no username param) — no Stream/Boost tab (those queues are platform-wide, not per-user).
-- Both only **peek** at `core_route_count` (never persist) — safe to run repeatedly. Shared logic:
-  `core/core_preview.py`; shared UI: `frontend/src/components/CoreRoutingViz.jsx`.
+- Core simulator/downline endpoints only **peek** at `core_route_count` (never persist) — safe to
+  run repeatedly. Shared logic: `core/core_preview.py`; shared UI: `frontend/src/components/CoreRoutingViz.jsx`.
 
 ## Conventions — YOU MUST
 
@@ -78,7 +88,12 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
 - **Timestamps stored naive UTC, displayed IST** (`Asia/Kolkata`). Use `frontend/src/utils/datetime.js` (`formatDateTimeIST` etc.) — never `new Date(x).toLocaleString()` on backend timestamps.
 - **Sponsor identified by username** at registration (`sponsor_username`, required). Root/admin has no sponsor (`seed_admin.py`).
 - **Login is username + password** (not email) for users AND admin. Login blocked until email verified (403).
-- **Total Earnings = ledger, not wallets** — `GET /wallet/earnings` (`get_ledger_earnings`). The earnings fetch is non-fatal (falls back to $0).
+- **Usernames are case-insensitive, passwords are case-sensitive.** ALL username lookups (login, register dup-check,
+  sponsor lookup, admin transfer/search, wallet-map, core-simulate) go through `core/user_lookup.get_user_by_username`
+  / `usernames_equal` — never `User.username == ...` directly. Passwords are untouched (bcrypt hashes the exact string).
+- **Total Earnings = ledger, not wallets, and is GROSS (before the platform fee)** — `GET /wallet/earnings`
+  (`get_ledger_earnings`). Income `Transaction` rows record the full commission, not the 70% net wallet credit
+  (see Wallet rule above). The earnings fetch is non-fatal (falls back to $0).
 - **One purchase per tier, sequential 1→2→3→4.** Enforced in BOTH frontend AND backend (`pack/purchase` gate). Auto-repurchase is the only re-buy path and bypasses the gate.
 - **Don't commit credentials.** `.env` is gitignored; `.env.example` is the template.
 
@@ -86,6 +101,9 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
 
 - `POST /distribution/pack/purchase` (JWT, `require_platform_active`) → returns recipient split (sums to price). Roles: `buyer`, `upline` (70% + `gross_amount`), `repurchase_reserve`, `software_fee`, `admin`, `platform_fee` (the latter also carries the Stream 30% + Boost-pool 9% shares — tracked internally, no separate on-chain wallet).
 - `POST /distribution/pack/status` → records success(tx_hash)/failed; on success runs ownership + ledger + matrices + repurchase (idempotent, PENDING-guarded).
+  Both Transactions pages (user + admin) show a **Tx Hash** column (resolved via `wallet_ops.resolve_tx_hashes`,
+  joining `Transaction.reference_id` → `PackPurchase.order_id` / `PayoutBatch.batch_id`) linking to BscScan —
+  only rows tied to a settled on-chain event have one; pure ledger-only types (e.g. `stream_payout`) show `—`.
 - `GET /distribution/wallet-map` → read-only user+downline wallet/profit map for MultiSender. Distribute against `profit.withdrawable`.
 - Wallet config (`.env`): `PLATFORM_FEE_WALLET`, `ADMIN_INCOME_WALLET` / `REPURCHASE_RESERVE_WALLET` (each falls back to `PLATFORM_FEE_WALLET`). **Set distinct addresses before go-live**, and fund `REPURCHASE_RESERVE_WALLET` with BNB directly — it pays its own gas for its automated send (no separate gas wallet). `PLATFORM_FEE_WALLET` is receive-only (no signer key) — it's only ever a recipient address, never sends on-chain itself.
 - `POST /distribution/payout/create` + `/payout/status` (admin-only) — runs the same MultiSender contract in reverse (platform wallet -> every member with a positive withdrawable balance) to actually pay out accumulated internal earnings. Mirrors `pack/purchase`/`pack/status`'s PENDING-guarded lifecycle; on success debits each recipient via `debit_withdrawable` so the money isn't offered again. This is the only member-payout rail — no automatic/unattended sweep.
@@ -107,7 +125,7 @@ conda activate luxus && cd backend && uvicorn app.main:app --reload   # :8000, /
 # Frontend
 cd frontend && npm run dev                                            # :3000
 # Fresh DB: python create_tables.py && python seed_admin.py
-# Existing DB migrations: migrate_v14/v15/v17/v18/v19/v20.py; backfill_repurchase_reserve.py
+# Existing DB migrations: migrate_v14/v15/v17/v18/v19/v20/v21/v22.py; backfill_repurchase_reserve.py
 ```
 
 - **Touch only what you must** — this is a financial system; keep changes scoped.

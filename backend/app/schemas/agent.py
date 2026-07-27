@@ -29,6 +29,7 @@ class TransactionOut(BaseModel):
     amount: Decimal
     notes: str | None
     created_at: datetime
+    tx_hash: str | None = None
 
     model_config = {"from_attributes": True}
 

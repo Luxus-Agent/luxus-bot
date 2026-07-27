@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.core_preview import simulate_core_split
+from app.core.wallet_ops import resolve_tx_hashes
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
@@ -48,13 +49,20 @@ def get_transactions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return (
+    txns = (
         db.query(Transaction)
         .filter_by(user_id=current_user.id)
         .order_by(Transaction.created_at.desc())
         .limit(200)
         .all()
     )
+    tx_hashes = resolve_tx_hashes(db, {t.reference_id for t in txns if t.reference_id})
+    results = []
+    for t in txns:
+        out = TransactionOut.model_validate(t)
+        out.tx_hash = tx_hashes.get(t.reference_id)
+        results.append(out)
+    return results
 
 
 # Earnings the user has *received* (Core/Stream/Boost commissions). On the on-chain

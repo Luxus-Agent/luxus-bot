@@ -83,3 +83,46 @@ def simulate_core_split(db: Session, buyer: User, buyer_tier: int) -> dict:
     half2["compression_skipped"] = second_skip
 
     return {"buyer": buyer.username, "buyer_tier": buyer_tier, "half1": half1, "half2": half2}
+
+
+def get_downline_odd_even(db: Session, sponsor: User) -> dict:
+    """
+    Read-only: `sponsor`'s DIRECT downline (people they personally referred), split
+    into a left/odd and right/even column by join order — 1st, 3rd, 5th... referral
+    on the left (odd), 2nd, 4th... on the right (even). Per the client's Core-agent
+    table request: "Their downline will be occupying the left and right column or
+    odd and even column."
+
+    This is a different axis from simulate_core_split above: that walks UP the
+    sponsor chain to find who RECEIVES a given buyer's commission (keyed off
+    User.core_route_count, incremented per targeting). This instead lists a
+    sponsor's own DOWNLINE, ordered by when each one joined (User.sponsor_position,
+    falling back to a live-recomputed rank so members re-parented after an admin
+    deletion — which clears sponsor_position — still land in a column).
+    """
+    members = (
+        db.query(User)
+        .filter(User.sponsor_id == sponsor.id)
+        .order_by(User.sponsor_position.asc().nulls_last(), User.created_at.asc())
+        .all()
+    )
+
+    left_odd: list[dict] = []
+    right_even: list[dict] = []
+    for rank, member in enumerate(members, start=1):
+        row = {
+            "username": member.username,
+            "position": rank,
+            "sponsor_position": member.sponsor_position,
+            "is_active": member.is_active,
+            "highest_active_tier": _highest_active_tier(db, member.id),
+            "joined_at": member.created_at.isoformat() if member.created_at else None,
+        }
+        (left_odd if rank % 2 == 1 else right_even).append(row)
+
+    return {
+        "sponsor": sponsor.username,
+        "total": len(members),
+        "left_odd": left_odd,
+        "right_even": right_even,
+    }

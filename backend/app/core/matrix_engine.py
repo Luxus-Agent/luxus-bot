@@ -152,7 +152,7 @@ def _get_or_create_queue(
 
 def _append_to_level(
     db: Session, user_id: int, agent_tier: int, system_type: SystemType,
-    level: int, is_dummy: bool,
+    level: int, is_dummy: bool, is_reentry: bool = False,
 ) -> tuple[list[PendingPayout], list[PendingSponsorPayout]]:
     """
     Append one slot to (agent_tier, system_type, level)'s own queue, then drain
@@ -177,6 +177,7 @@ def _append_to_level(
     db.add(MatrixQueueSlot(
         agent_tier=agent_tier, system_type=system_type, level=level,
         position_number=pos_num, user_id=user_id, is_dummy=is_dummy,
+        is_reentry=is_reentry,
     ))
     db.flush()
 
@@ -280,4 +281,4 @@ def place_level_reentry(
     level's own queue — the key difference from a real join, and what keeps
     the whole system bounded (see module docstring).
     """
-    return _append_to_level(db, user_id, agent_tier, system_type, level, is_dummy)
+    return _append_to_level(db, user_id, agent_tier, system_type, level, is_dummy, is_reentry=True)

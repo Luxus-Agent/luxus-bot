@@ -31,11 +31,11 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
 - 🔗 **Fully on-chain payments** — buyers pay the upline split directly from their own wallet (TokenPocket / MultiSender, USDT BEP-20); no custodial deposit/withdrawal rail.
 - 💸 **Three-engine 60 / 30 / 10 revenue split** — Core (compressed upline routing with odd/even), Stream (per-tier 3×3 matrix), Boost (single global 3×3 matrix + 1% admin).
 - 🔁 **Automatic repurchase** — a 20% per-tier reserve auto re-buys the same tier at its price+gas threshold, unbounded and compounding through uplines.
-- 🌳 **Username-based sponsor tree** — every user registers under a sponsor; live sponsor-existence + wallet-address validation on the register form.
-- 🧮 **70 / 20 / 10 wallet rule** — every commission splits into main wallet / repurchase reserve / software fee.
+- 🌳 **Username-based sponsor tree** — every user registers under a sponsor; live sponsor-existence + wallet-address validation on the register form. Usernames are case-insensitive (passwords stay case-sensitive).
+- 🧮 **70 / 20 / 10 wallet rule** — every commission splits into main wallet / repurchase reserve / software fee. Ledger income figures ("Total Earnings") always report the full gross commission, before that split.
 - 🛡️ **Admin controls** — per-user freeze/delete, treasury transfer, and a global platform-freeze kill switch that blocks all money movement (purchases, settlement, matrix/repurchase payouts, admin payouts and treasury) with HTTP 423 while frozen.
-- 📊 **Real-time earnings & distribution map** — ledger-sourced totals plus a read-only `wallet-map` endpoint that feeds the MultiSender payout.
-- 🔍 **Revenue engine visualization** — admin sees Core compression/odd-even routing (any user) plus live Stream/Boost matrix queues; users get a self-scoped Core routing preview. All read-only. See [Revenue Engine Visualization](#revenue-engine-visualization-admin--user).
+- 📊 **Real-time earnings & distribution map** — ledger-sourced totals plus a read-only `wallet-map` endpoint that feeds the MultiSender payout. Transaction history (user + admin) links on-chain rows to a BscScan tx hash.
+- 🔍 **Revenue engine visualization** — admin sees Core compression/odd-even routing (any user), a sponsor's direct-downline odd/even table, and a full Stream/Boost queue-flow diagram (every position + re-entry spawn links); users get a self-scoped Core routing preview. All read-only. See [Revenue Engine Visualization](#revenue-engine-visualization-admin--user).
 - ✉️ **Email OTP** — verification on register, password reset, and BEP-20 address confirmation.
 
 ---
@@ -169,6 +169,12 @@ Effective split: **70% main wallet** (withdrawable) + **20% repurchase reserve**
 
 When the repurchase reserve for a tier reaches its **threshold (price + gas)**, the platform automatically re-buys that same tier from the reserve — see [Auto-Repurchase](#auto-repurchase).
 
+> **Ledger vs wallet amount:** the headline income `Transaction` row (`core_income` / `stream_payout` /
+> `boost_payout` / `sponsor_milestone_income`) always records the **full gross commission**, not the 70%
+> that actually lands in the MAIN wallet — the accompanying `software_fee` / `repurchase_hold` rows (same
+> `reference_id`) document where the other 30% went. This is deliberate: "Total Earnings" and the admin
+> revenue-engine totals must show the amount **before** the platform fee is subtracted, per client spec.
+
 > Account balance (deposits / transfers) is credited at 100% — no deductions.
 
 ---
@@ -233,6 +239,12 @@ GET  /auth/check-username?username=<name> → { "available": true/false }
 
 The register form validates **live** as you type: username availability, **sponsor existence** (both via `GET /auth/check-username`), and the **BEP-20 wallet address** format (`0x` + 40 hex). An invalid sponsor or wallet address blocks submission with inline feedback. The wallet address is stored on the user and later used by the distribution endpoint below.
 
+**Usernames are case-insensitive; passwords are case-sensitive.** Login, registration's duplicate/sponsor checks,
+`check-username`, and every other username lookup (admin transfer/search, wallet-map, core-simulate) go through
+`app/core/user_lookup.get_user_by_username` (`func.lower()` comparison) — `"Alice"`, `"alice"`, and `"ALICE"` all
+resolve to the same account. The stored username casing is untouched (whatever the user typed at registration is
+still what's displayed). Passwords are unaffected — bcrypt hashes the exact string, so they remain case-sensitive.
+
 ---
 
 ## Deposit & Purchase Flow
@@ -291,8 +303,15 @@ GET /admin/matrix/overview              → fill-state snapshot of every Stream 
 GET /admin/matrix/queue-slots           → ordered queue contents for one (system, tier, level)
   ?system_type=stream|boost&tier=&level=  starting from the current head position — who's
                                            occupying each position, which are re-entries
+GET /admin/matrix/queue-flow            → the FULL queue from position #1 onward, in true
+  ?system_type=stream|boost&tier=&level=  arrival order, with each paying position linked to
+                                           the re-entry slot(s) it spawned (`spawned_from`) —
+                                           the single-stack-with-connectors "Flow View" diagram
 GET /admin/core/simulate                → preview of the Core 60% compression + odd/even split
   ?username=&tier=                        if `username` bought `tier` right now — for ANY user
+GET /admin/core/downline                 → a sponsor's DIRECT downline split into a left/odd
+  ?username=                              and right/even column by join order (1st/3rd/5th
+                                           referral left, 2nd/4th right) — the odd/even table
 ```
 
 **User** — `/revenue-engine` (nav: **Revenue Engine**) — Core only; Stream/Boost are platform-
@@ -310,6 +329,26 @@ Shared simulation logic lives in `app/core/core_preview.py` (used by both the ad
 endpoints, so admin's arbitrary-username capability and the user's self-only capability never
 drift apart); the shared Core explainer diagram + routing-chain UI lives in
 `frontend/src/components/CoreRoutingViz.jsx`.
+
+The Core **downline odd/even table** (`get_downline_odd_even` in `core/core_preview.py`) is a
+different axis from the simulator above: instead of walking UP the sponsor chain to see who
+*receives* a purchase's commission, it lists a sponsor's own DIRECT downline (who they personally
+referred), ordered by `User.sponsor_position` (falling back to a live-recomputed rank so members
+re-parented after an admin deletion still land in a column) and split alternately into a left/odd
+and right/even column by join order — admin-only, at `/admin/revenue-engines`'s Core tab.
+
+The **queue-flow diagram** (`core/matrix_flow.py`, admin-only "Flow View" per level card) renders
+Stream/Boost's `MatrixQueueSlot` rows as one connected stack instead of the summary level cards —
+every position from #1 onward, real joins and re-entries in true arrival order. The spawn pairing
+(which re-entry a given position generated) isn't stored directly; it's reconstructed from
+`MatrixQueueSlot.is_reentry` + `matrix_runtime.drain_matrix_backlog`'s strict oldest-first
+processing order, which guarantees the *k*-th paid position's re-entries are always exactly the
+*k*-th contiguous block of `reentry_count` re-entry slots in position order — see that module's
+docstring for the full argument. `MatrixQueueSlot.is_reentry` (migration `migrate_v22.py`) exists
+because Stream re-entries are already distinguishable via `is_dummy`, but Boost re-entries are
+**real** (`is_dummy` stays `False` per spec), so there was previously no signal telling a Boost
+re-entry apart from a brand-new member — pre-migration Boost rows can't be backfilled retroactively
+and simply won't show the re-entry badge/link in the diagram.
 
 ---
 

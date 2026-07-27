@@ -5,6 +5,8 @@ import toast from 'react-hot-toast'
 import { Activity, TrendingUp, TrendingDown } from 'lucide-react'
 import Pagination from '../components/Pagination'
 import { formatDateIST } from '../utils/datetime'
+import { txExplorerUrl, shortenTxHash } from '../utils/explorer'
+import { ExternalLink } from 'lucide-react'
 
 const PAGE_SIZE = 10
 
@@ -139,12 +141,13 @@ export default function Transactions() {
         <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           {/* Header */}
           <div
-            className="hidden sm:grid grid-cols-5 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider"
+            className="hidden sm:grid grid-cols-6 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider"
             style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}
           >
             <span className="col-span-2">Type</span>
             <span>Tier</span>
             <span>Date</span>
+            <span>Tx Hash</span>
             <span className="text-right">Amount</span>
           </div>
 
@@ -162,7 +165,7 @@ export default function Transactions() {
                 const amountColor = isNeg ? '#FF4D6A' : isIncome ? 'var(--accent)' : 'var(--text-secondary)'
                 const color = TX_COLOR[tx.transaction_type] || 'var(--text-secondary)'
                 return (
-                  <div key={tx.id} className="flex sm:grid sm:grid-cols-5 items-center gap-3 px-4 py-3">
+                  <div key={tx.id} className="flex sm:grid sm:grid-cols-6 items-center gap-3 px-4 py-3">
                     <div className="col-span-2 flex items-center gap-2 min-w-0">
                       <div
                         className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0"
@@ -182,6 +185,23 @@ export default function Transactions() {
                     </span>
                     <span className="hidden sm:block text-xs" style={{ color: 'var(--text-muted)' }}>
                       {formatDateIST(tx.created_at)}
+                    </span>
+                    <span className="hidden sm:flex items-center gap-1 text-xs">
+                      {tx.tx_hash ? (
+                        <a
+                          href={txExplorerUrl(tx.tx_hash)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 hover:underline"
+                          style={{ color: 'var(--accent)' }}
+                          title={tx.tx_hash}
+                        >
+                          {shortenTxHash(tx.tx_hash)}
+                          <ExternalLink size={11} />
+                        </a>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>—</span>
+                      )}
                     </span>
                     <p
                       className="text-sm font-semibold text-right ml-auto sm:ml-0"

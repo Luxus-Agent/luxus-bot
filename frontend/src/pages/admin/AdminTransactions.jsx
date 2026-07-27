@@ -3,8 +3,9 @@ import { AdminLayout as Layout } from '../../components/Layout'
 import Pagination from '../../components/Pagination'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { Activity, Search } from 'lucide-react'
+import { Activity, Search, ExternalLink } from 'lucide-react'
 import { formatDateIST } from '../../utils/datetime'
+import { txExplorerUrl, shortenTxHash } from '../../utils/explorer'
 
 const PAGE_SIZE = 10
 
@@ -41,7 +42,7 @@ export default function AdminTransactions() {
     if (filterType !== 'all' && t.transaction_type !== filterType) return false
     if (search) {
       const q = search.toLowerCase()
-      const hay = `${t.user_id} ${t.username || ''} ${t.transaction_type} ${t.notes || ''}`.toLowerCase()
+      const hay = `${t.user_id} ${t.username || ''} ${t.transaction_type} ${t.notes || ''} ${t.tx_hash || ''}`.toLowerCase()
       if (!hay.includes(q)) return false
     }
     return true
@@ -97,13 +98,14 @@ export default function AdminTransactions() {
 
         <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           <div
-            className="hidden sm:grid grid-cols-6 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+            className="hidden sm:grid grid-cols-7 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
             style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}
           >
             <span className="col-span-2">Type</span>
             <span>User</span>
             <span>Tier</span>
             <span>Date</span>
+            <span>Tx Hash</span>
             <span className="text-right">Amount</span>
           </div>
 
@@ -121,7 +123,7 @@ export default function AdminTransactions() {
               const amountColor = isNeg ? '#FF4D6A' : isIncome ? 'var(--accent)' : 'var(--text-secondary)'
               const color = TX_COLOR[ttype] || 'var(--text-secondary)'
               return (
-                <div key={tx.id} className="flex sm:grid sm:grid-cols-6 items-center gap-3 px-5 py-3">
+                <div key={tx.id} className="flex sm:grid sm:grid-cols-7 items-center gap-3 px-5 py-3">
                   <div className="col-span-2 flex items-center gap-2 min-w-0">
                     <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
                     <div className="min-w-0">
@@ -139,6 +141,23 @@ export default function AdminTransactions() {
                   </span>
                   <span className="hidden sm:block text-xs" style={{ color: 'var(--text-muted)' }}>
                     {formatDateIST(tx.created_at)}
+                  </span>
+                  <span className="hidden sm:flex items-center gap-1 text-xs">
+                    {tx.tx_hash ? (
+                      <a
+                        href={txExplorerUrl(tx.tx_hash)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 hover:underline"
+                        style={{ color: 'var(--accent)' }}
+                        title={tx.tx_hash}
+                      >
+                        {shortenTxHash(tx.tx_hash)}
+                        <ExternalLink size={11} />
+                      </a>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)' }}>—</span>
+                    )}
                   </span>
                   <p className="text-sm font-semibold ml-auto sm:ml-0 text-right" style={{ color: amountColor }}>
                     {sign}${Math.abs(parseFloat(tx.amount)).toFixed(2)}

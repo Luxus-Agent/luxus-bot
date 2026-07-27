@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user
 from app.core.security import create_access_token, hash_password, verify_password
+from app.core.user_lookup import get_user_by_username
 from app.database import get_db
 from app.models.user import User
 from app.schemas.user import (
@@ -43,8 +44,9 @@ def _generate_otp() -> str:
 
 @router.get("/check-username")
 def check_username(username: str, db: Session = Depends(get_db)):
-    """Return whether a username is available. Used for live registration feedback."""
-    taken = db.query(User).filter_by(username=username).first() is not None
+    """Return whether a username is available. Used for live registration feedback.
+    Case-insensitive — "Alice" and "alice" are the same username."""
+    taken = get_user_by_username(db, username) is not None
     return {"available": not taken}
 
 
@@ -80,13 +82,13 @@ async def register(
 ):
     if db.query(User).filter_by(email=payload.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-    if db.query(User).filter_by(username=payload.username).first():
+    if get_user_by_username(db, payload.username) is not None:
         raise HTTPException(status_code=400, detail="Username already taken")
     if payload.wallet_address and _wallet_address_taken(db, payload.wallet_address):
         raise HTTPException(status_code=400, detail="Wallet address already registered to another account")
 
     # Sponsor username is required — every user must register under a sponsor (Q7)
-    sponsor = db.query(User).filter_by(username=payload.sponsor_username).first()
+    sponsor = get_user_by_username(db, payload.sponsor_username)
     if not sponsor:
         raise HTTPException(status_code=400, detail="Sponsor username not found")
     sponsor_position = len(sponsor.downline) + 1
@@ -225,7 +227,7 @@ def get_direct_referrals(
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: UserLogin, db: Session = Depends(get_db)):
-    user = db.query(User).filter_by(username=payload.username).first()
+    user = get_user_by_username(db, payload.username)
     if not user or not verify_password(payload.password, user.password_hash):
         logger.warning("AUTH login_failed: invalid credentials username=%s", payload.username)
         raise HTTPException(status_code=401, detail="Invalid credentials")

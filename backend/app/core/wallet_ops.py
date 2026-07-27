@@ -23,6 +23,32 @@ LEDGER_INCOME_TYPES = (
 )
 
 
+def resolve_tx_hashes(db: Session, reference_ids: set[str]) -> dict[str, str]:
+    """Map Transaction.reference_id -> on-chain tx_hash, for rows tied to a settled
+    PackPurchase (order_id) or PayoutBatch (batch_id). Ledger-only transaction types
+    (stream_payout, repurchase_hold, admin_credit, ...) have no reference_id here and
+    are simply absent from the result."""
+    if not reference_ids:
+        return {}
+    from app.models.pack_purchase import PackPurchase
+    from app.models.payout_batch import PayoutBatch
+
+    hashes: dict[str, str] = {}
+    for order_id, tx_hash in (
+        db.query(PackPurchase.order_id, PackPurchase.tx_hash)
+        .filter(PackPurchase.order_id.in_(reference_ids), PackPurchase.tx_hash.isnot(None))
+        .all()
+    ):
+        hashes[order_id] = tx_hash
+    for batch_id, tx_hash in (
+        db.query(PayoutBatch.batch_id, PayoutBatch.tx_hash)
+        .filter(PayoutBatch.batch_id.in_(reference_ids), PayoutBatch.tx_hash.isnot(None))
+        .all()
+    ):
+        hashes[batch_id] = tx_hash
+    return hashes
+
+
 def get_ledger_earnings(db: Session, user_id: int) -> Decimal:
     """Lifetime income the user has received, summed from the transaction ledger.
     Use this (not MAIN-wallet balances) for any "total earnings" figure on the
@@ -60,8 +86,9 @@ def mirror_onchain_earning_split(
         to the user directly, so tracking each user's share internally is correct)
       • 70% main          → NOT credited to any wallet (already delivered on-chain)
 
-    The caller writes the CORE_INCOME row for the user's net income
-    (main + repurchase) — that ledger row (not a wallet balance) is what
+    The caller writes the CORE_INCOME row for the user's FULL gross commission
+    (per client spec — "Total Earnings" must show the amount before the platform
+    fee is subtracted) — that ledger row (not a wallet balance) is what
     GET /wallet/earnings sums for "Total Earnings", so the earnings display is
     unaffected by this function not touching Wallet.MAIN.
 
@@ -125,7 +152,12 @@ def credit_wallet(
       repurchase   = gross × 20%   (held in repurchase wallet)
       main_credit  = gross × 70%   (withdrawable)
 
-    All three movements are recorded in the transaction ledger.
+    All three movements are recorded in the transaction ledger. The headline
+    `tx_type` row records the FULL gross_amount (per client spec — ledger income
+    figures like "Total Earnings" must show the amount before the platform fee is
+    subtracted), even though only main_credit (70%) actually landed in the MAIN
+    wallet — the SOFTWARE_FEE and REPURCHASE_HOLD sibling rows above/below it
+    document where the other 30% went.
     """
     four_places = Decimal("0.0001")
 
@@ -150,12 +182,13 @@ def credit_wallet(
         reference_id=reference_id,
         notes="10% platform software fee",
     ))
-    # Record main wallet credit
+    # Record main wallet credit — headline ledger row shows the FULL gross amount
+    # (see docstring); only main_credit (70%) was actually added to Wallet.MAIN.
     db.add(Transaction(
         user_id=user_id,
         agent_tier=agent_tier,
         transaction_type=tx_type,
-        amount=main_credit,
+        amount=gross_amount,
         reference_id=reference_id,
         notes=notes,
     ))
