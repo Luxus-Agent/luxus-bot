@@ -6,6 +6,11 @@ import { bscTestnet } from '@reown/appkit/networks'
 import { wagmiConfig } from '../config/appkit'
 import { USDT_ADDRESS, USDT_DECIMALS } from '../config/contracts'
 
+// How often to silently re-poll the on-chain balance while connected, so it
+// stays live without the caller needing to trigger `refetch` manually. Paused
+// while the tab is in the background to avoid wasted RPC calls.
+const BALANCE_POLL_MS = 20_000
+
 // Reads the connected wallet's live on-chain USDT balance (BSC testnet).
 //
 // This is the user's real spendable balance — on-chain pack purchases and the
@@ -51,6 +56,14 @@ export function useUsdtBalance() {
   }, [address, isConnected, configured])
 
   useEffect(() => { refetch() }, [refetch])
+
+  useEffect(() => {
+    if (!isConnected || !configured) return
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') refetch()
+    }, BALANCE_POLL_MS)
+    return () => clearInterval(id)
+  }, [isConnected, configured, refetch])
 
   return { balance, loading, refetch, isConnected, configured }
 }

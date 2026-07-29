@@ -116,8 +116,13 @@ def user_summary(
     """
     Compact per-user snapshot for the admin user-management dropdown:
       - agents_count: how many agent tiers the user has bought
-      - account_balance: spendable account balance
-      - revenue_generated: lifetime income from the ledger (Core/Stream/Boost)
+      - wallet_address: registered BEP-20 payout address (used for Core routing +
+        on-chain settlement) — NOT `account_balance`, which is the legacy
+        deposit-first account wallet and is always $0 on the on-chain-only rail
+        (there's no deposit path left to fund it), so it isn't useful to show here
+      - revenue_generated: lifetime GROSS income from the ledger (Core/Stream/
+        Boost/Sponsor) — same figure as the user's own "Total Earnings"
+        (core/wallet_ops.get_ledger_earnings), before the 70/20/10 wallet split
     """
     user = db.query(User).filter_by(id=user_id).first()
     if not user:
@@ -131,7 +136,7 @@ def user_summary(
 
     return {
         "agents_count": int(agents_count),
-        "account_balance": float(get_account_balance(db, user_id)),
+        "wallet_address": user.wallet_address,
         "revenue_generated": float(get_ledger_earnings(db, user_id)),
     }
 
@@ -190,7 +195,11 @@ def delete_user(
 
     Realized platform profit is PRESERVED: the user's SOFTWARE_FEE and
     PLATFORM_PROFIT rows are re-attributed to the admin (not deleted), so the
-    platform-profit total is unaffected by the deletion.
+    platform-profit total is unaffected by the deletion. Any unconsumed
+    REPURCHASE reserve balance is booked as platform profit too (per client
+    spec: reserve that never reaches its repurchase threshold "will go to the
+    platform") — otherwise that held balance would simply vanish along with
+    the user's Wallet rows, unaccounted for anywhere.
     """
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="Cannot delete your own admin account.")
@@ -206,6 +215,7 @@ def delete_user(
     from app.models.platform_setting import PlatformSetting
     from app.models.matrix import MatrixPendingPayout, MatrixPosition, MatrixQueueSlot
     from app.models.pack_purchase import PackPurchase
+    from app.models.wallet import WalletType
 
     username = user.username
 
@@ -231,6 +241,25 @@ def delete_user(
                 [TransactionType.SOFTWARE_FEE, TransactionType.PLATFORM_PROFIT]
             ),
         ).update({Transaction.user_id: admin.id}, synchronize_session=False)
+
+        # 3b. Any REPURCHASE reserve this user never accumulated enough to spend
+        #     is forfeited to platform profit (client spec: unreached reserve
+        #     "will go to the platform") rather than silently disappearing when
+        #     their Wallet rows are deleted below.
+        forfeited_reserve = (
+            db.query(func.coalesce(func.sum(Wallet.balance), 0))
+            .filter(Wallet.user_id == user_id, Wallet.wallet_type == WalletType.REPURCHASE)
+            .scalar()
+        )
+        forfeited_reserve = Decimal(str(forfeited_reserve or 0))
+        if forfeited_reserve > 0:
+            db.add(Transaction(
+                user_id=admin.id,
+                agent_tier=ACCOUNT_TIER,  # spans whichever tiers held reserve — not tier-specific
+                transaction_type=TransactionType.PLATFORM_PROFIT,
+                amount=forfeited_reserve,
+                notes=f"Forfeited repurchase reserve — @{username} deleted",
+            ))
 
         # 4. Delete all remaining rows owned by this user (children first).
         #    Matrix queue slots are safe to remove outright: matrix_engine's
@@ -351,7 +380,10 @@ def treasury_summary(
 
     # Realized platform profit = software fees (10% of every payout) + all other
     # explicitly-ledgered profit (matrix-level residuals, core-retained when a buyer
-    # has no sponsor, and 1% transfer fees).
+    # has no sponsor, and 1% transfer fees). Admin income (the 1% Boost cut) is
+    # tracked separately below — it's routed to its own ADMIN_INCOME_WALLET, not
+    # pooled with PLATFORM_FEE_WALLET's profit, so it's a distinct figure, not
+    # folded into this total.
     platform_profit = (
         _sum_all(TransactionType.SOFTWARE_FEE)
         + _sum_all(TransactionType.PLATFORM_PROFIT)
@@ -364,6 +396,50 @@ def treasury_summary(
         "total_invested": _sum_all(TransactionType.AGENT_PURCHASE),
         "total_deposited": _sum_all(TransactionType.DEPOSIT),
         "platform_profit": platform_profit,
+        "admin_income": _sum_all(TransactionType.ADMIN_INCOME),
+    }
+
+
+@router.get("/treasury/onchain-wallets")
+def treasury_onchain_wallets(
+    _: User = Depends(get_admin_user),
+):
+    """
+    Live on-chain balances (USDT + native BNB gas) for the three platform-
+    controlled wallets, read directly from the chain — these addresses have no
+    internal DB row, so this is the only way to see what's actually sitting in
+    them. Read-only, never moves funds.
+
+    REPURCHASE_RESERVE_WALLET pays its own gas for the auto-repurchase
+    settlement broadcast (see core/onchain.send_repurchase_settlement) — its BNB
+    balance is the one worth watching so that broadcast doesn't silently start
+    failing for lack of gas.
+
+    ADMIN_INCOME_WALLET and REPURCHASE_RESERVE_WALLET both fall back to
+    PLATFORM_FEE_WALLET when unset (config.py) — when that happens they'll
+    naturally report the same address/balances as Platform Fee; the frontend
+    can de-duplicate on `address`.
+    """
+    from app.config import settings
+    from app.core.onchain import get_wallet_onchain_balances
+
+    def _entry(label: str, key: str, address: str) -> dict:
+        result = get_wallet_onchain_balances(address)
+        return {
+            "key": key,
+            "label": label,
+            "address": result["address"],
+            "usdt_balance": float(result["usdt"]) if result["usdt"] is not None else None,
+            "bnb_balance": float(result["bnb"]) if result["bnb"] is not None else None,
+            "error": result["error"],
+        }
+
+    return {
+        "wallets": [
+            _entry("Platform Fee Wallet", "platform_fee", settings.PLATFORM_FEE_WALLET),
+            _entry("Admin Income Wallet", "admin_income", settings.admin_income_wallet),
+            _entry("Repurchase Reserve Wallet", "repurchase_reserve", settings.repurchase_reserve_wallet),
+        ],
     }
 
 
@@ -407,8 +483,13 @@ def platform_metrics(
     boost = _sum_all(TransactionType.BOOST_PAYOUT)
     sponsor = _sum_all(TransactionType.SPONSOR_MILESTONE_INCOME)
     total_gross_commissions = round(core + stream + boost + sponsor, 4)
-    # MAIN wallet always gets the remainder after the 20% reserve + 10% fee (70%).
+    # MAIN wallet gets 70% of gross — but ONLY for Stream/Boost/Sponsor (credited via
+    # wallet_ops.credit_wallet). Core's 70% share is paid directly on-chain, buyer →
+    # upline, at purchase time (wallet_ops.mirror_onchain_earning_split) and is NEVER
+    # credited to an internal wallet — including it here would overstate how much is
+    # actually sitting in internal MAIN wallets.
     main_wallet_rate = 1 - float(REPURCHASE_RATE) - float(SOFTWARE_FEE_RATE)
+    matrix_gross_commissions = round(stream + boost + sponsor, 4)
 
     repurchase_count = (
         db.query(func.count(Transaction.id))
@@ -429,7 +510,7 @@ def platform_metrics(
             "boost_payout": boost,
             "sponsor_share": sponsor,
             "total_gross_commissions": total_gross_commissions,
-            "total_credited_to_wallets": round(total_gross_commissions * main_wallet_rate, 4),
+            "total_credited_to_wallets": round(matrix_gross_commissions * main_wallet_rate, 4),
             "software_fees": _sum_all(TransactionType.SOFTWARE_FEE),
         },
         "repurchase": {

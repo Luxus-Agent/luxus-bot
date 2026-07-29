@@ -9,6 +9,7 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
 - [Key Features](#key-features)
 - [Architecture](#architecture)
 - [Revenue Mechanics](#revenue-mechanics)
+- [Earnings Transparency — Completed vs Pending](#earnings-transparency--completed-vs-pending)
 - [User Journey](#user-journey)
 - [Auth Flow](#auth-flow)
 - [Deposit & Purchase Flow](#deposit--purchase-flow)
@@ -36,6 +37,13 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
 - 🛡️ **Admin controls** — per-user freeze/delete, treasury transfer, and a global platform-freeze kill switch that blocks all money movement (purchases, settlement, matrix/repurchase payouts, admin payouts and treasury) with HTTP 423 while frozen.
 - 📊 **Real-time earnings & distribution map** — ledger-sourced totals plus a read-only `wallet-map` endpoint that feeds the MultiSender payout. Transaction history (user + admin) links on-chain rows to a BscScan tx hash.
 - 🔍 **Revenue engine visualization** — admin sees Core compression/odd-even routing (any user), a sponsor's direct-downline odd/even table, and a full Stream/Boost queue-flow diagram (every position + re-entry spawn links); users get a self-scoped Core routing preview. All read-only. See [Revenue Engine Visualization](#revenue-engine-visualization-admin--user).
+- ✅ **Completed vs Pending earnings breakdown** — a click-to-expand card on the Dashboard and Transactions
+  pages splits "Total Earnings" into what's already on-chain, what's still building toward the next
+  auto-repurchase, and what's awaiting the next admin payout — always reconciling exactly to the headline
+  total. See [Earnings Transparency](#earnings-transparency--completed-vs-pending).
+- 💰 **Live on-chain platform wallet monitor** — admin sees real-time USDT + BNB gas balances for all three
+  platform-controlled wallets (Platform Fee, Admin Income, Repurchase Reserve), auto-refreshing, with a
+  low-gas warning on the Repurchase Reserve wallet (the only one that pays its own gas).
 - ✉️ **Email OTP** — verification on register, password reset, and BEP-20 address confirmation.
 
 ---
@@ -196,6 +204,38 @@ Implemented in `app/core/repurchase.py`. Every income credit holds back 20% into
 - **Frontend support:** `GET /wallet/repurchase` (per-tier reserve, threshold, `progress_percent`, `ready` — for the progress bar) and `GET /wallet/repurchase/history` (executed repurchases).
 - **On-chain settlement** (`app/core/onchain.py`): once `REPURCHASE_SIGNER_PRIVATE_KEY` is set, each repurchase also broadcasts a real ERC20 `transfer` moving the consumed reserve (price + fee) from the reserve wallet to `PLATFORM_FEE_WALLET`, over `BSC_RPC_URL` — best-effort (any failure is logged and swallowed; the internal accounting above always applies regardless, so a broadcast failure never blocks a purchase). Leave the key unset to keep auto-repurchase internal-ledger-only, unchanged from before. This settles the reserve on-chain but does **not** replay the Core/Stream/Boost recipient split — those stay internal, paid out later via the member-payout rail below.
 - **Migration:** existing DBs run `cd backend && python migrate_v17.py` once (adds `repurchase_buy` / `repurchase_gas` / `admin_credit` + the matrix pool types to the Postgres `transactiontype` enum); `create_tables.py` covers fresh installs.
+
+---
+
+## Earnings Transparency — Completed vs Pending
+
+"Total Earnings" is a **gross ledger total** (Core + Stream + Boost + Sponsor commissions, before the
+70/20/10 split — see [Wallet Credit Split](#wallet-credit-split) above). That number alone doesn't tell a
+user or admin **where** the money actually is, which was the source of a real support ticket: a user compared
+their on-chain wallet balance to "Total Earnings" and found roughly $100 missing out of $148 — not a bug,
+just an unexplained gap. The fix is a breakdown, not a different total:
+
+`GET /wallet/earnings` now returns, alongside the existing `total_earned`:
+
+| Field | What it is | Why it's not in the wallet yet |
+|---|---|---|
+| `completed` | Core's 70% share | Already paid **directly on-chain**, buyer → upline, at purchase time (`mirror_onchain_earning_split`). It's real money in the recipient's own wallet the instant the purchase settles. |
+| `pending_reserve` | Live sum of all `REPURCHASE` wallet balances | Building toward the next auto-repurchase threshold — reinvested into another tier automatically, never paid out as cash. |
+| `pending_payout` | Live sum of all `MAIN` wallet balances | Stream/Boost/Sponsor's 70% share, credited internally via `credit_wallet` — stays internal-ledger-only until an admin runs a [member payout](#member-payout-admin-distribution) batch. |
+
+These three **always foot exactly to `total_earned`** — the UI derives a fourth, muted "platform software fee"
+line as the remainder (`total_earned − completed − pending_reserve − pending_payout`), so nothing is ever
+silently unaccounted for, regardless of how a given account's history looks.
+
+**Where it shows up:**
+- User Dashboard's "Total Earnings" stat card — click to expand the breakdown.
+- Transactions page's "Total In" tile — same click-to-expand breakdown.
+- Both Transactions pages (user `/transactions` and admin `/admin/transactions`) also get a per-row
+  **Status** column (`Completed` / `Pending`) and matching filter — `core_income` rows are always
+  `Completed`; `repurchase_hold`, `stream_payout`, `boost_payout`, and `sponsor_milestone_income` rows are
+  `Pending`.
+- Shared component: `frontend/src/components/EarningsBreakdown.jsx` — used by both pages so the math can't
+  drift apart between them.
 
 ---
 
@@ -667,9 +707,10 @@ python seed_admin.py
 Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`.
 
 **Admin capabilities:**
-- Platform-wide stats (platform profit, total deposited by users, total invested by users) and transaction history (resolved to usernames)
-- View per-user details (agents bought, account balance, revenue generated); freeze / unfreeze individual users (blocks login and all money movement to/from them — Core, sponsor-share, and Stream/Boost matrix payouts they'd otherwise receive are retained as platform profit instead); admins can't be frozen or deleted
-- **Delete user** — hard delete; re-parents their downline to keep the sponsor tree connected, preserves realized platform profit by re-attributing it to the admin, and removes their wallets/transactions/purchases/matrix positions so it doesn't fail on a foreign-key constraint
+- Platform-wide stats (platform profit, admin income, total invested by users) and transaction history (resolved to usernames, with a Completed/Pending status column + filter — see [Earnings Transparency](#earnings-transparency--completed-vs-pending))
+- **Platform Wallets** — live on-chain USDT + native BNB balance for the three platform-controlled wallets (Platform Fee, Admin Income, Repurchase Reserve), auto-refreshing every 20s, with a low-gas warning on the Repurchase Reserve wallet (the only one that broadcasts its own transaction and so the only one that needs gas)
+- View per-user details (agents bought, registered wallet address, revenue generated — note: NOT account balance, which is always $0 on the on-chain rail since there's no deposit path to fund it); freeze / unfreeze individual users (blocks login and all money movement to/from them — Core, sponsor-share, and Stream/Boost matrix payouts they'd otherwise receive are retained as platform profit instead); admins can't be frozen or deleted
+- **Delete user** — hard delete; re-parents their downline to keep the sponsor tree connected, preserves realized platform profit by re-attributing it to the admin (including forfeiting any unconsumed repurchase reserve as platform profit, per spec — it doesn't just vanish with the deleted wallet rows), and removes their wallets/transactions/purchases/matrix positions so it doesn't fail on a foreign-key constraint
 - **Treasury** — *Send to User* by username, instantly and fee-free (kept fully separate from the user deposit/transfer/withdraw flows). *(The *Generate* / fund-minting feature and the "Treasury Balance" dashboard card were removed; the `ADMIN_GENERATE` ledger type is retained only for historical reporting.)*
 - **Global freeze (kill switch)** — one click pauses all money movement platform-wide, for admins too: new purchases, purchase settlement (ownership + ledger + matrix cascade + auto-repurchase), the member-payout rail, and admin treasury/wallet-credit/wallet-debit. Only an admin can lift it (freeze/unfreeze itself is never blocked)
 - **Revenue Engines page** (`/admin/revenue-engines`) — Core compression/odd-even routing simulator for any username, plus live Stream/Boost matrix queue fill-state and contents. See [Revenue Engine Visualization](#revenue-engine-visualization-admin--user)
@@ -746,8 +787,11 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - **Platform freeze scope:** `require_platform_active` (admin bypass) gates the buyer-facing `pack/purchase` + `pack/status`; `ensure_platform_active` (no bypass, applies to admins too) gates `payout/create`, `payout/status`, `admin/transfer`, `admin/wallet/credit`, and `admin/wallet/debit` — see `app/core/platform_state.py`. A `PENDING` pack purchase left over from before a freeze simply waits — `pack/status` re-processes it normally once unfrozen.
 - **Per-user freeze** (`User.is_active=False`) is checked at `/auth/login` (clear 403 "account frozen" message, not a token followed by a confusing failure) and by `get_current_user` for every other endpoint. A frozen user's Core, sponsor-share, and Stream/Boost matrix payouts are retained as platform profit rather than credited to them (`app/core/proactive.py`, `app/core/matrix_runtime.py`), and their auto-repurchase reserve is held, not consumed.
 - **All timestamps are displayed in IST (`Asia/Kolkata`).** The backend stores naive UTC; the frontend converts via `frontend/src/utils/datetime.js` (`formatDateTimeIST` / `formatDateIST` / `formatTimeIST`). Storage stays UTC — only the display is localized to Indian time.
-- **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views (`Transactions.jsx`, `admin/AdminTransactions.jsx`) classify them into Income / Expense / System groups using **lowercase** keys; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income.
-- **On-chain "Wallet Balance"** shown on the Dashboard and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases **do** populate internal wallets: on `pack/status` success each Core commission is credited 70/20/10 (`mirror_onchain_earning_split`) and the Stream/Boost matrix payouts credit via `credit_wallet`, so main / repurchase-reserve balances fill and on-chain activity also shows in transaction history and the income chart.
+- **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views (`Transactions.jsx`, `admin/AdminTransactions.jsx`) classify them into Income / Expense / System groups using **lowercase** keys; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income. Both pages also carry a separate Completed/Pending **Status** classification (`core_income` is always Completed; `repurchase_hold`/`stream_payout`/`boost_payout`/`sponsor_milestone_income` are Pending) — see [Earnings Transparency](#earnings-transparency--completed-vs-pending).
+- **On-chain "Wallet Balance"** shown on the Dashboard and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance — it silently repolls every 20s while a wallet is connected (paused when the tab is backgrounded), not just once on load. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases **do** populate internal wallets: on `pack/status` success each Core commission is credited 70/20/10 (`mirror_onchain_earning_split`) and the Stream/Boost matrix payouts credit via `credit_wallet`, so main / repurchase-reserve balances fill and on-chain activity also shows in transaction history and the income chart.
 - **There is no standalone user Wallet page.** Its balances/reserve cards and transaction history were redundant with the Dashboard and Transactions pages, so it was removed (`/wallet` route, nav entry, and `pages/Wallet.jsx` all deleted) — don't reintroduce it without asking. Balances live on the Dashboard; full transaction history is on `/transactions`.
+- **User Dashboard's "Quick Actions" card and Admin Overview's "Recent Transactions" / "Transaction Breakdown" sections were removed** — low-value once the Completed/Pending breakdown and dedicated Transactions pages covered the same ground. Don't reintroduce without asking.
+- **`GET /admin/metrics`'s `total_credited_to_wallets` only counts Stream/Boost/Sponsor's 70% share**, not Core's — Core's 70% is paid directly on-chain and never touches an internal wallet, so including it there would overstate what's actually sitting in user MAIN wallets. (This was a real bug, fixed.)
+- **Admin's per-user drill-down (`GET /admin/users/{id}/summary`) shows `wallet_address`, not `account_balance`** — the account wallet is always $0 on the on-chain rail (no deposit path funds it), so it wasn't useful to show. `ADMIN_INCOME` transactions (the 1% Boost cut) are tracked as their own `admin_income` figure in `/admin/treasury/summary`, separate from `platform_profit` (`SOFTWARE_FEE` + `PLATFORM_PROFIT`).
 - **Direct Referrals** on the Dashboard is a click-to-expand dropdown (not just a count) listing every direct referral with username + active/frozen status, sourced from the existing `GET /auth/referrals` (`referrals: [...]`) response.
 - **Wallet-connect widget** in the topbar (`<appkit-button>`) is hidden for admin accounts — it's only relevant to the on-chain purchase flow, which admins don't use; every admin action is pure backend/JWT logic against backend-configured wallet addresses.

@@ -13,6 +13,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import { formatDateIST } from '../utils/datetime'
+import EarningsBreakdown from '../components/EarningsBreakdown'
 
 const TIER_PRICES = { 1: 10, 2: 20, 3: 50, 4: 100 }
 const TIER_NAMES = { 1: 'Agent 1', 2: 'Agent 2', 3: 'Agent 3', 4: 'Agent 4' }
@@ -36,6 +37,58 @@ function StatCard({ icon: Icon, label, value, sub, color = 'var(--accent)', onCl
       <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>{label}</p>
       <p className="text-2xl font-bold text-white">{value}</p>
       {sub && <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{sub}</p>}
+    </div>
+  )
+}
+
+/** Total Earnings stat card with a click-to-expand breakdown of Completed vs Pending. */
+function EarningsCard({ totalEarned, completed, pendingReserve, pendingPayout }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div className="relative" ref={ref}>
+      <div
+        className="rounded-xl p-5 transition-all cursor-pointer"
+        style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}
+        onClick={() => setOpen(v => !v)}
+      >
+        <div className="flex items-start justify-between mb-3">
+          <div
+            className="w-10 h-10 rounded-lg flex items-center justify-center"
+            style={{ background: 'color-mix(in srgb, var(--accent-glow) 18%, transparent)', border: '1px solid color-mix(in srgb, var(--accent-glow) 30%, transparent)' }}
+          >
+            <TrendingUp size={20} style={{ color: 'var(--accent-glow)' }} />
+          </div>
+          <ChevronDown
+            size={16}
+            style={{ color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
+          />
+        </div>
+        <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Total Earnings</p>
+        <p className="text-2xl font-bold text-white">${totalEarned.toFixed(2)}</p>
+        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Tap for Completed vs Pending</p>
+      </div>
+
+      {open && (
+        <div
+          className="absolute left-0 right-0 top-full mt-2 rounded-xl z-50 p-3"
+          style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}
+        >
+          <EarningsBreakdown
+            totalEarned={totalEarned}
+            completed={completed}
+            pendingReserve={pendingReserve}
+            pendingPayout={pendingPayout}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -112,7 +165,7 @@ export default function Dashboard() {
   const [purchases, setPurchases] = useState([])
   const [income, setIncome] = useState({ total: 0, buckets: [] })
   const [repurchase, setRepurchase] = useState({ tiers: [] })
-  const [earnings, setEarnings] = useState({ total_earned: 0 })
+  const [earnings, setEarnings] = useState({ total_earned: 0, completed: 0, pending_reserve: 0, pending_payout: 0 })
   const [referralCount, setReferralCount] = useState(0)
   const [referrals, setReferrals] = useState([])
   const [loading, setLoading] = useState(true)
@@ -129,7 +182,7 @@ export default function Dashboard() {
       api.get('/wallet/repurchase').catch(() => ({ data: { tiers: [] } })),
       // Non-fatal: a missing/failing earnings endpoint must not blank the whole
       // dashboard (agents, wallets, etc.) — fall back to $0.
-      api.get('/wallet/earnings').catch(() => ({ data: { total_earned: 0 } })),
+      api.get('/wallet/earnings').catch(() => ({ data: { total_earned: 0, completed: 0, pending_reserve: 0, pending_payout: 0 } })),
     ]).then(([wb, pb, rb, ib, rpb, eb]) => {
       setWallets(wb.data)
       setPurchases(pb.data)
@@ -218,12 +271,11 @@ export default function Dashboard() {
             sub="On-chain USDT (BSC)"
             color="var(--accent)"
           />
-          <StatCard
-            icon={TrendingUp}
-            label="Total Earnings"
-            value={`$${totalEarned.toFixed(2)}`}
-            sub="Commissions paid on-chain"
-            color="var(--accent-glow)"
+          <EarningsCard
+            totalEarned={totalEarned}
+            completed={Number(earnings.completed || 0)}
+            pendingReserve={Number(earnings.pending_reserve || 0)}
+            pendingPayout={Number(earnings.pending_payout || 0)}
           />
           <ReferralsCard count={referralCount} referrals={referrals} />
           <StatCard
@@ -235,126 +287,92 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Active Agents + Quick Actions */}
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Active Agent Cards */}
-          <div className="lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-white">Active Agents</h2>
-              <Link to="/agents" className="text-xs font-medium" style={{ color: 'var(--accent)' }}>
-                Buy More →
+        {/* Active Agents */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-white">Active Agents</h2>
+            <Link to="/agents" className="text-xs font-medium" style={{ color: 'var(--accent)' }}>
+              Buy More →
+            </Link>
+          </div>
+
+          {activePurchases.length === 0 ? (
+            <div
+              className="rounded-xl p-8 text-center"
+              style={{ background: 'var(--bg-panel)', border: '1px dashed var(--border)' }}
+            >
+              <Bot size={40} style={{ color: 'var(--border)' }} className="mx-auto mb-3" />
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No active agents yet</p>
+              <Link to="/agents">
+                <button
+                  className="mt-4 px-6 py-2 rounded-xl text-sm font-semibold"
+                  style={{ background: 'var(--accent)', color: '#000' }}
+                >
+                  Purchase Your First Agent
+                </button>
               </Link>
             </div>
-
-            {activePurchases.length === 0 ? (
-              <div
-                className="rounded-xl p-8 text-center"
-                style={{ background: 'var(--bg-panel)', border: '1px dashed var(--border)' }}
-              >
-                <Bot size={40} style={{ color: 'var(--border)' }} className="mx-auto mb-3" />
-                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>No active agents yet</p>
-                <Link to="/agents">
-                  <button
-                    className="mt-4 px-6 py-2 rounded-xl text-sm font-semibold"
-                    style={{ background: 'var(--accent)', color: '#000' }}
+          ) : (
+            <div className="grid sm:grid-cols-2 gap-3">
+              {[1, 2, 3, 4].map(tier => {
+                const tierPurchases = activePurchases.filter(p => p.agent_tier === tier)
+                if (tierPurchases.length === 0) return null
+                const mainW = wallets.find(w => w.wallet_type === 'main' && w.agent_tier === tier)
+                const repW = wallets.find(w => w.wallet_type === 'repurchase' && w.agent_tier === tier)
+                const rep = repByTier[tier]
+                const repBal = rep ? rep.reserve : parseFloat(repW?.balance || 0)
+                // Target the real threshold (price + platform fee), not the bare price.
+                const repTarget = rep ? rep.threshold : TIER_PRICES[tier]
+                const progress = rep ? rep.progress_percent : Math.min(100, (repBal / TIER_PRICES[tier]) * 100)
+                return (
+                  <div
+                    key={tier}
+                    className="rounded-xl p-4"
+                    style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}
                   >
-                    Purchase Your First Agent
-                  </button>
-                </Link>
-              </div>
-            ) : (
-              <div className="grid sm:grid-cols-2 gap-3">
-                {[1, 2, 3, 4].map(tier => {
-                  const tierPurchases = activePurchases.filter(p => p.agent_tier === tier)
-                  if (tierPurchases.length === 0) return null
-                  const mainW = wallets.find(w => w.wallet_type === 'main' && w.agent_tier === tier)
-                  const repW = wallets.find(w => w.wallet_type === 'repurchase' && w.agent_tier === tier)
-                  const rep = repByTier[tier]
-                  const repBal = rep ? rep.reserve : parseFloat(repW?.balance || 0)
-                  // Target the real threshold (price + platform fee), not the bare price.
-                  const repTarget = rep ? rep.threshold : TIER_PRICES[tier]
-                  const progress = rep ? rep.progress_percent : Math.min(100, (repBal / TIER_PRICES[tier]) * 100)
-                  return (
-                    <div
-                      key={tier}
-                      className="rounded-xl p-4"
-                      style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}
-                    >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
-                            style={{ background: 'rgba(var(--accent-rgb),0.15)', color: 'var(--accent)' }}
-                          >
-                            A{tier}
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-white">{TIER_NAMES[tier]}</p>
-                            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>${TIER_PRICES[tier]} — {tierPurchases.length}x active</p>
-                          </div>
-                        </div>
-                        <span
-                          className="text-xs px-2 py-0.5 rounded-full font-medium"
-                          style={{ background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)' }}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold"
+                          style={{ background: 'rgba(var(--accent-rgb),0.15)', color: 'var(--accent)' }}
                         >
-                          ACTIVE
-                        </span>
-                      </div>
-                      <div className="space-y-2 text-xs">
-                        <div className="flex justify-between" style={{ color: 'var(--text-secondary)' }}>
-                          <span>Main Wallet</span>
-                          <span className="text-white font-medium">${parseFloat(mainW?.balance || 0).toFixed(2)}</span>
+                          A{tier}
                         </div>
                         <div>
-                          <div className="flex justify-between mb-1" style={{ color: 'var(--text-secondary)' }}>
-                            <span>Repurchase Reserve</span>
-                            <span className="text-white">${repBal.toFixed(2)} / ${repTarget.toFixed(2)}</span>
-                          </div>
-                          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
-                            <div
-                              className="h-full rounded-full transition-all"
-                              style={{ width: `${progress}%`, background: 'linear-gradient(90deg, var(--accent), var(--accent-glow))' }}
-                            />
-                          </div>
+                          <p className="text-sm font-semibold text-white">{TIER_NAMES[tier]}</p>
+                          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>${TIER_PRICES[tier]} — {tierPurchases.length}x active</p>
+                        </div>
+                      </div>
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full font-medium"
+                        style={{ background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)' }}
+                      >
+                        ACTIVE
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex justify-between" style={{ color: 'var(--text-secondary)' }}>
+                        <span>Main Wallet</span>
+                        <span className="text-white font-medium">${parseFloat(mainW?.balance || 0).toFixed(2)}</span>
+                      </div>
+                      <div>
+                        <div className="flex justify-between mb-1" style={{ color: 'var(--text-secondary)' }}>
+                          <span>Repurchase Reserve</span>
+                          <span className="text-white">${repBal.toFixed(2)} / ${repTarget.toFixed(2)}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--border)' }}>
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{ width: `${progress}%`, background: 'linear-gradient(90deg, var(--accent), var(--accent-glow))' }}
+                          />
                         </div>
                       </div>
                     </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Quick Actions */}
-          <div>
-            <h2 className="font-semibold text-white mb-4">Quick Actions</h2>
-            <div className="space-y-2">
-              {[
-                { to: '/agents', icon: Bot, label: 'Buy Agent', sub: 'Purchase a tier', color: '#9B59B6' },
-              ].map(({ to, icon: Icon, label, sub, color }) => (
-                <Link key={to} to={to}>
-                  <div
-                    className="flex items-center gap-3 p-3 rounded-xl transition-all"
-                    style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}
-                    onMouseEnter={e => e.currentTarget.style.borderColor = `color-mix(in srgb, ${color} 60%, transparent)`}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
-                  >
-                    <div
-                      className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                      style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
-                    >
-                      <Icon size={18} style={{ color }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white">{label}</p>
-                      <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{sub}</p>
-                    </div>
-                    <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
                   </div>
-                </Link>
-              ))}
+                )
+              })}
             </div>
-          </div>
+          )}
         </div>
 
         {/* Cumulative Income (all-time running total) */}

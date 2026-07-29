@@ -2,50 +2,69 @@ import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { Users, TrendingUp, DollarSign, Zap, Activity, RefreshCw, Flame, PiggyBank, Layers } from 'lucide-react'
-import { Link } from 'react-router-dom'
-import { formatDateTimeIST } from '../../utils/datetime'
+import { Users, TrendingUp, DollarSign, Zap, Activity, RefreshCw, Flame, PiggyBank, Layers, Wallet, ExternalLink, AlertTriangle } from 'lucide-react'
+import { addressExplorerUrl, shortenTxHash } from '../../utils/explorer'
+
+// Only the Repurchase Reserve wallet ever broadcasts its own transaction (the
+// auto-repurchase settlement, signed by REPURCHASE_SIGNER_PRIVATE_KEY per
+// core/onchain.py) — so it's the only one that needs BNB for gas. Platform Fee
+// and Admin Income are receive-only addresses (no signer key), so a $0 BNB
+// balance there is normal, not a problem.
+const GAS_WARN_BELOW = 0.01
+const NEEDS_GAS_KEY = 'repurchase_reserve'
+// How often to re-poll live on-chain balances while this page stays open.
+const WALLET_POLL_MS = 20_000
 
 export default function AdminDashboard() {
   const [users, setUsers] = useState([])
-  const [transactions, setTransactions] = useState([])
-  const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0, platform_profit: 0 })
+  const [treasury, setTreasury] = useState({ account_balance: 0, total_generated: 0, total_sent: 0, total_invested: 0, total_deposited: 0, platform_profit: 0, admin_income: 0 })
   const [metrics, setMetrics] = useState({
     revenue: { core_income: 0, stream_payout: 0, boost_payout: 0, sponsor_share: 0, total_gross_commissions: 0, total_credited_to_wallets: 0, software_fees: 0 },
     repurchase: { count: 0, volume: 0, platform_fee: 0, reserve_held: 0 },
   })
+  const [onchainWallets, setOnchainWallets] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     Promise.all([
       api.get('/admin/users'),
-      api.get('/admin/transactions'),
       api.get('/admin/treasury/summary'),
       // Revenue-engine + auto-repurchase aggregates. Non-fatal — never blank the page.
       api.get('/admin/metrics').catch(() => ({ data: null })),
-    ]).then(([u, t, s, m]) => {
+    ]).then(([u, s, m]) => {
       setUsers(u.data)
-      setTransactions(t.data)
       setTreasury(s.data)
       if (m.data) setMetrics(m.data)
     }).catch(() => toast.error('Failed to load admin data')).finally(() => setLoading(false))
   }, [])
 
+  // Live on-chain wallet balances poll on their own timer, independent of the
+  // rest of the page — these are the numbers that actually move while an admin
+  // is watching (gas draining, a repurchase settlement landing), so they
+  // shouldn't need a manual refresh to stay current. Non-fatal: a failed poll
+  // just keeps showing the last good balances instead of blanking the section.
+  useEffect(() => {
+    let cancelled = false
+
+    const fetchWallets = () => {
+      api.get('/admin/treasury/onchain-wallets')
+        .then(w => {
+          if (cancelled) return
+          setOnchainWallets(w.data.wallets || [])
+        })
+        .catch(() => {})
+    }
+
+    fetchWallets()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') fetchWallets()
+    }, WALLET_POLL_MS)
+
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
+
   const activeUsers = users.filter(u => u.is_active).length
   const frozenUsers = users.filter(u => !u.is_active).length
-
-  const recentTx = transactions.slice(0, 8)
-
-  const txTypeBreakdown = transactions.reduce((acc, t) => {
-    acc[t.transaction_type] = (acc[t.transaction_type] || 0) + 1
-    return acc
-  }, {})
-
-  const TOP_TX_COLOR = {
-    DEPOSIT: 'var(--accent)', CORE_INCOME: 'var(--accent)', STREAM_PAYOUT: '#3498DB',
-    BOOST_PAYOUT: '#9B59B6', WITHDRAWAL: '#FF4D6A', TRANSFER_OUT: '#FF4D6A',
-    REPURCHASE_HOLD: '#FFB547', AGENT_PURCHASE: '#FF4D6A', SPONSOR_MILESTONE_INCOME: 'var(--accent)',
-  }
 
   if (loading) return (
     <Layout>
@@ -64,10 +83,11 @@ export default function AdminDashboard() {
         </div>
 
         {/* Key Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
             { label: 'Total Users', val: users.length, sub: `${activeUsers} active`, icon: Users, color: '#3498DB' },
             { label: 'Platform Profit', val: `$${(treasury.platform_profit || 0).toFixed(2)}`, sub: 'Fees + residuals + retained', icon: DollarSign, color: '#FFB547' },
+            { label: 'Admin Income', val: `$${(treasury.admin_income || 0).toFixed(2)}`, sub: "1% Boost cut → Admin Income Wallet", icon: Wallet, color: '#9B59B6' },
             { label: 'Total Invested', val: `$${treasury.total_invested.toFixed(2)}`, sub: 'By users in the platform', icon: TrendingUp, color: 'var(--accent-glow)' },
           ].map(({ label, val, sub, icon: Icon, color }) => (
             <div key={label} className="rounded-xl p-5" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
@@ -84,63 +104,53 @@ export default function AdminDashboard() {
           ))}
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Transaction Breakdown */}
-          <div className="rounded-xl p-5" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
-            <h2 className="font-semibold text-white mb-4">Transaction Breakdown</h2>
-            <div className="space-y-2">
-              {Object.entries(txTypeBreakdown)
-                .sort(([, a], [, b]) => b - a)
-                .slice(0, 8)
-                .map(([type, count]) => {
-                  const total = transactions.length
-                  const pct = Math.round((count / total) * 100)
-                  const color = TOP_TX_COLOR[type.toUpperCase()] || 'var(--text-secondary)'
-                  return (
-                    <div key={type}>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span style={{ color: 'var(--text-secondary)' }}>{type.replace(/_/g, ' ')}</span>
-                        <span style={{ color }}>{count} ({pct}%)</span>
-                      </div>
-                      <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--bg-surface)' }}>
-                        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
-                      </div>
+        {/* Platform Wallets — live on-chain balances */}
+        <div>
+          <h2 className="font-semibold text-white mb-4">Platform Wallets — Live On-Chain Balances</h2>
+          <div className="grid sm:grid-cols-3 gap-4">
+            {onchainWallets.map(w => {
+              const lowGas = w.key === NEEDS_GAS_KEY && w.bnb_balance !== null && w.bnb_balance < GAS_WARN_BELOW
+              return (
+                <div key={w.key} className="rounded-xl p-5" style={{ background: 'var(--bg-panel)', border: `1px solid ${lowGas ? '#FF4D6A' : 'var(--border)'}` }}>
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--accent) 18%, transparent)' }}>
+                      <Wallet size={18} style={{ color: 'var(--accent)' }} />
                     </div>
-                  )
-                })}
-            </div>
-          </div>
-
-          {/* Recent Transactions */}
-          <div className="lg:col-span-2 rounded-xl overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
-            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
-              <h2 className="font-semibold text-white">Recent Transactions</h2>
-              <Link to="/admin/transactions" className="text-xs" style={{ color: 'var(--accent)' }}>View All →</Link>
-            </div>
-            <div className="row-divide">
-              {recentTx.map(tx => {
-                const ttype = (tx.transaction_type || '').toUpperCase()
-                const color = TOP_TX_COLOR[ttype] || 'var(--text-secondary)'
-                const isNeg = ['WITHDRAWAL', 'TRANSFER_OUT', 'PURCHASE', 'AGENT_PURCHASE', 'SOFTWARE_FEE'].includes(ttype)
-                return (
-                  <div key={tx.id} className="flex items-center gap-3 px-5 py-3">
-                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white truncate">
-                        {tx.transaction_type.replace(/_/g, ' ')}
-                        <span style={{ color: 'var(--text-secondary)' }}> · @{tx.username || `user${tx.user_id}`}</span>
-                      </p>
-                      <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                        {tx.notes ? `${tx.notes} · ` : ''}{formatDateTimeIST(tx.created_at)}
-                      </p>
-                    </div>
-                    <p className="text-sm font-semibold flex-shrink-0" style={{ color: isNeg ? '#FF4D6A' : 'var(--accent)' }}>
-                      {isNeg ? '−' : '+'}${Math.abs(parseFloat(tx.amount)).toFixed(2)}
-                    </p>
+                    {w.address && (
+                      <a
+                        href={addressExplorerUrl(w.address)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs hover:underline"
+                        style={{ color: 'var(--text-muted)' }}
+                        title={w.address}
+                      >
+                        {shortenTxHash(w.address)}
+                        <ExternalLink size={11} />
+                      </a>
+                    )}
                   </div>
-                )
-              })}
-            </div>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{w.label}</p>
+
+                  {w.error ? (
+                    <p className="text-sm mt-1" style={{ color: '#FF4D6A' }}>{w.error}</p>
+                  ) : (
+                    <>
+                      <p className="text-xl font-bold text-white mt-0.5">${(w.usdt_balance ?? 0).toFixed(2)} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>USDT</span></p>
+                      <div className="flex items-center gap-1 mt-1">
+                        {lowGas && <AlertTriangle size={13} style={{ color: '#FF4D6A' }} />}
+                        <p className="text-xs" style={{ color: lowGas ? '#FF4D6A' : 'var(--text-muted)' }}>
+                          {(w.bnb_balance ?? 0).toFixed(4)} BNB gas{lowGas ? ' — top up soon or settlements will fail to broadcast' : ''}
+                        </p>
+                      </div>
+                    </>
+                  )}
+                  {w.key !== NEEDS_GAS_KEY && (
+                    <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>Receive-only — no gas needed</p>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
 

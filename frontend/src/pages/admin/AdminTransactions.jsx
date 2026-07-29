@@ -21,12 +21,16 @@ const TX_COLOR = {
 }
 const INCOME = ['core_income', 'stream_payout', 'boost_payout', 'sponsor_milestone_income', 'transfer_in', 'deposit']
 const EXPENSE = ['withdrawal', 'transfer_out', 'purchase', 'agent_purchase']
+// Still moving through the platform, not yet delivered to the user's real wallet —
+// same definition as the user-facing Transactions page (see PENDING there).
+const PENDING = ['repurchase_hold', 'stream_payout', 'boost_payout', 'sponsor_milestone_income']
 
 export default function AdminTransactions() {
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('all')
+  const [filterStatus, setFilterStatus] = useState('all')
   const [page, setPage] = useState(1)
 
   useEffect(() => {
@@ -40,6 +44,11 @@ export default function AdminTransactions() {
 
   const filtered = transactions.filter(t => {
     if (filterType !== 'all' && t.transaction_type !== filterType) return false
+    if (filterStatus !== 'all') {
+      const isPending = PENDING.includes(t.transaction_type)
+      if (filterStatus === 'Pending' && !isPending) return false
+      if (filterStatus === 'Completed' && isPending) return false
+    }
     if (search) {
       const q = search.toLowerCase()
       const hay = `${t.user_id} ${t.username || ''} ${t.transaction_type} ${t.notes || ''} ${t.tx_hash || ''}`.toLowerCase()
@@ -93,17 +102,28 @@ export default function AdminTransactions() {
               <option value="all">All Types</option>
               {txTypes.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
             </select>
+            <select
+              value={filterStatus}
+              onChange={e => { setFilterStatus(e.target.value); setPage(1) }}
+              className="px-3 py-2 rounded-xl text-sm outline-none"
+              style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+            >
+              <option value="all">All Status</option>
+              <option value="Completed">Completed</option>
+              <option value="Pending">Pending</option>
+            </select>
           </div>
         </div>
 
         <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           <div
-            className="hidden sm:grid grid-cols-7 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+            className="hidden sm:grid grid-cols-8 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
             style={{ background: 'var(--bg-surface)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}
           >
             <span className="col-span-2">Type</span>
             <span>User</span>
             <span>Tier</span>
+            <span>Status</span>
             <span>Date</span>
             <span>Tx Hash</span>
             <span className="text-right">Amount</span>
@@ -122,8 +142,9 @@ export default function AdminTransactions() {
               const sign = isNeg ? '−' : isIncome ? '+' : ''
               const amountColor = isNeg ? '#FF4D6A' : isIncome ? 'var(--accent)' : 'var(--text-secondary)'
               const color = TX_COLOR[ttype] || 'var(--text-secondary)'
+              const isPending = PENDING.includes(ttype)
               return (
-                <div key={tx.id} className="flex sm:grid sm:grid-cols-7 items-center gap-3 px-5 py-3">
+                <div key={tx.id} className="flex sm:grid sm:grid-cols-8 items-center gap-3 px-5 py-3">
                   <div className="col-span-2 flex items-center gap-2 min-w-0">
                     <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
                     <div className="min-w-0">
@@ -138,6 +159,18 @@ export default function AdminTransactions() {
                   </span>
                   <span className="hidden sm:block text-xs" style={{ color: 'var(--text-secondary)' }}>
                     {tx.agent_tier === 0 ? 'Acct' : `A${tx.agent_tier}`}
+                  </span>
+                  <span className="hidden sm:block">
+                    <span
+                      className="text-xs px-2 py-0.5 rounded-full font-medium"
+                      style={
+                        isPending
+                          ? { background: 'rgba(255,181,71,0.14)', color: '#FFB547' }
+                          : { background: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)' }
+                      }
+                    >
+                      {isPending ? 'Pending' : 'Completed'}
+                    </span>
                   </span>
                   <span className="hidden sm:block text-xs" style={{ color: 'var(--text-muted)' }}>
                     {formatDateIST(tx.created_at)}

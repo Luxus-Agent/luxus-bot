@@ -6,8 +6,9 @@ import api from '../../api/client'
 import toast from 'react-hot-toast'
 import {
   Search, UserX, UserCheck, ChevronDown, ChevronUp, ShieldCheck,
-  Bot, Wallet, TrendingUp, Trash2
+  Bot, Wallet, TrendingUp, Trash2, ExternalLink
 } from 'lucide-react'
+import { addressExplorerUrl, shortenTxHash } from '../../utils/explorer'
 
 const PAGE_SIZE = 10
 
@@ -211,7 +212,7 @@ export default function AdminUsers() {
 
                   {/* Expanded summary (regular users only) */}
                   {!isAdminRow && expanded === user.id && (
-                    <div className="px-5 pb-4" style={{ background: '#0A0D12' }}>
+                    <div className="px-5 pb-4" style={{ background: 'var(--bg-surface)' }}>
                       {!summary ? (
                         <div className="py-4 flex justify-center">
                           <div className="w-6 h-6 rounded-full border-2 border-transparent animate-spin" style={{ borderTopColor: 'var(--accent)' }} />
@@ -225,11 +226,25 @@ export default function AdminUsers() {
                               <p className="text-sm font-semibold text-white">{summary.agents_count}</p>
                             </div>
                           </div>
-                          <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+                          <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5 min-w-0" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
                             <Wallet size={16} style={{ color: '#FFB547' }} className="flex-shrink-0" />
-                            <div>
-                              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Account Balance</p>
-                              <p className="text-sm font-semibold text-white">${summary.account_balance.toFixed(2)}</p>
+                            <div className="min-w-0">
+                              <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Wallet Address</p>
+                              {summary.wallet_address ? (
+                                <a
+                                  href={addressExplorerUrl(summary.wallet_address)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-sm font-semibold hover:underline"
+                                  style={{ color: 'var(--accent)' }}
+                                  title={summary.wallet_address}
+                                >
+                                  {shortenTxHash(summary.wallet_address)}
+                                  <ExternalLink size={11} />
+                                </a>
+                              ) : (
+                                <p className="text-sm font-semibold" style={{ color: 'var(--text-muted)' }}>Not set</p>
+                              )}
                             </div>
                           </div>
                           <div className="rounded-lg px-3 py-2.5 flex items-center gap-2.5" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>

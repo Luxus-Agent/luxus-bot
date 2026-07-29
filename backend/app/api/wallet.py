@@ -15,7 +15,7 @@ from app.core.wallet_ops import resolve_tx_hashes
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
 from app.models.user import User
-from app.models.wallet import Wallet
+from app.models.wallet import Wallet, WalletType
 from app.models.wallet_address import WalletAddress
 from app.schemas.agent import (
     TransactionOut,
@@ -72,6 +72,19 @@ def get_transactions(
 # ledger (these rows), not from Wallet balances. Sourced from wallet_ops so the
 # definition of "income" stays in one place across the codebase.
 from app.core.wallet_ops import LEDGER_INCOME_TYPES as INCOME_TYPES
+from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE
+
+# Core commission's on-chain "main" share (70%) is paid directly, buyer → upline,
+# at purchase time (see mirror_onchain_earning_split) — so it is Completed the
+# instant the CORE_INCOME row is written. Stream/Boost's main share is credited
+# to an internal MAIN wallet instead (see credit_wallet) and only becomes
+# Completed once an admin payout run actually debits it.
+STREAM_BOOST_TYPES = (
+    TransactionType.STREAM_PAYOUT,
+    TransactionType.BOOST_PAYOUT,
+    TransactionType.SPONSOR_MILESTONE_INCOME,
+)
+MAIN_SHARE_RATE = Decimal("1") - REPURCHASE_RATE - SOFTWARE_FEE_RATE  # 70%
 
 # Money that has left the user (real outflows). agent_purchase covers the on-chain
 # pack buys; the rest are legacy deposit-first flows kept for historical rows.
@@ -96,6 +109,14 @@ def earnings_summary(
     balances: on the on-chain rail commissions are paid to users' own wallets
     on-chain and the internal wallets stay $0, so a wallet-balance figure would
     always read $0 even after real income.
+
+    Also splits that same total into `completed` (money that has actually left
+    the platform for the user — Core's 70% on-chain share, plus any Stream/Boost
+    share an admin payout has since debited) vs `pending` (money still moving
+    through the platform: the repurchase reserve building toward the next
+    auto-repurchase, and any Stream/Boost main-wallet share not yet paid out).
+    completed + pending always equals total_earned minus the platform's software
+    fee share (never the user's money either way).
     """
     income_rows = (
         db.query(Transaction.transaction_type, func.coalesce(func.sum(Transaction.amount), 0))
@@ -119,10 +140,37 @@ def earnings_summary(
     total_earned = float(round(sum((Decimal(str(a)) for _, a in income_rows), Decimal("0")), 4))
     total_spent = float(round(Decimal(str(expense_rows or 0)), 4))
 
+    gross_core = Decimal(str(by_type.get(TransactionType.CORE_INCOME.value, 0)))
+    gross_stream_boost = sum(
+        (Decimal(str(by_type.get(t.value, 0))) for t in STREAM_BOOST_TYPES), Decimal("0")
+    )
+
+    reserve_total = (
+        db.query(func.coalesce(func.sum(Wallet.balance), 0))
+        .filter(Wallet.user_id == current_user.id, Wallet.wallet_type == WalletType.REPURCHASE)
+        .scalar()
+    )
+    main_total = (
+        db.query(func.coalesce(func.sum(Wallet.balance), 0))
+        .filter(Wallet.user_id == current_user.id, Wallet.wallet_type == WalletType.MAIN)
+        .scalar()
+    )
+    pending_reserve = Decimal(str(reserve_total or 0))
+    pending_payout = Decimal(str(main_total or 0))
+
+    completed_core = gross_core * MAIN_SHARE_RATE
+    # Stream/Boost's 70% share was credited to the MAIN wallet at earn time; any of
+    # it no longer sitting there has since been paid out by an admin payout run.
+    paid_out_stream_boost = max(gross_stream_boost * MAIN_SHARE_RATE - pending_payout, Decimal("0"))
+    completed = completed_core + paid_out_stream_boost
+
     return {
-        "total_earned": total_earned,   # lifetime Core/Stream/Boost income
+        "total_earned": total_earned,   # lifetime Core/Stream/Boost income (gross)
         "total_spent": total_spent,     # lifetime outflows (agent purchases, etc.)
         "by_type": by_type,             # income broken down by transaction type
+        "completed": float(round(completed, 4)),           # already delivered to the user
+        "pending_reserve": float(round(pending_reserve, 4)),  # building toward next auto-repurchase
+        "pending_payout": float(round(pending_payout, 4)),    # Stream/Boost, awaiting next payout run
     }
 
 

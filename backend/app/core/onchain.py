@@ -27,7 +27,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Minimal ERC20 ABI — only the one function this module calls.
+# Minimal ERC20 ABI — only the functions this module calls.
 _ERC20_TRANSFER_ABI = [
     {
         "constant": False,
@@ -37,6 +37,15 @@ _ERC20_TRANSFER_ABI = [
         ],
         "name": "transfer",
         "outputs": [{"name": "", "type": "bool"}],
+        "type": "function",
+    },
+]
+_ERC20_BALANCE_ABI = [
+    {
+        "constant": True,
+        "inputs": [{"name": "_owner", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "balance", "type": "uint256"}],
         "type": "function",
     },
 ]
@@ -118,3 +127,47 @@ def send_repurchase_settlement(amount: Decimal, tier: int, reference: str) -> st
             tier, amount, reference,
         )
         return None
+
+
+def get_wallet_onchain_balances(address: str) -> dict:
+    """
+    Read-only lookup of a wallet's live on-chain USDT balance and native BNB
+    (gas) balance — used by the admin treasury view to show what's actually
+    sitting in PLATFORM_FEE_WALLET / ADMIN_INCOME_WALLET / REPURCHASE_RESERVE_WALLET,
+    since those are on-chain addresses with no internal DB row to read.
+
+    Never raises: on a bad address, unreachable RPC, or any other failure this
+    returns usdt/bnb as None with `error` set, so a single unreachable wallet
+    can't break the admin dashboard.
+    """
+    import re
+
+    address = (address or "").strip()
+    if not address:
+        return {"address": None, "usdt": None, "bnb": None, "error": "not configured"}
+    if not re.match(_BEP20_ADDR_RE_SOURCE, address):
+        return {"address": address, "usdt": None, "bnb": None, "error": "invalid address"}
+
+    try:
+        from web3 import Web3
+
+        w3 = Web3(Web3.HTTPProvider(settings.BSC_RPC_URL))
+        if not w3.is_connected():
+            return {"address": address, "usdt": None, "bnb": None, "error": "RPC unreachable"}
+
+        checksum = Web3.to_checksum_address(address)
+
+        token = w3.eth.contract(
+            address=Web3.to_checksum_address(settings.USDT_CONTRACT),
+            abi=_ERC20_BALANCE_ABI,
+        )
+        raw_usdt = token.functions.balanceOf(checksum).call()
+        usdt = Decimal(raw_usdt) / (Decimal(10) ** settings.USDT_DECIMALS)
+
+        raw_bnb = w3.eth.get_balance(checksum)
+        bnb = Decimal(raw_bnb) / (Decimal(10) ** 18)
+
+        return {"address": address, "usdt": usdt, "bnb": bnb, "error": None}
+    except Exception as exc:
+        logger.exception("onchain: balance lookup failed for %s", address)
+        return {"address": address, "usdt": None, "bnb": None, "error": str(exc)}
