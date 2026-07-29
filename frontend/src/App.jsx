@@ -53,7 +53,11 @@ export default function App() {
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/agents" element={<ProtectedRoute><AgentPurchase /></ProtectedRoute>} />
           <Route path="/transactions" element={<ProtectedRoute><Transactions /></ProtectedRoute>} />
-          <Route path="/revenue-engine" element={<ProtectedRoute><RevenueEngine /></ProtectedRoute>} />
+          <Route path="/revenue-engine" element={
+            // <ProtectedRoute>
+              <RevenueEngine />
+          // </ProtectedRoute>
+          } />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
           {/* Admin routes */}
