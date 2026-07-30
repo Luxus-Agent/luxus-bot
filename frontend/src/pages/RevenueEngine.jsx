@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
-import { CoreExplainerDiagram, CoreHalfChain } from '../components/CoreRoutingViz'
+import { CoreExplainerDiagram, CoreHalfChain, CoreActualResult } from '../components/CoreRoutingViz'
+import { tierDisplayName } from '../utils/agentTiers'
 
 // Same simulation as the admin "Revenue Engines" page's Core tab, scoped to
 // the logged-in user — no username field, since it always previews the
@@ -43,7 +44,7 @@ function UserCoreSimulator() {
               ? { background: 'rgba(var(--accent-rgb),0.18)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb),0.5)' }
               : { background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
           >
-            Agent {t}
+            {tierDisplayName(t)}
           </button>
         ))}
       </div>
@@ -52,10 +53,14 @@ function UserCoreSimulator() {
       {error && <p className="text-xs mb-4" style={{ color: '#FF4D6A' }}>{error}</p>}
 
       {result && !loading && (
-        <div className="grid md:grid-cols-2 gap-4">
-          <CoreHalfChain title={`First 30% Half — if you buy Agent ${result.buyer_tier}`} half={result.half1} />
-          <CoreHalfChain title="Second 30% Half" half={result.half2} />
-        </div>
+        result.actual ? (
+          <CoreActualResult buyer={result.buyer} tier={result.buyer_tier} recipients={result.recipients} />
+        ) : (
+          <div className="grid md:grid-cols-2 gap-4">
+            <CoreHalfChain title={`First 30% Half — if you buy ${tierDisplayName(result.buyer_tier)}`} half={result.half1} />
+            <CoreHalfChain title="Second 30% Half" half={result.half2} />
+          </div>
+        )
       )}
     </div>
   )

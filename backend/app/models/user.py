@@ -30,13 +30,42 @@ class User(Base):
     sponsor_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # How many times this user has been TARGETED as a Core recipient (sponsor or
-    # supreme). Incremented on every targeting — whether the amount is kept (odd)
-    # or passed up (even) — so the odd/even alternation is preserved. Counting
-    # only kept credits (the old behaviour) left a recipient stuck on "even"
-    # forever after their first pass-up.
-    core_route_count: Mapped[int] = mapped_column(
+    # supreme), tracked SEPARATELY per agent tier — a tier-1 ($11) targeting and a
+    # tier-2 ($22) targeting must not share the same odd/even alternation, since
+    # they're independent purchase streams. Incremented on every targeting —
+    # whether the amount is kept (odd) or passed up (even) — so the alternation
+    # is preserved. Counting only kept credits (the old behaviour) left a
+    # recipient stuck on "even" forever after their first pass-up.
+    core_route_count_tier1: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    core_route_count_tier2: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    core_route_count_tier3: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    core_route_count_tier4: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
+    _CORE_ROUTE_COUNT_FIELDS = {
+        1: "core_route_count_tier1",
+        2: "core_route_count_tier2",
+        3: "core_route_count_tier3",
+        4: "core_route_count_tier4",
+    }
+
+    def get_core_route_count(self, tier: int) -> int:
+        """Current targeting count for `tier`'s odd/even alternation (0 if never targeted)."""
+        return getattr(self, self._CORE_ROUTE_COUNT_FIELDS[tier]) or 0
+
+    def increment_core_route_count(self, tier: int) -> int:
+        """Persist +1 to `tier`'s counter and return the new value."""
+        field = self._CORE_ROUTE_COUNT_FIELDS[tier]
+        new_value = (getattr(self, field) or 0) + 1
+        setattr(self, field, new_value)
+        return new_value
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)

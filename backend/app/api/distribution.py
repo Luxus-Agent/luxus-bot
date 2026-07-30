@@ -506,8 +506,14 @@ def pack_purchase(
             detail=f"Purchase Agent {tier - 1} before Agent {tier}.",
         )
 
-    # Advance the Core odd/even counter at purchase-creation time (mutate_counter=True).
-    split = compute_pack_split(db, buyer, tier, price, mutate_counter=True)
+    # Peek (never mutate) the Core odd/even split here — this just decides who the
+    # buyer's wallet pays on-chain. The counter only advances for real on pack/status
+    # SUCCESS (see below), so a failed/abandoned on-chain attempt (wallet rejection,
+    # insufficient gas, user cancels) can never permanently skew a real recipient's
+    # odd/even alternation. Since nothing else can change the same recipients' state
+    # in the short pack/purchase -> pack/status window, the settlement-time mutation
+    # reproduces this exact same decision.
+    split = compute_pack_split(db, buyer, tier, price, mutate_counter=False)
 
     recipients: list[dict] = []
 
@@ -680,6 +686,8 @@ def pack_status(
         )
 
     if status_val == "success":
+        from app.core.pack_payout import compute_pack_split
+
         if not payload.tx_hash or not _TXHASH_RE.match(payload.tx_hash):
             raise HTTPException(
                 status_code=400, detail="A valid tx_hash (0x + 64 hex) is required on success."
@@ -712,6 +720,14 @@ def pack_status(
                 payment_id=record.order_id,
                 activated_at=datetime.utcnow(),
             ))
+
+        # Now that the on-chain transfer actually succeeded, advance the Core
+        # odd/even counter for real (mutate_counter=True) — reproducing the exact
+        # same decision that was peeked at pack/purchase and already paid out
+        # on-chain (recipients_json). Deferred to here so a failed/abandoned
+        # attempt never consumes a real recipient's odd/even alternation.
+        record_price = Decimal(str(AGENT_TIER_PRICES[record.agent_tier]))
+        compute_pack_split(db, record.buyer, record.agent_tier, record_price, mutate_counter=True)
 
         # Mirror the on-chain money movement into the internal ledger for
         # REPORTING ONLY (transaction history + dashboard analytics). These rows

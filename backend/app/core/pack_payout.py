@@ -6,13 +6,21 @@ This computes the full 60/30/10 split for a single pack purchase (per the client
 
   Core Agent  — 60% of the price, routed to uplines as two equal 30% halves:
       – first  half → first  ELIGIBLE upline
-      – second half → next eligible upline above the first
+      – second half → next eligible upline above the first, or the first
+        upline again if there is no distinct second one (e.g. the buyer's
+        direct sponsor is Admin, who has no sponsor of their own) — the sole
+        eligible upline absorbs both halves rather than forfeiting the second
+        to platform profit
     "Eligible" = compression: the upline is active AND their highest active
-    purchased tier >= the buyer's tier (reuses proactive._is_eligible). Ineligible
-    or missing uplines are skipped via compression. Odd/even routing per eligible
-    recipient (User.core_route_count): odd → keep, even → pass up to the next
-    eligible upline. A half with no eligible recipient → folded into the platform
-    amount (company profit, per the Core rule).
+    purchased tier >= the buyer's tier (reuses proactive._is_eligible — Admin is
+    exempt from the tier-ownership half of that check). Ineligible or missing
+    uplines are skipped via compression. Odd/even routing per eligible recipient
+    (User.core_route_count_tierN, keyed by the BUYER's tier — a tier-1 purchase
+    and a tier-2 purchase targeting the same recipient alternate independently):
+    odd → keep, even → pass up to the next eligible upline. A half only folds
+    into the platform amount (company profit) when there is no eligible upline
+    at all (buyer has no sponsor, or the whole chain above them is
+    ineligible/frozen).
 
   Stream Agent — 30% of the price → the Stream matrix pool (per tier).
   Boost Agent  — 10% of the price → 9% to the Boost matrix pool (global, drawn down
@@ -27,8 +35,9 @@ The amounts here are the FULL on-chain amounts (they sum to the pack price) — 
 internal 70/20/10 wallet deductions are NOT applied on this rail, because nothing
 is credited to internal wallets; the buyer pays each recipient directly on-chain.
 
-This module never writes Wallet/Transaction rows. It optionally mutates
-User.core_route_count (when mutate_counter=True) to advance odd/even alternation.
+This module never writes Wallet/Transaction rows. It optionally mutates the
+recipient's per-tier User.core_route_count_tierN (when mutate_counter=True) to
+advance that tier's odd/even alternation.
 """
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
@@ -76,11 +85,10 @@ def _resolve_recipient(
         return None
 
     if mutate_counter:
-        primary.core_route_count = (primary.core_route_count or 0) + 1
-        count = primary.core_route_count
+        count = primary.increment_core_route_count(buyer_tier)
         db.flush()
     else:
-        count = (primary.core_route_count or 0) + 1  # peek without persisting
+        count = primary.get_core_route_count(buyer_tier) + 1  # peek without persisting
 
     if count % 2 == 1:
         return primary  # odd → keep
@@ -119,6 +127,13 @@ def compute_pack_split(
         _next_eligible_upline(db, _sponsor_of(db, first), buyer_tier)
         if first is not None else None
     )
+    # No DISTINCT second eligible upline above the first (e.g. the buyer's direct
+    # sponsor is Admin, who has no sponsor of their own) → the sole eligible
+    # upline absorbs both halves instead of forfeiting the second to platform
+    # profit. Runs through its own independent odd/even resolution below, same
+    # as any other targeting.
+    if first is not None and second is None:
+        second = first
 
     uplines: list[tuple[User, Decimal]] = []
     for primary, amount in ((first, first_half), (second, second_half)):

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { CoreExplainerDiagram, CoreHalfChain } from '../../components/CoreRoutingViz'
+import { CoreExplainerDiagram, CoreHalfChain, CoreActualResult } from '../../components/CoreRoutingViz'
+import { tierDisplayName } from '../../utils/agentTiers'
 
 const LEVEL_LABELS = { 1: 'Level 1 (3)', 2: 'Level 2 (9)', 3: 'Level 3 (27)' }
 
@@ -50,7 +51,7 @@ function CoreSimulator() {
           className="px-3 py-2.5 rounded-lg text-sm outline-none"
           style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
         >
-          {[1, 2, 3, 4].map(t => <option key={t} value={t}>Agent {t}</option>)}
+          {[1, 2, 3, 4].map(t => <option key={t} value={t}>{tierDisplayName(t)}</option>)}
         </select>
         <button
           onClick={run}
@@ -65,10 +66,14 @@ function CoreSimulator() {
       {error && <p className="text-xs mb-4" style={{ color: '#FF4D6A' }}>{error}</p>}
 
       {result && (
-        <div className="grid md:grid-cols-2 gap-4">
-          <CoreHalfChain title={`First 30% Half — @${result.buyer} buys Agent ${result.buyer_tier}`} half={result.half1} />
-          <CoreHalfChain title="Second 30% Half" half={result.half2} />
-        </div>
+        result.actual ? (
+          <CoreActualResult buyer={result.buyer} tier={result.buyer_tier} recipients={result.recipients} />
+        ) : (
+          <div className="grid md:grid-cols-2 gap-4">
+            <CoreHalfChain title={`First 30% Half — @${result.buyer} buys ${tierDisplayName(result.buyer_tier)}`} half={result.half1} />
+            <CoreHalfChain title="Second 30% Half" half={result.half2} />
+          </div>
+        )
       )}
     </div>
   )
@@ -92,7 +97,7 @@ function DownlineColumn({ title, color, members }) {
             >
               <span className="text-white font-medium">#{m.position} · @{m.username}</span>
               <div className="flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                <span>{m.highest_active_tier > 0 ? `Agent ${m.highest_active_tier}` : 'No agent'}</span>
+                <span>{m.highest_active_tier > 0 ? tierDisplayName(m.highest_active_tier) : 'No agent'}</span>
                 {!m.is_active && (
                   <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(255,77,106,0.12)', color: '#FF4D6A' }}>
                     FROZEN
@@ -398,13 +403,13 @@ function MatrixTab({ systemType, color, tiers, overview }) {
                 ? { background: `color-mix(in srgb, ${color} 18%, transparent)`, color, border: `1px solid color-mix(in srgb, ${color} 50%, transparent)` }
                 : { background: 'var(--bg-panel)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
             >
-              Agent {t}
+              {tierDisplayName(t)}
             </button>
           ))}
         </div>
       )}
       {tiers.length === 1 && (
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Boost runs a single global queue (always Agent 1) — no per-tier split.</p>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Boost runs a single global queue (always {tierDisplayName(1)}) — no per-tier split.</p>
       )}
       <div className="grid md:grid-cols-3 gap-4">
         {tierData.map(levelData => (

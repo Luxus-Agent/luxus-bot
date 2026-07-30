@@ -79,16 +79,20 @@ Every confirmed agent purchase triggers a **60 / 30 / 10 split** across three pa
 
 ### Agent Tiers & Max Payouts
 
-| Tier    | Base | Platform fee | Total cost | Core Agent | Stream Agent | Boost Agent |
-|---------|------|--------------|-----------|-----------|-------------|------------|
-| Agent 1 | $10  | $1   | **$11**  | $6.00     | $20.00      | $5.70      |
-| Agent 2 | $20  | $2   | **$22**  | $12.00    | $40.00      | $5.70      |
-| Agent 3 | $50  | $5   | **$55**  | $30.00    | $100.00     | $5.70      |
-| Agent 4 | $100 | $11  | **$111** | $60.00    | $200.00     | $5.70      |
+| Tier    | Display name | Base | Platform fee | Total cost | Core Agent | Stream Agent | Boost Agent |
+|---------|-------|------|--------------|-----------|-----------|-------------|------------|
+| Agent 1 | Trial  | $10  | $1   | **$11**  | $6.00     | $20.00      | $5.70      |
+| Agent 2 | Start  | $20  | $2   | **$22**  | $12.00    | $40.00      | $5.70      |
+| Agent 3 | Build  | $50  | $5   | **$55**  | $30.00    | $100.00     | $5.70      |
+| Agent 4 | Growth | $100 | $11  | **$111** | $60.00    | $200.00     | $5.70      |
 
 > The buyer pays **Total cost = Base + Platform fee**; the flat platform fee goes straight to the platform profit wallet and is **not** part of the 60/30/10 split (which runs off the **Base**). Applies to repurchase too.
 >
 > Boost runs a **single global queue** (always tier 1), so its payout does not scale with the purchased tier — the full Boost cycle is $0.60 + $1.50 + $3.60 = **$5.70** wallet for every tier.
+>
+> **"Agent 1"–"Agent 4"** is the internal identifier — the backend `pack_name`/tier number, unchanged in the
+> API and database. **Trial/Start/Build/Growth** are display-only names shown to users everywhere a tier
+> appears in the UI (`frontend/src/utils/agentTiers.js`) — nothing else about the tier changed.
 
 ---
 
@@ -105,20 +109,35 @@ that recipient keeps the amount or passes it up.
 - Uplines who bought a lower tier (or own no active agent, or are frozen) are
   **skipped** — the income compresses *past* them up the chain to the next
   eligible upline.
+- **Exception: Admin is exempt from the tier-ownership requirement** (still must
+  be active). `seed_admin.py` never gives the admin account an `AgentPurchase`,
+  so without this exemption admin — the root of every sponsor chain — could
+  never actually qualify to receive Core income.
 - **First 30%** → first eligible upline above the buyer.
-- **Second 30%** → next eligible upline above the first.
-- If **no eligible upline** exists for a half → retained by the platform
-  (realized profit) — **not** credited back to the buyer.
+- **Second 30%** → next eligible upline above the first — or **the first upline
+  again** if there's no distinct second one (e.g. the buyer's direct sponsor is
+  Admin, who has no sponsor of their own): the sole eligible upline absorbs
+  both halves rather than forfeiting the second to platform profit.
+- A half only folds into **platform profit** when there is genuinely no
+  eligible upline at all — the buyer has no sponsor, or every upline in the
+  entire chain is ineligible/frozen.
 
 > Example (`Admin $100 → A $100 → B $10 → C $10 → D $20 → E $100`): when **E buys
 > $100** (tier 4), uplines **D ($20), C ($10), B ($10) are all skipped** because
 > none bought the $100 tier; income lands on **A ($100)** and **Admin ($100)**.
 
-**2. Odd/Even rule** at each eligible recipient (tracked by `User.core_route_count`):
-- Each recipient has a targeting counter, incremented **every time they are targeted** — whether they keep the amount or pass it up.
+**2. Odd/Even rule** at each eligible recipient (tracked by `User.core_route_count_tierN`,
+one independent counter per agent tier — a tier-1 ($11) targeting and a tier-2 ($22)
+targeting of the same recipient alternate separately, never sharing parity):
+- Each recipient has a per-tier targeting counter, incremented **every time they are
+  targeted by a purchase of that tier** — whether they keep the amount or pass it up.
 - If the resulting count is **odd** → credited directly to their wallet.
 - If it is **even** → amount passes up to the next **eligible** upline above them (the pass-up is compressed too).
 - If no eligible upline exists for an even pass-up → the recipient keeps it.
+- The counter only advances for real on `pack/status` **success** — `pack/purchase` (order creation) only
+  *peeks* the same decision to build the recipient list the buyer's wallet pays on-chain. This matters
+  because a failed/abandoned on-chain attempt (wallet rejection, insufficient gas, user cancels) would
+  otherwise permanently skew a real recipient's alternation even though no money ever moved.
 
 > The counter increments on every targeting (not only on kept credits) so the alternation never gets stuck on "even" after a recipient's first pass-up. Compression applies to the Core Agent **only** — Stream and Boost matrices are unaffected.
 
@@ -362,13 +381,22 @@ GET /wallet/core-preview?tier=          → same Core simulation as the admin ve
                                            the logged-in user only (no username param)
 ```
 
-The Core simulator **peeks** at `User.core_route_count` (`+1`, never persisted) to resolve
-odd/even the same way `app/core/pack_payout.compute_pack_split` does at a real purchase, and
+The Core simulator **peeks** at the recipient's per-tier `User.core_route_count_tierN`
+(`+1`, never persisted) to resolve odd/even the same way
+`app/core/pack_payout.compute_pack_split` does at a real purchase, and
 additionally reports each hop's compression-skipped uplines (frozen / tier-too-low) for display.
 Shared simulation logic lives in `app/core/core_preview.py` (used by both the admin and user
 endpoints, so admin's arbitrary-username capability and the user's self-only capability never
 drift apart); the shared Core explainer diagram + routing-chain UI lives in
 `frontend/src/components/CoreRoutingViz.jsx`.
+
+If the target already **owns** the tier being previewed, the simulator instead returns the
+**actual recorded result** from that settled purchase (pulled from the real
+`PackPurchase.recipients_json`) rather than a hypothetical peek — a peek of an already-owned tier
+would otherwise answer "what if this purchase happened again right now," which diverges further
+from what actually happened every time anyone else's purchase advances the same recipients'
+counters. The frontend renders this as a flat "Credited to" list (`CoreActualResult`) instead of
+the two-half odd/even breakdown (`CoreHalfChain`) used for genuinely unowned, hypothetical tiers.
 
 The Core **downline odd/even table** (`get_downline_odd_even` in `core/core_preview.py`) is a
 different axis from the simulator above: instead of walking UP the sponsor chain to see who

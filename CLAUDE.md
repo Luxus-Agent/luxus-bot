@@ -25,6 +25,8 @@ frontend/src/
   context/AuthContext.jsx # login (token + /auth/me), logout
   hooks/useUsdtBalance.js # live on-chain USDT balance (wagmi balanceOf), silently repolls every 20s while connected
   components/CoreRoutingViz.jsx # shared Core explainer diagram + routing-chain UI (admin + user)
+  components/Logo.jsx    # brand mark (assets/logo.png) + theme-aware wordmark (assets/logo-text-dark/light.png)
+  utils/agentTiers.js    # tier -> display name (Trial/Start/Build/Growth) — display only, backend pack_name unchanged
   components/EarningsBreakdown.jsx # shared Completed/Pending/Fee breakdown rows — user Dashboard "Total Earnings"
                           # card + Transactions "Total In" tile (both click-to-expand); always foots to the total
   pages/RevenueEngine.jsx # user: self-scoped Core routing preview (no Stream/Boost — platform-wide)
@@ -53,9 +55,10 @@ backend/app/
 Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /distribution/pack/status` on success):
 
 - **Core 60%** → two 30% halves up the sponsor chain. Two rules **together, Core only**:
-  - **Compression:** an upline qualifies only if their highest active tier ≥ buyer's tier; lower/inactive/frozen are skipped (income compresses up).
-  - **Odd/even** (`User.core_route_count`, incremented every targeting): odd → keep, even → pass up to next eligible upline.
-  - No eligible upline / no valid BEP-20 address → folds into platform fee.
+  - **Compression:** an upline qualifies only if their highest active tier ≥ buyer's tier; lower/inactive/frozen are skipped (income compresses up). **Admin is exempt from the tier-ownership half of this check** (`_is_eligible` in `proactive.py`) — `seed_admin.py` never gives admin an `AgentPurchase`, so without the exemption admin could never qualify as the root Core recipient.
+  - **Odd/even** (`User.core_route_count_tierN`, one counter per agent tier, incremented every targeting by a purchase of that tier): odd → keep, even → pass up to next eligible upline. Counter only advances on `pack/status` **success**, not at `pack/purchase` order-creation — a failed/abandoned on-chain attempt never skews a real recipient's alternation.
+  - **Second half with no distinct upline above the first** (e.g. buyer's sponsor is Admin) → the first upline absorbs both halves instead of forfeiting the second to platform.
+  - No eligible upline at all / no valid BEP-20 address → folds into platform fee.
 - **Stream 30%** → per-tier 3×3 matrix. Re-entries are **dummy** (no payout). 10% sponsor share at L2/L3.
 - **Boost 10%** = **9% matrix + 1% admin income**. **Single global queue** (always tier 1). Re-entries are **real**.
 - **Wallet rule (70 / 20 / 10):** every income credit → 70% main + 20% per-tier repurchase reserve + 10% software fee.
@@ -98,8 +101,11 @@ filter on both `Transactions.jsx` and `AdminTransactions.jsx` — keep them in s
   see that module's docstring for why the reconstruction is exact, not heuristic.
 - **User** `/revenue-engine`: same Core simulator, **self-scoped only** (`GET /wallet/core-preview`,
   no username param) — no Stream/Boost tab (those queues are platform-wide, not per-user).
-- Core simulator/downline endpoints only **peek** at `core_route_count` (never persist) — safe to
-  run repeatedly. Shared logic: `core/core_preview.py`; shared UI: `frontend/src/components/CoreRoutingViz.jsx`.
+- Core simulator/downline endpoints only **peek** at the per-tier `core_route_count_tierN` (never persist) — safe to
+  run repeatedly. If the target already **owns** the previewed tier, returns the **actual recorded result** from
+  that settled purchase instead (a peek would otherwise diverge further from history every time anyone else's
+  purchase advances the same recipients' counters). Shared logic: `core/core_preview.py`; shared UI:
+  `frontend/src/components/CoreRoutingViz.jsx` (`CoreHalfChain` for hypothetical, `CoreActualResult` for settled).
 
 ## Conventions — YOU MUST
 
@@ -159,7 +165,7 @@ conda activate luxus && cd backend && uvicorn app.main:app --reload   # :8000, /
 # Frontend
 cd frontend && npm run dev                                            # :3000
 # Fresh DB: python create_tables.py && python seed_admin.py
-# Existing DB migrations: migrate_v14/v15/v17/v18/v19/v20/v21/v22.py; backfill_repurchase_reserve.py
+# Existing DB migrations: migrate_v14/v15/v17/v18/v19/v20/v21/v22/v23.py; backfill_repurchase_reserve.py
 ```
 
 - **Touch only what you must** — this is a financial system; keep changes scoped.

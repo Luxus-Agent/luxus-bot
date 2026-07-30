@@ -1,5 +1,6 @@
 import { Children, useEffect, useRef } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
+import { tierDisplayName } from '../utils/agentTiers'
 
 // Shared Core Agent (compression + odd/even) visualization pieces, used by
 // both the admin "Revenue Engines" page (any username) and the user-facing
@@ -195,59 +196,47 @@ function ChainPill({ label, tone }) {
   )
 }
 
-function SkipChain({ items }) {
-  if (!items.length) return null
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 mb-3">
-      {items.map(s => (
-        <div key={s.username} className="flex items-center gap-1.5">
-          <ChainPill label={`@${s.username}`} tone="skip" />
-          <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>✕ {s.reason}</span>
-          <ChevronRight size={12} style={{ color: 'var(--text-muted)' }} />
-        </div>
-      ))}
-    </div>
-  )
-}
-
 export function CoreHalfChain({ title, half }) {
   return (
     <div className="rounded-lg p-4" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
       <p className="text-xs font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>{title}</p>
 
-      <SkipChain items={half.compression_skipped} />
-
       {!half.candidate ? (
         <ChainPill label="No eligible upline — folds into platform profit" tone="platform" />
       ) : (
         <>
-          <div className="flex items-center gap-2 mb-3">
-            <ChainPill label={`@${half.candidate}`} tone="candidate" />
-            <span
-              className="text-xs px-2 py-0.5 rounded-full font-bold uppercase"
-              style={{
-                background: half.parity === 'odd' ? 'rgba(var(--accent-rgb),0.12)' : 'rgba(255,181,71,0.12)',
-                color: half.parity === 'odd' ? 'var(--accent)' : '#FFB547',
-              }}
-            >
-              {half.parity} (route #{half.route_count_after})
-            </span>
-          </div>
-          <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
-            {half.parity === 'odd' ? 'Keeps the amount.' : 'Passes it up (compressed) to the next eligible upline.'}
-          </p>
-
-          {half.parity === 'even' && <SkipChain items={half.passup_skipped} />}
-          {half.passup_fallback_to_candidate && (
-            <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>No eligible upline above — falls back to the candidate.</p>
-          )}
-
           <div className="flex items-center gap-2">
             <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Credited to:</span>
             <ChainPill label={`@${half.recipient}`} tone="kept" />
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+// Shown instead of CoreHalfChain when the target already owns this tier — the
+// real recorded result from that settled purchase, not a hypothetical peek
+// (which would diverge more and more as other purchases advance the same
+// recipients' odd/even counters over time).
+export function CoreActualResult({ buyer, tier, recipients }) {
+  return (
+    <div className="rounded-lg p-4" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+      <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+        Actual result — @{buyer} already bought {tierDisplayName(tier)}
+      </p>
+      <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+        This is the real recorded outcome, not a hypothetical preview.
+      </p>
+      <div className="flex flex-col gap-2">
+        {recipients.map(r => (
+          <div key={r.username} className="flex items-center gap-2">
+            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Credited to:</span>
+            <ChainPill label={`@${r.username}`} tone="kept" />
+            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>${r.amount}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

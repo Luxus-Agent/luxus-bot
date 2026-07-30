@@ -15,7 +15,7 @@ Compression format
          income lands on A ($100) and the next eligible upline (Admin, $100).
 
 The odd/even routing rule that pairs with this lives in `pack_payout.py`
-(via User.core_route_count).
+(via the recipient's per-tier User.core_route_count_tierN, keyed by buyer_tier).
 """
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -39,9 +39,14 @@ def _highest_active_tier(db: Session, user_id: int) -> int:
 
 def _is_eligible(db: Session, user: User | None, buyer_tier: int) -> bool:
     """A user qualifies for Core income only if they are active (not frozen) and
-    their highest active purchased tier covers the buyer's tier (compression)."""
+    their highest active purchased tier covers the buyer's tier (compression).
+    Admin is exempt from the tier-ownership half of this check — seed_admin.py
+    never gives the admin account an AgentPurchase, so without this exemption
+    admin could never qualify as the root Core recipient at all."""
     if user is None or not user.is_active:
         return False
+    if user.is_admin:
+        return True
     return _highest_active_tier(db, user.id) >= buyer_tier
 
 

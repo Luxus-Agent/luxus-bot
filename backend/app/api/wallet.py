@@ -452,7 +452,7 @@ def core_preview(
     Read-only preview of where the CURRENT user's own Core 60% would route if
     they bought `tier` right now — same simulation the admin "Revenue Engines"
     page uses, scoped to the logged-in user (no username lookup, no admin
-    privilege needed). Only peeks at core_route_count; never persists.
+    privilege needed). Only peeks at the per-tier core_route_count; never persists.
     """
     if tier not in (1, 2, 3, 4):
         raise HTTPException(status_code=400, detail="tier must be 1-4.")

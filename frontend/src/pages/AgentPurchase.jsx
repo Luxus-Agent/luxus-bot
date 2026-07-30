@@ -10,27 +10,30 @@ import { erc20Abi, parseUnits, isAddress } from 'viem'
 import { bscTestnet } from '@reown/appkit/networks'
 import { wagmiConfig } from '../config/appkit'
 import { MULTISENDER_ADDRESS, USDT_ADDRESS, USDT_DECIMALS, multisenderAbi } from '../config/contracts'
+import { tierDisplayName } from '../utils/agentTiers'
 
 // `price` is what the buyer pays = base + platform fee. The 60/30/10 revenue split
 // runs off `base`; the flat `fee` goes straight to the platform profit wallet.
+// `name` is the backend pack_name identifier (unchanged) — `displayName` is what's
+// shown to users.
 const TIERS = [
   {
-    id: 1, base: 10, fee: 1, price: 11, name: 'Agent 1',
+    id: 1, base: 10, fee: 1, price: 11, name: 'Agent 1', displayName: tierDisplayName(1),
     core: '$6.00', stream: '$20.00', boost: '$5.70',
     color: 'var(--accent)', desc: 'Entry level AI agent with full revenue mechanics',
   },
   {
-    id: 2, base: 20, fee: 2, price: 22, name: 'Agent 2',
+    id: 2, base: 20, fee: 2, price: 22, name: 'Agent 2', displayName: tierDisplayName(2),
     core: '$12.00', stream: '$40.00', boost: '$5.70',
     color: '#3498DB', desc: '2× multiplier — doubles all payouts',
   },
   {
-    id: 3, base: 50, fee: 5, price: 55, name: 'Agent 3',
+    id: 3, base: 50, fee: 5, price: 55, name: 'Agent 3', displayName: tierDisplayName(3),
     core: '$30.00', stream: '$100.00', boost: '$5.70',
     color: '#9B59B6', desc: '5× multiplier — high-yield tier',
   },
   {
-    id: 4, base: 100, fee: 11, price: 111, name: 'Agent 4',
+    id: 4, base: 100, fee: 11, price: 111, name: 'Agent 4', displayName: tierDisplayName(4),
     core: '$60.00', stream: '$200.00', boost: '$5.70',
     color: '#FFB547', desc: '10× multiplier — maximum earning potential',
   },
@@ -62,11 +65,11 @@ export default function AgentPurchase() {
   // Pre-flight checks, then open the in-app confirm modal.
   const requestPurchase = (tier) => {
     if (isOwned(tier.id)) {
-      toast.error(`You already own Agent ${tier.id}. Each agent can be purchased once.`)
+      toast.error(`You already own ${tier.displayName}. Each agent can be purchased once.`)
       return
     }
     if (!isUnlocked(tier.id)) {
-      toast.error(`Purchase Agent ${tier.id - 1} before Agent ${tier.id}.`)
+      toast.error(`Purchase ${tierDisplayName(tier.id - 1)} before ${tier.displayName}.`)
       return
     }
     if (!isConnected || !address) {
@@ -161,7 +164,7 @@ export default function AgentPurchase() {
         tx_hash: txHash,
       })
 
-      toast.success(`Agent ${tierId} purchased!`)
+      toast.success(`${tierDisplayName(tierId)} purchased!`)
       refetchUsdtBalance()
       const [p, b] = await Promise.all([api.get('/agents/purchases'), api.get('/wallet/balances')])
       setPurchases(p.data)
@@ -293,7 +296,7 @@ export default function AgentPurchase() {
                       </span>
                     )}
                   </div>
-                  <h3 className="text-lg font-bold text-white">{tier.name}</h3>
+                  <h3 className="text-lg font-bold text-white">{tier.displayName}</h3>
                   <p className="text-2xl font-bold" style={{ color: tier.color }}>${tier.price}</p>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>${tier.base} + ${tier.fee} platform fee</p>
                   <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>{tier.desc}</p>
@@ -331,7 +334,7 @@ export default function AgentPurchase() {
                     ) : owned ? (
                       <><CheckCircle size={14} /> Owned</>
                     ) : !unlocked ? (
-                      <>Buy Agent {tier.id - 1} first</>
+                      <>Buy {tierDisplayName(tier.id - 1)} first</>
                     ) : !isConnected ? (
                       <>Connect Wallet</>
                     ) : (
@@ -371,7 +374,7 @@ export default function AgentPurchase() {
                 <h2 className="text-lg font-bold text-white">Confirm purchase</h2>
               </div>
               <p className="text-sm mb-5" style={{ color: 'var(--text-secondary)' }}>
-                Buy <span className="text-white font-semibold">{confirmTier.name}</span> for{' '}
+                Buy <span className="text-white font-semibold">{confirmTier.displayName}</span> for{' '}
                 <span className="text-white font-semibold">${confirmTier.price}</span>{' '}
                 <span style={{ color: 'var(--text-muted)' }}>(${confirmTier.base} + ${confirmTier.fee} platform fee)</span>?
                 Payment is sent on-chain in USDT from your connected wallet to the referral payout addresses.

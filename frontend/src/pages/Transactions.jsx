@@ -8,6 +8,7 @@ import { formatDateIST } from '../utils/datetime'
 import { txExplorerUrl, shortenTxHash } from '../utils/explorer'
 import { ExternalLink } from 'lucide-react'
 import EarningsBreakdown from '../components/EarningsBreakdown'
+import { tierDisplayName } from '../utils/agentTiers'
 
 const PAGE_SIZE = 10
 
@@ -246,7 +247,7 @@ export default function Transactions() {
                       </div>
                     </div>
                     <span className="hidden sm:block text-xs" style={{ color: 'var(--text-secondary)' }}>
-                      {tx.agent_tier === 0 ? 'Account' : `Agent ${tx.agent_tier}`}
+                      {tx.agent_tier === 0 ? 'Account' : tierDisplayName(tx.agent_tier)}
                     </span>
                     <span className="hidden sm:block">
                       <span

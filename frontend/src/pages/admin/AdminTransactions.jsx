@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { Activity, Search, ExternalLink } from 'lucide-react'
 import { formatDateIST } from '../../utils/datetime'
 import { txExplorerUrl, shortenTxHash } from '../../utils/explorer'
+import { tierDisplayName } from '../../utils/agentTiers'
 
 const PAGE_SIZE = 10
 
@@ -158,7 +159,7 @@ export default function AdminTransactions() {
                     {tx.username ? `@${tx.username}` : `#${tx.user_id}`}
                   </span>
                   <span className="hidden sm:block text-xs" style={{ color: 'var(--text-secondary)' }}>
-                    {tx.agent_tier === 0 ? 'Acct' : `A${tx.agent_tier}`}
+                    {tx.agent_tier === 0 ? 'Acct' : tierDisplayName(tx.agent_tier)}
                   </span>
                   <span className="hidden sm:block">
                     <span

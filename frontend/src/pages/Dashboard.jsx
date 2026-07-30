@@ -14,9 +14,10 @@ import {
 } from 'recharts'
 import { formatDateIST } from '../utils/datetime'
 import EarningsBreakdown from '../components/EarningsBreakdown'
+import { AGENT_TIER_DISPLAY_NAMES } from '../utils/agentTiers'
 
 const TIER_PRICES = { 1: 10, 2: 20, 3: 50, 4: 100 }
-const TIER_NAMES = { 1: 'Agent 1', 2: 'Agent 2', 3: 'Agent 3', 4: 'Agent 4' }
+const TIER_NAMES = AGENT_TIER_DISPLAY_NAMES
 
 function StatCard({ icon: Icon, label, value, sub, color = 'var(--accent)', onClick }) {
   return (
