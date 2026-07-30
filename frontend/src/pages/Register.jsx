@@ -5,6 +5,7 @@ import Logo from '../components/Logo'
 import toast from 'react-hot-toast'
 import { Eye, EyeOff, UserPlus, CheckCircle, XCircle, Loader, Wallet, Link2 } from 'lucide-react'
 import { useAppKit, useAppKitAccount, useDisconnect } from '@reown/appkit/react'
+import loginBg from '../assets/login-bg.png'
 
 
 export default function Register() {
@@ -158,20 +159,24 @@ export default function Register() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center px-4 py-8"
-      style={{ background: 'linear-gradient(135deg, var(--bg-page) 0%, var(--bg-surface) 50%, var(--bg-page) 100%)' }}
+      className="min-h-screen flex items-center justify-center px-4 py-8 bg-cover bg-center bg-no-repeat relative"
+      style={{ backgroundImage: `url(${loginBg})` }}
     >
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.55) 100%)' }}
+      />
       <div
         className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full pointer-events-none"
         style={{ background: 'radial-gradient(circle, rgba(var(--accent-rgb),0.05) 0%, transparent 70%)' }}
       />
 
       <div className="w-full max-w-md relative">
-        <div className="flex justify-center mb-8">
-          <Logo size={36} />
-        </div>
-
         <div className="rounded-2xl p-8" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+          <div className="flex justify-center mb-6">
+            <Logo size={36} />
+          </div>
+
           <h1 className="text-2xl font-bold text-white mb-1">Create Account</h1>
           <p className="text-sm mb-6" style={{ color: 'var(--text-secondary)' }}>Join Luxus — all fields are required</p>
 
