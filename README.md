@@ -395,8 +395,16 @@ If the target already **owns** the tier being previewed, the simulator instead r
 `PackPurchase.recipients_json`) rather than a hypothetical peek — a peek of an already-owned tier
 would otherwise answer "what if this purchase happened again right now," which diverges further
 from what actually happened every time anyone else's purchase advances the same recipients'
-counters. The frontend renders this as a flat "Credited to" list (`CoreActualResult`) instead of
-the two-half odd/even breakdown (`CoreHalfChain`) used for genuinely unowned, hypothetical tiers.
+counters. That actual-result list also includes any recipient the routing decided on but who was
+never actually paid because they had no wallet address on file (`role: "core_unpaid"` in
+`recipients_json`, folded into `platform_fee` at settlement — see
+[On-Chain Pack Purchase](#on-chain-pack-purchase)) — named by username rather than silently
+disappearing into "platform profit." The frontend (`CorePreviewTable` in
+`frontend/src/components/CoreRoutingViz.jsx`) renders both the hypothetical and the actual-result
+case as the same plain two-column table — `Purchase | Recipients (both halves)` — e.g.
+`@dhanush1 buys Agent1 → @dhanush ($3) + @admin ($3)`, merging same-recipient halves into one
+`both → @admin ($6, merged)` row, and showing `No eligible upline — retained as platform profit`
+only when genuinely nobody (paid or unpaid) was eligible.
 
 The Core **downline odd/even table** (`get_downline_odd_even` in `core/core_preview.py`) is a
 different axis from the simulator above: instead of walking UP the sponsor chain to see who
@@ -530,6 +538,13 @@ reserve / software fee). A Core half with no eligible upline (or no valid BEP-20
 into the platform fee, so **the split always sums to the pack price**. (Split logic in
 `app/core/pack_payout.py`; matrix + repurchase execution on `pack/status` in
 `app/core/matrix_runtime.py` + `app/core/repurchase.py`.)
+
+> When a half folds because the decided recipient has no wallet address (not because they're
+> ineligible), the response also carries a reporting-only `core_unpaid` recipient — same shape as
+> `upline` but `amount: 0` and `has_wallet_address: false`, so it never affects the on-chain payment
+> list or the ledger. It exists purely so the Purchase Distribution Preview (and anything else
+> reading `recipients_json`) can say who the routing meant to pay instead of that half just
+> vanishing into `platform_fee` anonymously.
 
 **API 1 — request:**
 

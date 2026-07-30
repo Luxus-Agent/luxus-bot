@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
-import { CoreExplainerDiagram, CoreHalfChain, CoreActualResult } from '../components/CoreRoutingViz'
+import { CorePreviewTable } from '../components/CoreRoutingViz'
 import { tierDisplayName } from '../utils/agentTiers'
 
 // Same simulation as the admin "Revenue Engines" page's Core tab, scoped to
@@ -52,16 +52,7 @@ function UserCoreSimulator() {
       {loading && <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Simulating…</p>}
       {error && <p className="text-xs mb-4" style={{ color: '#FF4D6A' }}>{error}</p>}
 
-      {result && !loading && (
-        result.actual ? (
-          <CoreActualResult buyer={result.buyer} tier={result.buyer_tier} recipients={result.recipients} />
-        ) : (
-          <div className="grid md:grid-cols-2 gap-4">
-            <CoreHalfChain title={`First 30% Half — if you buy ${tierDisplayName(result.buyer_tier)}`} half={result.half1} />
-            <CoreHalfChain title="Second 30% Half" half={result.half2} />
-          </div>
-        )
-      )}
+      {result && !loading && <CorePreviewTable result={result} />}
     </div>
   )
 }
@@ -77,7 +68,6 @@ export default function RevenueEngine() {
           </p>
         </div>
 
-        <CoreExplainerDiagram />
         <UserCoreSimulator />
       </div>
     </Layout>

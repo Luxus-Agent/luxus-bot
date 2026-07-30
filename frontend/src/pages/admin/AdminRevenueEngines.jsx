@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { CoreExplainerDiagram, CoreHalfChain, CoreActualResult } from '../../components/CoreRoutingViz'
+import { CoreExplainerDiagram, CorePreviewTable } from '../../components/CoreRoutingViz'
 import { tierDisplayName } from '../../utils/agentTiers'
 
 const LEVEL_LABELS = { 1: 'Level 1 (3)', 2: 'Level 2 (9)', 3: 'Level 3 (27)' }
@@ -65,16 +65,7 @@ function CoreSimulator() {
 
       {error && <p className="text-xs mb-4" style={{ color: '#FF4D6A' }}>{error}</p>}
 
-      {result && (
-        result.actual ? (
-          <CoreActualResult buyer={result.buyer} tier={result.buyer_tier} recipients={result.recipients} />
-        ) : (
-          <div className="grid md:grid-cols-2 gap-4">
-            <CoreHalfChain title={`First 30% Half — @${result.buyer} buys ${tierDisplayName(result.buyer_tier)}`} half={result.half1} />
-            <CoreHalfChain title="Second 30% Half" half={result.half2} />
-          </div>
-        )
-      )}
+      {result && <CorePreviewTable result={result} />}
     </div>
   )
 }

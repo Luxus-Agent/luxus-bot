@@ -178,65 +178,59 @@ export function CoreExplainerDiagram() {
   )
 }
 
-function ChainPill({ label, tone }) {
-  const palette = {
-    skip: { bg: 'rgba(var(--text-muted-rgb),0.15)', color: 'var(--text-secondary)', border: '1px solid var(--border)' },
-    candidate: { bg: 'rgba(52,152,219,0.12)', color: '#3498DB', border: '1px solid rgba(52,152,219,0.4)' },
-    kept: { bg: 'rgba(var(--accent-rgb),0.12)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb),0.4)' },
-    platform: { bg: 'rgba(255,77,106,0.12)', color: '#FF4D6A', border: '1px solid rgba(255,77,106,0.4)' },
+const PLATFORM_PROFIT_TEXT = 'No eligible upline — retained as platform profit'
+
+function fmtAmount(n) {
+  const num = Number(n)
+  return Number.isInteger(num) ? `${num}` : num.toFixed(2)
+}
+
+// "both → @admin ($6, merged)" / "@dhanush ($3) + @admin ($3)" / "@dhanush ($3) + platform profit ($3)"
+function formatHypothetical(half1, half2) {
+  const r1 = half1.recipient
+  const r2 = half2.recipient
+  if (!r1 && !r2) return PLATFORM_PROFIT_TEXT
+  if (r1 && r1 === r2) {
+    const total = Number(half1.amount) + Number(half2.amount)
+    return `both → @${r1} ($${fmtAmount(total)}, merged)`
   }
-  const style = palette[tone] || palette.skip
-  return (
-    <span
-      className="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap"
-      style={{ background: style.bg, color: style.color, border: style.border }}
-    >
-      {label}
-    </span>
-  )
+  const part = (recipient, amount) => (recipient ? `@${recipient} ($${fmtAmount(amount)})` : `platform profit ($${fmtAmount(amount)})`)
+  return `${part(r1, half1.amount)} + ${part(r2, half2.amount)}`
 }
 
-export function CoreHalfChain({ title, half }) {
-  return (
-    <div className="rounded-lg p-4" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-      <p className="text-xs font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>{title}</p>
-
-      {!half.candidate ? (
-        <ChainPill label="No eligible upline — folds into platform profit" tone="platform" />
-      ) : (
-        <>
-          <div className="flex items-center gap-2">
-            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Credited to:</span>
-            <ChainPill label={`@${half.recipient}`} tone="kept" />
-          </div>
-        </>
-      )}
-    </div>
-  )
+// "@dhanush ($3) + @admin ($3)"
+function formatActual(recipients) {
+  if (recipients.length === 0) return PLATFORM_PROFIT_TEXT
+  return recipients.map(r => `@${r.username} ($${fmtAmount(r.amount)})`).join(' + ')
 }
 
-// Shown instead of CoreHalfChain when the target already owns this tier — the
-// real recorded result from that settled purchase, not a hypothetical peek
-// (which would diverge more and more as other purchases advance the same
-// recipients' odd/even counters over time).
-export function CoreActualResult({ buyer, tier, recipients }) {
+// Single-row "Purchase | Recipients (both halves)" table — the plain,
+// no-diagram view of one buyer/tier Core preview result (hypothetical or,
+// for an already-owned tier, the actual recorded outcome).
+export function CorePreviewTable({ result }) {
+  const purchaseLabel = result.actual
+    ? `@${result.buyer} already bought ${tierDisplayName(result.buyer_tier)}`
+    : `@${result.buyer} buys ${tierDisplayName(result.buyer_tier)}`
+  const recipientsText = result.actual
+    ? formatActual(result.recipients)
+    : formatHypothetical(result.half1, result.half2)
+
   return (
-    <div className="rounded-lg p-4" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-      <p className="text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
-        Actual result — @{buyer} already bought {tierDisplayName(tier)}
-      </p>
-      <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
-        This is the real recorded outcome, not a hypothetical preview.
-      </p>
-      <div className="flex flex-col gap-2">
-        {recipients.map(r => (
-          <div key={r.username} className="flex items-center gap-2">
-            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Credited to:</span>
-            <ChainPill label={`@${r.username}`} tone="kept" />
-            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>${r.amount}</span>
-          </div>
-        ))}
-      </div>
+    <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border)' }}>
+      <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: 'var(--bg-surface)' }}>
+            <th className="text-left px-4 py-2.5 font-semibold" style={{ color: 'var(--text-secondary)' }}>Purchase</th>
+            <th className="text-left px-4 py-2.5 font-semibold" style={{ color: 'var(--text-secondary)' }}>Recipients (both halves)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="px-4 py-2.5" style={{ color: 'var(--text-primary)', borderTop: '1px solid var(--border)' }}>{purchaseLabel}</td>
+            <td className="px-4 py-2.5" style={{ color: 'var(--text-primary)', borderTop: '1px solid var(--border)' }}>{recipientsText}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   )
 }

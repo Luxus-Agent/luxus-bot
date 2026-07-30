@@ -13,13 +13,25 @@ facing Core preview (always the logged-in user), so running this repeatedly
 never affects real payouts or the real odd/even alternation.
 """
 import json
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.orm import Session
 
 from app.core.proactive import _highest_active_tier, _is_eligible  # noqa: PLC2701
-from app.models.agent import AgentPurchase
+from app.models.agent import AGENT_TIER_PRICES, AgentPurchase
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
 from app.models.user import User
+
+# Each Core half is 30% of the tier's base price (60% split two ways) — same
+# CORE_RATE math as app.core.pack_payout, quantized to cents since this is a
+# display-only preview amount, not an on-chain payment.
+_CORE_HALF_RATE = Decimal("0.30")
+_CENTS = Decimal("0.01")
+
+
+def _half_amount(buyer_tier: int) -> str:
+    price = Decimal(str(AGENT_TIER_PRICES[buyer_tier]))
+    return str((price * _CORE_HALF_RATE).quantize(_CENTS, rounding=ROUND_HALF_UP))
 
 
 def _sponsor_of(db: Session, user: User | None) -> User | None:
@@ -52,9 +64,13 @@ def _get_actual_core_recipients(db: Session, buyer: User, buyer_tier: int) -> li
     if record is None:
         return None
     recipients = json.loads(record.recipients_json or "[]")
+    # "upline" = actually paid on-chain. "core_unpaid" = the recipient the routing
+    # decided on but who had no wallet address to pay (folded into platform_fee at
+    # settlement) — included here so the preview still names them, not just the
+    # dollar amount that ended up as platform profit.
     return [
         {"username": r["username"], "amount": r.get("gross_amount", r.get("amount"))}
-        for r in recipients if r.get("role") == "upline"
+        for r in recipients if r.get("role") in ("upline", "core_unpaid")
     ]
 
 
@@ -133,14 +149,17 @@ def simulate_core_split(db: Session, buyer: User, buyer_tier: int) -> dict:
     if first_candidate is not None and second_candidate is None:
         second_candidate = first_candidate
 
+    amount = _half_amount(buyer_tier)
     half1 = _resolve_half(db, first_candidate, buyer_tier)
     half1["compression_skipped"] = first_skip
+    half1["amount"] = amount
     same_candidate = (
         first_candidate is not None and second_candidate is not None
         and second_candidate.id == first_candidate.id
     )
     half2 = _resolve_half(db, second_candidate, buyer_tier, extra_targetings=1 if same_candidate else 0)
     half2["compression_skipped"] = second_skip
+    half2["amount"] = amount
 
     return {
         "buyer": buyer.username, "buyer_tier": buyer_tier,

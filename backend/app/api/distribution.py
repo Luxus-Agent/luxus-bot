@@ -535,10 +535,17 @@ def pack_purchase(
     platform_amount = split.platform_amount + platform_fee
     merged: dict[int, list] = {}   # user_id -> [user, amount, address]
     order: list[int] = []
+    unpaid: dict[int, list] = {}   # user_id -> [user, gross_amount] — eligible Core recipient, no wallet on file
+    unpaid_order: list[int] = []
     for user, amount in split.uplines:
         addr = _resolve_bep20_address(db, user)
         if addr is None:
             platform_amount += amount   # no valid address → platform (missing-upline rule)
+            if user.id in unpaid:
+                unpaid[user.id][1] += amount
+            else:
+                unpaid[user.id] = [user, amount]
+                unpaid_order.append(user.id)
             continue
         if user.id in merged:
             merged[user.id][1] += amount
@@ -614,6 +621,25 @@ def pack_purchase(
         "has_wallet_address": admin_wallet is not None,
         "amount": _two_places(split.admin_amount),
     })
+
+    # Reporting-only: an eligible Core recipient who couldn't be paid (no wallet
+    # address on file) — their share is already folded into platform_fee above
+    # (that's the real money movement); this entry just preserves WHO the routing
+    # decided on, for display (e.g. the Purchase Distribution Preview), with
+    # amount=0 (nothing payable) and no wallet_address so it's inert on every
+    # on-chain/ledger path that filters by has_wallet_address or amount > 0.
+    for uid in unpaid_order:
+        user, gross = unpaid[uid]
+        recipients.append({
+            "role": "core_unpaid",
+            "level": None,
+            "user_id": user.id,
+            "username": user.username,
+            "wallet_address": None,
+            "has_wallet_address": False,
+            "amount": 0.0,
+            "gross_amount": _two_places(gross),
+        })
 
     # Platform fee — the flat per-tier purchase fee, the Stream (30%) + Boost pool
     # (9%) shares, plus any unroutable Core halves (no eligible upline). Goes to

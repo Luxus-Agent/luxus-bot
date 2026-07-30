@@ -105,7 +105,12 @@ filter on both `Transactions.jsx` and `AdminTransactions.jsx` — keep them in s
   run repeatedly. If the target already **owns** the previewed tier, returns the **actual recorded result** from
   that settled purchase instead (a peek would otherwise diverge further from history every time anyone else's
   purchase advances the same recipients' counters). Shared logic: `core/core_preview.py`; shared UI:
-  `frontend/src/components/CoreRoutingViz.jsx` (`CoreHalfChain` for hypothetical, `CoreActualResult` for settled).
+  `frontend/src/components/CoreRoutingViz.jsx` (`CorePreviewTable` — a single "Purchase | Recipients (both
+  halves)" table row for both the hypothetical and settled case).
+- The actual-result path also surfaces recipients whose Core half was decided by routing but never actually
+  paid because they had no wallet address on file (folded into `platform_fee` at settlement — see
+  `core_unpaid` below) — named by username instead of silently vanishing into "platform profit" with no
+  identity, e.g. `@dhanush ($3) + @admin ($3)` rather than omitting admin or showing a generic fallback.
 
 ## Conventions — YOU MUST
 
@@ -131,7 +136,7 @@ filter on both `Transactions.jsx` and `AdminTransactions.jsx` — keep them in s
 
 ## On-chain Pack Rail (the only purchase path)
 
-- `POST /distribution/pack/purchase` (JWT, `require_platform_active`) → returns recipient split (sums to price). Roles: `buyer`, `upline` (70% + `gross_amount`), `repurchase_reserve`, `software_fee`, `admin`, `platform_fee` (the latter also carries the Stream 30% + Boost-pool 9% shares — tracked internally, no separate on-chain wallet).
+- `POST /distribution/pack/purchase` (JWT, `require_platform_active`) → returns recipient split (sums to price). Roles: `buyer`, `upline` (70% + `gross_amount`), `repurchase_reserve`, `software_fee`, `admin`, `platform_fee` (the latter also carries the Stream 30% + Boost-pool 9% shares — tracked internally, no separate on-chain wallet), `core_unpaid` (reporting-only — a Core half whose decided recipient had no wallet address; `amount: 0`, `has_wallet_address: false`, so it's inert on every on-chain/ledger path; the real dollars are already inside `platform_fee`. Exists purely so `core-preview`'s actual-result view can name the intended recipient instead of showing nothing).
 - `POST /distribution/pack/status` → records success(tx_hash)/failed; on success runs ownership + ledger + matrices + repurchase (idempotent, PENDING-guarded).
   Both Transactions pages (user + admin) show a **Tx Hash** column (resolved via `wallet_ops.resolve_tx_hashes`,
   joining `Transaction.reference_id` → `PackPurchase.order_id` / `PayoutBatch.batch_id`) linking to BscScan —
