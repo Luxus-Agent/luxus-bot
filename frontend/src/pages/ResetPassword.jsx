@@ -4,6 +4,7 @@ import api from '../api/client'
 import Logo from '../components/Logo'
 import toast from 'react-hot-toast'
 import { Eye, EyeOff } from 'lucide-react'
+import loginBg from '../assets/login-bg.png'
 
 export default function ResetPassword() {
   const navigate = useNavigate()
@@ -29,12 +30,16 @@ export default function ResetPassword() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center px-4"
-      style={{ background: 'linear-gradient(135deg, var(--bg-page) 0%, var(--bg-surface) 50%, var(--bg-page) 100%)' }}
+      className="min-h-screen flex items-center justify-center px-4 bg-cover bg-center bg-no-repeat relative"
+      style={{ backgroundImage: `url(${loginBg})` }}
     >
-      <div className="w-full max-w-md">
-        <div className="flex justify-center mb-8"><Logo size={36} /></div>
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.55) 100%)' }}
+      />
+      <div className="w-full max-w-md relative">
         <div className="rounded-2xl p-8" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+          <div className="flex justify-center mb-6"><Logo size={36} /></div>
           <h1 className="text-2xl font-bold text-white mb-1">Reset Password</h1>
           <p className="text-sm mb-6" style={{ color: 'var(--text-secondary)' }}>Enter the OTP from your email and a new password</p>
 
