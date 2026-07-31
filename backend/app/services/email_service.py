@@ -11,7 +11,9 @@ Config keys (set in .env):
 
 import asyncio
 import logging
+import os
 import smtplib
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -24,17 +26,41 @@ _ACCENT = "#6C63FF"       # purple accent
 _BG = "#f5f5f5"
 _CARD_BG = "#ffffff"
 
+# Inline (CID) logo images, referenced by every template via _card()'s header.
+# Kept as backend-local copies (not imported from frontend/src/assets) so the
+# email service doesn't depend on the frontend's directory layout.
+_ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "email")
+_LOGO_MARK_PATH = os.path.join(_ASSETS_DIR, "logo.png")
+_LOGO_WORDMARK_PATH = os.path.join(_ASSETS_DIR, "logo-wordmark.png")  # dark text, for a light/white background
+
+
+def _attach_inline_image(message: MIMEMultipart, path: str, content_id: str) -> None:
+    """Attach `path` as an inline image referenced in HTML via `cid:{content_id}`."""
+    try:
+        with open(path, "rb") as f:
+            image = MIMEImage(f.read())
+    except OSError:
+        logger.warning("Email logo asset not found, sending without it: %s", path)
+        return
+    image.add_header("Content-ID", f"<{content_id}>")
+    image.add_header("Content-Disposition", "inline", filename=os.path.basename(path))
+    message.attach(image)
+
 
 # ── Core send ─────────────────────────────────────────────────────────────────
 
 async def send_email(to_email: str, subject: str, body: str) -> bool:
-    """Send an HTML email. Returns True on success, False on failure."""
+    """Send an HTML email (with the inline Luxus logo). Returns True on success, False on failure."""
     def _send():
-        message = MIMEMultipart()
+        # "related" (not "mixed") — the HTML part refers to the logo parts below
+        # via cid: URIs, which mail clients only resolve inside a related group.
+        message = MIMEMultipart("related")
         message["Subject"] = subject
         message["From"]    = settings.SENDER_EMAIL
         message["To"]      = to_email
         message.attach(MIMEText(body, "html"))
+        _attach_inline_image(message, _LOGO_MARK_PATH, "logo_mark")
+        _attach_inline_image(message, _LOGO_WORDMARK_PATH, "logo_wordmark")
 
         with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
             server.starttls()
@@ -52,12 +78,16 @@ async def send_email(to_email: str, subject: str, body: str) -> bool:
 
 
 def _card(content: str) -> str:
-    """Wrap content in the standard card layout."""
+    """Wrap content in the standard card layout, with the Luxus logo at the top."""
     return f"""
     <html>
     <body style="font-family: Arial, sans-serif; padding: 20px; background-color: {_BG};">
         <div style="max-width: 600px; margin: 0 auto; background-color: {_CARD_BG};
                     padding: 30px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <img src="cid:logo_mark" alt="" height="32" style="height: 32px; width: auto; vertical-align: middle;">
+                <img src="cid:logo_wordmark" alt="{_BRAND}" height="20" style="height: 20px; width: auto; vertical-align: middle; margin-left: 8px;">
+            </div>
             {content}
             <hr style="border: none; border-top: 1px solid #e5e7eb; margin-top: 30px;">
             <p style="color: #9ca3af; font-size: 12px; margin-top: 12px;">{_BRAND}</p>

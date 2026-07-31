@@ -32,6 +32,9 @@ frontend/src/
   pages/RevenueEngine.jsx # user: self-scoped Core routing preview (no Stream/Boost — platform-wide)
   pages/ + pages/admin/   # user + admin dashboards (admin: AdminRevenueEngines.jsx — Core/Stream/Boost viz)
                           # NOTE: no standalone Wallet page — balances/history live in Dashboard + Transactions
+  pages/Login.jsx, Register.jsx, ForgotPassword.jsx, VerifyEmail.jsx # share one auth-page look: full-bleed
+                          # assets/login-bg.png + dark gradient overlay behind a `bg-panel` card, Logo inside
+                          # the card (not above it) — match this exactly if you touch/add an auth page
 backend/app/
   api/auth.py            # register (sponsor_username), verify-email, login (username), reset — usernames case-insensitive
   api/wallet.py          # balances / transactions (+ tx_hash) / earnings (+ Completed/Pending split) / repurchase / BEP-20 address / core-preview
@@ -47,6 +50,11 @@ backend/app/
   core/repurchase.py     # auto-repurchase sweep (LIVE)
   core/wallet_ops.py     # credit_wallet (70/20/10), mirror_onchain_earning_split, ledger earnings, tx_hash resolver
   core/user_lookup.py    # case-insensitive username lookup/equality — use for ALL username matching, never User.username ==
+  services/email_service.py # OTP emails (verify/resend/reset/address). Every template renders through
+                          # `_card()`, which embeds the Luxus logo as inline CID images (not a hosted URL —
+                          # works even when a client blocks remote images) from `app/assets/email/` — a
+                          # backend-local copy of `frontend/src/assets/logo.png` + `logo-text-light.png`.
+                          # Update both copies together if the logo changes.
   models/                # user, agent, wallet, wallet_address, transaction, pack_purchase, matrix, platform_setting
 ```
 
