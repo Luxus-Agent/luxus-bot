@@ -24,7 +24,7 @@ function Row({ icon: Icon, label, children, last }) {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
-        <div className="text-sm font-medium" style={{ color: '#E2E8F0' }}>{children}</div>
+        <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{children}</div>
       </div>
     </div>
   )
@@ -53,7 +53,7 @@ export default function Profile() {
 
         {/* Header */}
         <div>
-          <h1 className="text-xl font-bold text-white">My Profile</h1>
+          <h1 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>My Profile</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>Your account information</p>
         </div>
 
@@ -71,7 +71,7 @@ export default function Profile() {
             {(user.username || 'U')[0].toUpperCase()}
           </div>
           <div>
-            <p className="text-base font-bold text-white">{user.username}</p>
+            <p className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>{user.username}</p>
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{user.email}</p>
           </div>
         </div>

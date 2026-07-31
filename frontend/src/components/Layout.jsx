@@ -309,8 +309,9 @@ function PlatformFreezeControl({ frozen, onChanged }) {
   )
 }
 
-/** Sun/moon toggle for the dark ↔ light theme, shown in both the user and admin topbars. */
-function ThemeToggle() {
+/** Sun/moon toggle for the dark ↔ light theme, shown in both the user and admin topbars,
+ * and (standalone) in the top-right corner of every public auth page. */
+export function ThemeToggle() {
   const { theme, toggleTheme } = useTheme()
   return (
     <button

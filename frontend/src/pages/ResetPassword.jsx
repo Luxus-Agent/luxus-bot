@@ -5,6 +5,7 @@ import Logo from '../components/Logo'
 import toast from 'react-hot-toast'
 import { Eye, EyeOff } from 'lucide-react'
 import loginBg from '../assets/login-bg.png'
+import { ThemeToggle } from '../components/Layout'
 
 export default function ResetPassword() {
   const navigate = useNavigate()
@@ -37,6 +38,7 @@ export default function ResetPassword() {
         className="absolute inset-0 pointer-events-none"
         style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.55) 100%)' }}
       />
+      <div className="absolute top-4 right-4 z-10"><ThemeToggle /></div>
       <div className="w-full max-w-md relative">
         <div className="rounded-2xl p-8" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
           <div className="flex justify-center mb-6"><Logo size={36} /></div>

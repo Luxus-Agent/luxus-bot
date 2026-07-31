@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { Eye, EyeOff, UserPlus, CheckCircle, XCircle, Loader, Wallet, Link2 } from 'lucide-react'
 import { useAppKit, useAppKitAccount, useDisconnect } from '@reown/appkit/react'
 import loginBg from '../assets/login-bg.png'
+import { ThemeToggle } from '../components/Layout'
 
 
 export default function Register() {
@@ -170,6 +171,8 @@ export default function Register() {
         className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full pointer-events-none"
         style={{ background: 'radial-gradient(circle, rgba(var(--accent-rgb),0.05) 0%, transparent 70%)' }}
       />
+
+      <div className="absolute top-4 right-4 z-10"><ThemeToggle /></div>
 
       <div className="w-full max-w-md relative">
         <div className="rounded-2xl p-8" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
