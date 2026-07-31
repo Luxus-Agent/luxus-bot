@@ -2,11 +2,13 @@
 Read-only preview of the Core Agent 60% compression + odd/even split.
 
 Mirrors app.core.pack_payout.compute_pack_split's upline-selection logic exactly
-(compression via _highest_active_tier/_is_eligible, odd/even via the recipient's
-per-tier User.core_route_count_tierN, keyed by buyer_tier), but only PEEKS at the
-counter — never persists — and additionally reports the compression-skipped
-uplines for each hop, which compute_pack_split doesn't need since it only cares
-about the final recipient.
+— a single continuous walk up the sponsor chain per half, combining compression
+(_is_eligible) and odd/even (the recipient's per-tier User.core_route_count_tierN,
+keyed by buyer_tier) into one pass; the second half's walk continues from one
+level above wherever the first half's walk actually landed — but only PEEKS at
+the counter (never persists), and additionally reports a step-by-step trail of
+every hop (skipped-ineligible or skipped-even) for display, which
+compute_pack_split doesn't need since it only cares about the final recipient.
 
 Used by both the admin "Revenue Engines" page (any username) and the user-
 facing Core preview (always the logged-in user), so running this repeatedly
@@ -74,57 +76,59 @@ def _get_actual_core_recipients(db: Session, buyer: User, buyer_tier: int) -> li
     ]
 
 
-def _walk_skip_chain(
-    db: Session, start: User | None, buyer_tier: int
+def _walk_core_half_peek(
+    db: Session, start: User | None, buyer_tier: int, virtual_targetings: dict[int, int]
 ) -> tuple[User | None, list[dict]]:
-    """Walk up the sponsor chain from `start`, collecting compression-skipped
-    uplines (frozen or tier-too-low), and return the first eligible one."""
+    """
+    Peek-only mirror of pack_payout._walk_core_half: walk up the sponsor chain
+    from `start` (inclusive), combining compression and odd/even into one
+    continuous pass, but never persisting the counter. Returns (recipient,
+    trail) — trail is an ordered list of every hop, each either a compression
+    skip (ineligible) or an eligible-but-even skip, ending with the final
+    stop (odd, or the last-eligible fallback if the chain ran out).
+
+    `virtual_targetings` accumulates {user_id: times already peeked this same
+    two-half preview} — only relevant when the sole eligible upline absorbs
+    both halves (see simulate_core_split): since nothing persists, an earlier
+    virtual targeting of the same candidate wouldn't otherwise show up in
+    their core_route_count_tierN when resolving the second half.
+    """
     current = start
     seen: set[int] = set()
-    skipped: list[dict] = []
+    trail: list[dict] = []
+    last_eligible: User | None = None
     while current is not None and current.id not in seen:
         seen.add(current.id)
         if _is_eligible(db, current, buyer_tier):
-            return current, skipped
-        highest = _highest_active_tier(db, current.id)
-        skipped.append({
-            "username": current.username,
-            "is_active": current.is_active,
-            "highest_active_tier": highest,
-            "reason": (
-                "frozen" if not current.is_active
-                else f"highest active tier is {highest or 'none'} (< tier {buyer_tier})"
-            ),
-        })
+            last_eligible = current
+            extra = virtual_targetings.get(current.id, 0)
+            count = current.get_core_route_count(buyer_tier) + extra + 1
+            virtual_targetings[current.id] = extra + 1
+            if count % 2 == 1:
+                trail.append({
+                    "username": current.username, "eligible": True,
+                    "parity": "odd", "route_count_after": count, "kept": True,
+                })
+                return current, trail
+            trail.append({
+                "username": current.username, "eligible": True,
+                "parity": "even", "route_count_after": count, "kept": False,
+            })
+        else:
+            highest = _highest_active_tier(db, current.id)
+            trail.append({
+                "username": current.username, "eligible": False, "kept": False,
+                "reason": (
+                    "frozen" if not current.is_active
+                    else f"highest active tier is {highest or 'none'} (< tier {buyer_tier})"
+                ),
+            })
         current = _sponsor_of(db, current)
-    return None, skipped
+    return last_eligible, trail
 
 
-def _resolve_half(db: Session, primary: User | None, buyer_tier: int, extra_targetings: int = 0) -> dict:
-    """Peek (never mutate) the odd/even outcome for one eligible Core candidate.
-    `extra_targetings` accounts for this same candidate already having been
-    virtually targeted earlier in this same two-half preview (only possible
-    when the sole eligible upline absorbs both halves — see simulate_core_split)
-    — since this never persists, that earlier targeting wouldn't otherwise show
-    up in primary.core_route_count_tierN when resolving the second half."""
-    if primary is None:
-        return {
-            "candidate": None, "parity": None, "route_count_after": None,
-            "recipient": None, "passup_skipped": [], "passup_fallback_to_candidate": False,
-        }
-    count = primary.get_core_route_count(buyer_tier) + extra_targetings + 1
-    if count % 2 == 1:
-        return {
-            "candidate": primary.username, "parity": "odd", "route_count_after": count,
-            "recipient": primary.username, "passup_skipped": [], "passup_fallback_to_candidate": False,
-        }
-    upline, skipped = _walk_skip_chain(db, _sponsor_of(db, primary), buyer_tier)
-    return {
-        "candidate": primary.username, "parity": "even", "route_count_after": count,
-        "recipient": upline.username if upline else primary.username,
-        "passup_skipped": skipped,
-        "passup_fallback_to_candidate": upline is None,
-    }
+def _half_result(recipient: User | None, amount: str, trail: list[dict]) -> dict:
+    return {"recipient": recipient.username if recipient else None, "amount": amount, "trail": trail}
 
 
 def simulate_core_split(db: Session, buyer: User, buyer_tier: int) -> dict:
@@ -138,28 +142,28 @@ def simulate_core_split(db: Session, buyer: User, buyer_tier: int) -> dict:
             "actual": True, "recipients": actual_recipients,
         }
 
-    first_candidate, first_skip = _walk_skip_chain(db, _sponsor_of(db, buyer), buyer_tier)
-    second_candidate, second_skip = (
-        _walk_skip_chain(db, _sponsor_of(db, first_candidate), buyer_tier)
-        if first_candidate is not None else (None, [])
-    )
-    # No DISTINCT second eligible upline above the first → mirrors
-    # compute_pack_split: the sole eligible upline absorbs both halves instead
-    # of the second forfeiting to platform profit.
-    if first_candidate is not None and second_candidate is None:
-        second_candidate = first_candidate
-
     amount = _half_amount(buyer_tier)
-    half1 = _resolve_half(db, first_candidate, buyer_tier)
-    half1["compression_skipped"] = first_skip
-    half1["amount"] = amount
-    same_candidate = (
-        first_candidate is not None and second_candidate is not None
-        and second_candidate.id == first_candidate.id
+    virtual_targetings: dict[int, int] = {}
+
+    first_recipient, first_trail = _walk_core_half_peek(
+        db, _sponsor_of(db, buyer), buyer_tier, virtual_targetings
     )
-    half2 = _resolve_half(db, second_candidate, buyer_tier, extra_targetings=1 if same_candidate else 0)
-    half2["compression_skipped"] = second_skip
-    half2["amount"] = amount
+    half1 = _half_result(first_recipient, amount, first_trail)
+
+    if first_recipient is None:
+        half2 = _half_result(None, amount, [])
+    else:
+        second_recipient, second_trail = _walk_core_half_peek(
+            db, _sponsor_of(db, first_recipient), buyer_tier, virtual_targetings
+        )
+        if second_recipient is None:
+            # No distinct eligible upline above the first recipient → the sole
+            # eligible upline absorbs the second half too, via its own fresh
+            # (virtually tracked) targeting — mirrors compute_pack_split.
+            second_recipient, second_trail = _walk_core_half_peek(
+                db, first_recipient, buyer_tier, virtual_targetings
+            )
+        half2 = _half_result(second_recipient, amount, second_trail)
 
     return {
         "buyer": buyer.username, "buyer_tier": buyer_tier,

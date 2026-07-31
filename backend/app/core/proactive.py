@@ -49,20 +49,3 @@ def _is_eligible(db: Session, user: User | None, buyer_tier: int) -> bool:
         return True
     return _highest_active_tier(db, user.id) >= buyer_tier
 
-
-def _next_eligible_upline(
-    db: Session, start: User | None, buyer_tier: int
-) -> User | None:
-    """Walk UP the sponsor chain from `start` (inclusive) and return the first
-    eligible user, skipping ineligible / inactive ones (compression)."""
-    current = start
-    seen: set[int] = set()  # cycle guard
-    while current is not None and current.id not in seen:
-        seen.add(current.id)
-        if _is_eligible(db, current, buyer_tier):
-            return current
-        current = (
-            db.query(User).filter_by(id=current.sponsor_id).first()
-            if current.sponsor_id else None
-        )
-    return None

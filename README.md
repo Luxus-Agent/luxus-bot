@@ -98,12 +98,42 @@ Every confirmed agent purchase triggers a **60 / 30 / 10 split** across three pa
 
 ### 60% — Core Agent (Upline Routing with Compression)
 
-The 60% is split into two equal halves (30% each), routed up the sponsor chain
-with **compression**. Two rules apply together — and **only** in the Core Agent:
-compression decides *who* is a valid recipient, then odd/even decides whether
-that recipient keeps the amount or passes it up.
+The 60% is split into two equal halves (30% each), each resolved by **one continuous walk**
+up the sponsor chain that combines compression and odd/even into a single pass — compression
+decides who's even a valid stop, odd/even decides whether that stop keeps the money or the walk
+keeps climbing past them.
 
-**1. Compression (tier-qualified routing):**
+**The walk, for one half, starting from a given point in the sponsor chain:**
+- At each upline going up: if they're **ineligible** (compression — see below), skip them and
+  continue to the next upline. No counter change.
+- If they're **eligible**, advance their per-tier targeting counter
+  (`User.core_route_count_tierN` — see Odd/Even below):
+  - **Odd** → they keep the amount. The walk stops here.
+  - **Even** → the amount keeps climbing; continue the walk from the next upline above them.
+- If the chain runs out before anyone hits odd (nobody left above), the **last eligible upline
+  seen** keeps it regardless of parity — "no eligible upline for an even pass-up → recipient
+  keeps it."
+
+**First 30%** → the walk starts at the buyer's direct sponsor.
+**Second 30%** → the SAME walk, run again, but starting **one level above wherever the first
+half's walk actually landed** — not back at the direct sponsor, and not at the first half's
+original candidate if that candidate's own turn was even and the money passed further up. If
+that second walk finds no one at all, the sole eligible upline absorbs the second half too, via
+its own fresh, independent odd/even targeting, rather than forfeiting it to platform profit.
+A half only folds into **platform profit** when the first half's walk finds no eligible upline
+at all — the buyer has no sponsor, or the entire chain above them is ineligible/frozen (in which
+case there's by definition no one for the second half to reach either).
+
+> ⚠️ This replaced an earlier design that picked both halves' target *people* via compression
+> alone (first eligible upline, then the next eligible upline **above that original candidate**)
+> and only *then* applied odd/even to each independently. That could let one recipient absorb
+> both halves purely by coincidence of chain adjacency — e.g. if upline A's turn was even and
+> passed up to upline B, and B (compression's independently-computed "second" pick) also
+> happened to land on an odd turn, B kept both halves instead of the money reaching whoever was
+> above B. The single continuous walk above fixes this: each half's walk only ever stops once,
+> at the first odd hit, so a half genuinely can't be "won twice" by the same recipient.
+
+**Compression (tier-qualified eligibility):**
 - An upline only **qualifies** for Core income if their own **highest active
   purchased tier ≥ the tier the buyer just purchased**.
 - Uplines who bought a lower tier (or own no active agent, or are frozen) are
@@ -113,27 +143,16 @@ that recipient keeps the amount or passes it up.
   be active). `seed_admin.py` never gives the admin account an `AgentPurchase`,
   so without this exemption admin — the root of every sponsor chain — could
   never actually qualify to receive Core income.
-- **First 30%** → first eligible upline above the buyer.
-- **Second 30%** → next eligible upline above the first — or **the first upline
-  again** if there's no distinct second one (e.g. the buyer's direct sponsor is
-  Admin, who has no sponsor of their own): the sole eligible upline absorbs
-  both halves rather than forfeiting the second to platform profit.
-- A half only folds into **platform profit** when there is genuinely no
-  eligible upline at all — the buyer has no sponsor, or every upline in the
-  entire chain is ineligible/frozen.
 
 > Example (`Admin $100 → A $100 → B $10 → C $10 → D $20 → E $100`): when **E buys
 > $100** (tier 4), uplines **D ($20), C ($10), B ($10) are all skipped** because
 > none bought the $100 tier; income lands on **A ($100)** and **Admin ($100)**.
 
-**2. Odd/Even rule** at each eligible recipient (tracked by `User.core_route_count_tierN`,
-one independent counter per agent tier — a tier-1 ($11) targeting and a tier-2 ($22)
-targeting of the same recipient alternate separately, never sharing parity):
+**Odd/Even** (tracked by `User.core_route_count_tierN`, one independent counter per agent tier —
+a tier-1 ($11) targeting and a tier-2 ($22) targeting of the same recipient alternate separately,
+never sharing parity):
 - Each recipient has a per-tier targeting counter, incremented **every time they are
-  targeted by a purchase of that tier** — whether they keep the amount or pass it up.
-- If the resulting count is **odd** → credited directly to their wallet.
-- If it is **even** → amount passes up to the next **eligible** upline above them (the pass-up is compressed too).
-- If no eligible upline exists for an even pass-up → the recipient keeps it.
+  targeted by a purchase of that tier** — whether they keep the amount or the walk passes them by.
 - The counter only advances for real on `pack/status` **success** — `pack/purchase` (order creation) only
   *peeks* the same decision to build the recipient list the buyer's wallet pays on-chain. This matters
   because a failed/abandoned on-chain attempt (wallet rejection, insufficient gas, user cancels) would
@@ -141,7 +160,9 @@ targeting of the same recipient alternate separately, never sharing parity):
 
 > The counter increments on every targeting (not only on kept credits) so the alternation never gets stuck on "even" after a recipient's first pass-up. Compression applies to the Core Agent **only** — Stream and Boost matrices are unaffected.
 
-Implemented in `proactive.py` via `_highest_active_tier` / `_is_eligible` / `_next_eligible_upline`.
+Implemented in `pack_payout.py` via `_walk_core_half` (compression via `proactive.py`'s
+`_highest_active_tier` / `_is_eligible`); the read-only preview (`core_preview.py`'s
+`_walk_core_half_peek`) mirrors the exact same walk without persisting anything.
 
 ---
 

@@ -62,11 +62,19 @@ backend/app/
 
 Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /distribution/pack/status` on success):
 
-- **Core 60%** → two 30% halves up the sponsor chain. Two rules **together, Core only**:
-  - **Compression:** an upline qualifies only if their highest active tier ≥ buyer's tier; lower/inactive/frozen are skipped (income compresses up). **Admin is exempt from the tier-ownership half of this check** (`_is_eligible` in `proactive.py`) — `seed_admin.py` never gives admin an `AgentPurchase`, so without the exemption admin could never qualify as the root Core recipient.
-  - **Odd/even** (`User.core_route_count_tierN`, one counter per agent tier, incremented every targeting by a purchase of that tier): odd → keep, even → pass up to next eligible upline. Counter only advances on `pack/status` **success**, not at `pack/purchase` order-creation — a failed/abandoned on-chain attempt never skews a real recipient's alternation.
-  - **Second half with no distinct upline above the first** (e.g. buyer's sponsor is Admin) → the first upline absorbs both halves instead of forfeiting the second to platform.
-  - No eligible upline at all / no valid BEP-20 address → folds into platform fee.
+- **Core 60%** → two 30% halves, each resolved by **one continuous walk** up the sponsor chain
+  (`_walk_core_half` in `pack_payout.py`, mirrored peek-only by `_walk_core_half_peek` in
+  `core_preview.py`) combining compression + odd/even in a single pass — replaced an earlier
+  two-independent-slots design that could double-pay one recipient both halves (see
+  `pack_payout.py`'s docstring for the before/after). Per half: skip ineligible uplines (highest
+  active tier < buyer's, inactive/frozen — **Admin exempt from tier ownership**, `_is_eligible` in
+  `proactive.py`, since `seed_admin.py` gives admin no `AgentPurchase`) *and* even-turn ones
+  (`User.core_route_count_tierN` still advances) until an odd turn keeps it, or the chain runs out
+  (last eligible seen keeps it). **Second half's walk starts one level above wherever the first
+  half actually landed** — not back at the direct sponsor or the first half's pre-parity candidate.
+  No one found there → the sole eligible upline absorbs both halves via its own fresh targeting.
+  Counter only advances on `pack/status` **success**, never at `pack/purchase` order-creation.
+  No eligible upline at all / no valid BEP-20 address → folds into platform fee.
 - **Stream 30%** → per-tier 3×3 matrix. Re-entries are **dummy** (no payout). 10% sponsor share at L2/L3.
 - **Boost 10%** = **9% matrix + 1% admin income**. **Single global queue** (always tier 1). Re-entries are **real**.
 - **Wallet rule (70 / 20 / 10):** every income credit → 70% main + 20% per-tier repurchase reserve + 10% software fee.

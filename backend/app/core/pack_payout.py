@@ -4,23 +4,33 @@ Pack-purchase payout split for the on-chain (BEP-20 USDT) rail.
 This computes the full 60/30/10 split for a single pack purchase (per the client
 "Classification of Agents" spec):
 
-  Core Agent  — 60% of the price, routed to uplines as two equal 30% halves:
-      – first  half → first  ELIGIBLE upline
-      – second half → next eligible upline above the first, or the first
-        upline again if there is no distinct second one (e.g. the buyer's
-        direct sponsor is Admin, who has no sponsor of their own) — the sole
-        eligible upline absorbs both halves rather than forfeiting the second
-        to platform profit
+  Core Agent  — 60% of the price, routed to uplines as two equal 30% halves via
+    a SINGLE continuous walk up the sponsor chain per half:
+      – first  half → walk up from the buyer's direct sponsor, skipping anyone
+        ineligible (compression) AND anyone whose per-tier turn lands even
+        (their counter still advances; the amount keeps climbing to the next
+        eligible upline) — the first eligible upline whose turn lands ODD
+        keeps it. If the chain runs out first (nobody above is eligible), the
+        last eligible upline seen keeps it regardless of parity ("no eligible
+        upline for an even pass-up -> recipient keeps it").
+      – second half → the SAME walk, run again, but starting one level above
+        wherever the first half's walk actually ended up (not back at the
+        direct sponsor, and not back at the first half's original compression
+        candidate if that candidate's own turn was even and passed the money
+        further up). If that walk finds no one at all (the first half's
+        recipient has no eligible upline above them whatsoever), the sole
+        eligible upline absorbs the second half too, via its OWN fresh,
+        independent odd/even targeting — rather than forfeiting it to
+        platform profit.
     "Eligible" = compression: the upline is active AND their highest active
     purchased tier >= the buyer's tier (reuses proactive._is_eligible — Admin is
-    exempt from the tier-ownership half of that check). Ineligible or missing
-    uplines are skipped via compression. Odd/even routing per eligible recipient
-    (User.core_route_count_tierN, keyed by the BUYER's tier — a tier-1 purchase
-    and a tier-2 purchase targeting the same recipient alternate independently):
-    odd → keep, even → pass up to the next eligible upline. A half only folds
-    into the platform amount (company profit) when there is no eligible upline
-    at all (buyer has no sponsor, or the whole chain above them is
-    ineligible/frozen).
+    exempt from the tier-ownership half of that check). Odd/even is keyed by
+    User.core_route_count_tierN, keyed by the BUYER's tier — a tier-1 purchase
+    and a tier-2 purchase targeting the same recipient alternate independently.
+    A half only folds into the platform amount (company profit) when the FIRST
+    half's walk finds no eligible upline at all (buyer has no sponsor, or the
+    whole chain above them is ineligible/frozen) — in that case there is by
+    definition no one for the second half to reach either, so both fold.
 
   Stream Agent — 30% of the price → the Stream matrix pool (per tier).
   Boost Agent  — 10% of the price → 9% to the Boost matrix pool (global, drawn down
@@ -44,7 +54,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.orm import Session
 
-from app.core.proactive import _is_eligible, _next_eligible_upline  # noqa: PLC2701
+from app.core.proactive import _is_eligible  # noqa: PLC2701
 from app.models.user import User
 
 CORE_RATE = Decimal("0.60")    # 60% → uplines (two 30% halves)
@@ -73,29 +83,42 @@ def _sponsor_of(db: Session, user: User | None) -> User | None:
     return db.query(User).filter_by(id=user.sponsor_id).first()
 
 
-def _resolve_recipient(
-    db: Session, primary: User | None, buyer_tier: int, mutate_counter: bool
+def _walk_core_half(
+    db: Session, start: User | None, buyer_tier: int, mutate_counter: bool
 ) -> User | None:
     """
-    Apply the Core odd/even rule to one eligible primary recipient.
-    Odd count → primary keeps; even → pass up to the next eligible upline.
-    Returns the final beneficiary, or None if there is no eligible recipient.
+    Walk UP the sponsor chain from `start` (inclusive) for ONE Core half,
+    combining compression and odd/even into a single continuous pass:
+      – skip anyone ineligible (compression: inactive, or tier too low)
+      – for each eligible upline, advance their per-tier odd/even counter;
+        an ODD count stops the walk here (they keep it); an EVEN count
+        continues the walk further up (the amount keeps climbing)
+    Returns the first eligible-and-odd upline found, or — if the chain runs
+    out while every eligible upline seen was even — the LAST eligible upline
+    seen (they keep it: "no eligible upline for an even pass-up -> recipient
+    keeps it"). Returns None only if no one in the chain from `start` upward
+    is eligible at all.
     """
-    if primary is None:
-        return None
-
-    if mutate_counter:
-        count = primary.increment_core_route_count(buyer_tier)
-        db.flush()
-    else:
-        count = primary.get_core_route_count(buyer_tier) + 1  # peek without persisting
-
-    if count % 2 == 1:
-        return primary  # odd → keep
-
-    # even → pass up to the next ELIGIBLE upline above the primary (compressed)
-    upline = _next_eligible_upline(db, _sponsor_of(db, primary), buyer_tier)
-    return upline if upline is not None else primary  # none above → primary keeps
+    current = start
+    seen: set[int] = set()  # cycle guard
+    last_eligible: User | None = None
+    while current is not None and current.id not in seen:
+        seen.add(current.id)
+        if _is_eligible(db, current, buyer_tier):
+            last_eligible = current
+            if mutate_counter:
+                count = current.increment_core_route_count(buyer_tier)
+                db.flush()
+            else:
+                count = current.get_core_route_count(buyer_tier) + 1  # peek without persisting
+            if count % 2 == 1:
+                return current  # odd → keep, walk stops here
+            # even → keep walking up past this recipient
+        current = (
+            db.query(User).filter_by(id=current.sponsor_id).first()
+            if current.sponsor_id else None
+        )
+    return last_eligible  # None if nobody eligible was ever found
 
 
 def compute_pack_split(
@@ -120,28 +143,28 @@ def compute_pack_split(
     second_half = core_total - first_half  # exact sum
     platform_amount = Decimal("0")         # only unroutable Core halves land here
 
-    # First eligible upline: compress from the buyer's direct sponsor upward.
-    first = _next_eligible_upline(db, _sponsor_of(db, buyer), buyer_tier)
-    # Second eligible upline: compress from the first eligible's sponsor upward.
-    second = (
-        _next_eligible_upline(db, _sponsor_of(db, first), buyer_tier)
-        if first is not None else None
-    )
-    # No DISTINCT second eligible upline above the first (e.g. the buyer's direct
-    # sponsor is Admin, who has no sponsor of their own) → the sole eligible
-    # upline absorbs both halves instead of forfeiting the second to platform
-    # profit. Runs through its own independent odd/even resolution below, same
-    # as any other targeting.
-    if first is not None and second is None:
-        second = first
-
     uplines: list[tuple[User, Decimal]] = []
-    for primary, amount in ((first, first_half), (second, second_half)):
-        recipient = _resolve_recipient(db, primary, buyer_tier, mutate_counter)
-        if recipient is None:
-            platform_amount += amount   # no eligible upline → platform (per Core rule)
-        else:
-            uplines.append((recipient, amount))
+
+    # First half: one continuous walk from the buyer's direct sponsor upward.
+    first_recipient = _walk_core_half(db, _sponsor_of(db, buyer), buyer_tier, mutate_counter)
+    if first_recipient is None:
+        # No eligible upline anywhere in the chain → nothing for the second
+        # half to reach either — both fold to platform profit.
+        platform_amount += first_half + second_half
+    else:
+        uplines.append((first_recipient, first_half))
+        # Second half: the SAME walk, continuing from one level above wherever
+        # the first half actually landed (not the first half's original
+        # pre-parity candidate).
+        second_recipient = _walk_core_half(
+            db, _sponsor_of(db, first_recipient), buyer_tier, mutate_counter
+        )
+        if second_recipient is None:
+            # No distinct eligible upline above the first recipient → the sole
+            # eligible upline absorbs the second half too, via its OWN fresh,
+            # independent odd/even targeting (not a copy of the first result).
+            second_recipient = _walk_core_half(db, first_recipient, buyer_tier, mutate_counter)
+        uplines.append((second_recipient, second_half))
 
     return PackSplit(
         uplines=uplines,
