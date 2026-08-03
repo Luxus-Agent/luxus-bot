@@ -32,11 +32,14 @@ frontend/src/
   pages/RevenueEngine.jsx # user: self-scoped Core routing preview (no Stream/Boost — platform-wide)
   pages/ + pages/admin/   # user + admin dashboards (admin: AdminRevenueEngines.jsx — Core/Stream/Boost viz)
                           # NOTE: no standalone Wallet page — balances/history live in Dashboard + Transactions
+  pages/Profile.jsx      # Change Password card reuses the forgot-password/reset-password OTP endpoints
+                          # (own email pre-filled) rather than a current-password endpoint; logs out after reset
   pages/Login.jsx, Register.jsx, ForgotPassword.jsx, VerifyEmail.jsx # share one auth-page look: full-bleed
                           # assets/login-bg.png + dark gradient overlay behind a `bg-panel` card, Logo inside
                           # the card (not above it) — match this exactly if you touch/add an auth page
 backend/app/
   api/auth.py            # register (sponsor_username), verify-email, login (username), reset — usernames case-insensitive
+                          # forgot-password 404s an unregistered email (deliberate disclosure — not anti-enumeration)
   api/wallet.py          # balances / transactions (+ tx_hash) / earnings (+ Completed/Pending split) / repurchase / BEP-20 address / core-preview
   api/agents.py          # GET /agents/purchases (read-only ownership)
   api/admin.py           # users, freeze/unfreeze, treasury transfer, platform freeze, manual credit, matrix/core viz, live on-chain wallet balances

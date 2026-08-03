@@ -45,6 +45,7 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
   platform-controlled wallets (Platform Fee, Admin Income, Repurchase Reserve), auto-refreshing, with a
   low-gas warning on the Repurchase Reserve wallet (the only one that pays its own gas).
 - ✉️ **Email OTP** — verification on register, password reset, and BEP-20 address confirmation.
+- 🔑 **In-app Change Password** — Profile page lets a logged-in user change their password via the same email-OTP flow as Forgot Password, no separate current-password endpoint.
 
 ---
 
@@ -305,7 +306,7 @@ POST /auth/verify-email      → verify OTP, mark email verified
 POST /auth/login             → login with USERNAME + password → returns JWT (blocked until email verified)
 
 Password reset:
-POST /auth/forgot-password   → sends reset OTP (1h expiry)
+POST /auth/forgot-password   → sends reset OTP (1h expiry); 404 if the email isn't registered
 POST /auth/reset-password    → validates OTP, sets new password
 
 Resend OTP:
@@ -316,6 +317,17 @@ GET  /auth/check-username?username=<name> → { "available": true/false }
 ```
 
 **Note:** Every user must register under a sponsor — the sponsor's **username** is required. The platform admin is the root sponsor and is created directly in the database.
+
+**`/auth/forgot-password` returns 404 for an unregistered email** rather than the more common
+"always return 200, never reveal whether the email exists" anti-enumeration pattern — QA flagged
+the always-200 version because it silently advanced the user to the OTP-entry screen for an email
+that was never going to receive a code. This is a deliberate tradeoff of user-enumeration
+resistance for clearer UX; revisit with rate-limiting if enumeration abuse becomes a concern.
+
+**Change Password** (logged-in users, `/profile`) doesn't have a dedicated endpoint — it reuses
+`POST /auth/forgot-password` + `POST /auth/reset-password` with the user's own email pre-filled,
+so a password change still requires proving email access via OTP rather than just the old
+password. On success the user is signed out and redirected to `/login`.
 
 The register form validates **live** as you type: username availability, **sponsor existence** (both via `GET /auth/check-username`), and the **BEP-20 wallet address** format (`0x` + 40 hex). An invalid sponsor or wallet address blocks submission with inline feedback. The wallet address is stored on the user and later used by the distribution endpoint below.
 

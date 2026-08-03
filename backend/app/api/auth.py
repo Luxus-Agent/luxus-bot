@@ -253,16 +253,18 @@ async def forgot_password(
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter_by(email=payload.email).first()
-    # Always return 200 — never reveal whether the email exists
-    if user:
-        otp = _generate_otp()
-        user.password_reset_code = otp
-        user.password_reset_expires = datetime.utcnow() + timedelta(hours=OTP_RESET_EXPIRE_HOURS)
-        db.commit()
-        background_tasks.add_task(send_password_reset_email, user.email, otp)
-        logger.info("AUTH otp_sent: type=password_reset user_id=%d email=%s", user.id, user.email)
+    if not user:
+        logger.warning("AUTH forgot_password failed: email not registered email=%s", payload.email)
+        raise HTTPException(status_code=404, detail="No account found with this email")
 
-    return {"message": "If that email is registered, a reset code has been sent"}
+    otp = _generate_otp()
+    user.password_reset_code = otp
+    user.password_reset_expires = datetime.utcnow() + timedelta(hours=OTP_RESET_EXPIRE_HOURS)
+    db.commit()
+    background_tasks.add_task(send_password_reset_email, user.email, otp)
+    logger.info("AUTH otp_sent: type=password_reset user_id=%d email=%s", user.id, user.email)
+
+    return {"message": "A reset code has been sent to your email"}
 
 
 # ── Reset password ────────────────────────────────────────────────────────────
