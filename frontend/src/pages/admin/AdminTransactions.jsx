@@ -23,8 +23,17 @@ const TX_COLOR = {
 const INCOME = ['core_income', 'stream_payout', 'boost_payout', 'sponsor_milestone_income', 'transfer_in', 'deposit']
 const EXPENSE = ['withdrawal', 'transfer_out', 'purchase', 'agent_purchase']
 // Still moving through the platform, not yet delivered to the user's real wallet —
-// same definition as the user-facing Transactions page (see PENDING there).
-const PENDING = ['repurchase_hold', 'stream_payout', 'boost_payout', 'sponsor_milestone_income']
+// same per-row (not per-type) definition as the user-facing Transactions page
+// (see isPendingTx there): repurchase_hold is always pending; stream_payout/
+// boost_payout/sponsor_milestone_income are pending only until their own
+// tx_hash is set (settled instantly on-chain via matrix_runtime._settle_or_credit).
+const ALWAYS_PENDING = ['repurchase_hold']
+const SETTLES_ON_CHAIN = ['stream_payout', 'boost_payout', 'sponsor_milestone_income']
+function isPendingTx(t) {
+  if (ALWAYS_PENDING.includes(t.transaction_type)) return true
+  if (SETTLES_ON_CHAIN.includes(t.transaction_type)) return !t.tx_hash
+  return false
+}
 
 export default function AdminTransactions() {
   const [transactions, setTransactions] = useState([])
@@ -46,7 +55,7 @@ export default function AdminTransactions() {
   const filtered = transactions.filter(t => {
     if (filterType !== 'all' && t.transaction_type !== filterType) return false
     if (filterStatus !== 'all') {
-      const isPending = PENDING.includes(t.transaction_type)
+      const isPending = isPendingTx(t)
       if (filterStatus === 'Pending' && !isPending) return false
       if (filterStatus === 'Completed' && isPending) return false
     }
@@ -143,7 +152,7 @@ export default function AdminTransactions() {
               const sign = isNeg ? '−' : isIncome ? '+' : ''
               const amountColor = isNeg ? '#FF4D6A' : isIncome ? 'var(--accent)' : 'var(--text-secondary)'
               const color = TX_COLOR[ttype] || 'var(--text-secondary)'
-              const isPending = PENDING.includes(ttype)
+              const isPending = isPendingTx(tx)
               return (
                 <div key={tx.id} className="flex sm:grid sm:grid-cols-8 items-center gap-3 px-5 py-3">
                   <div className="col-span-2 flex items-center gap-2 min-w-0">

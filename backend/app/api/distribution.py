@@ -28,7 +28,7 @@ from app.api.deps import get_current_user, require_platform_active
 from app.config import settings
 from app.core.platform_state import ensure_platform_active
 from app.core.user_lookup import get_user_by_username, usernames_equal
-from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE, debit_withdrawable
+from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE, debit_withdrawable, resolve_payout_address
 from app.database import get_db
 from app.models.agent import AGENT_TIER_PLATFORM_FEE, AGENT_TIER_PRICES, AgentPurchase
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
@@ -336,13 +336,6 @@ def _platform_user_id(db: Session) -> int | None:
     return row[0] if row else None
 
 
-def _resolve_bep20_address(db: Session, user: User) -> str | None:
-    """User's payout address: registration address, else latest verified, else None.
-    Only returns it if it is a valid BEP-20 address."""
-    addr = user.wallet_address or _verified_addresses(db, [user.id]).get(user.id)
-    return addr if addr and _BEP20_RE.match(addr) else None
-
-
 def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
     """
     Write reporting Transaction rows for a settled on-chain pack purchase so the
@@ -518,7 +511,7 @@ def pack_purchase(
     recipients: list[dict] = []
 
     # Buyer entry (informational — frontend confirms it matches the connected wallet).
-    buyer_addr = _resolve_bep20_address(db, buyer)
+    buyer_addr = resolve_payout_address(db, buyer)
     recipients.append({
         "role": "buyer",
         "level": 0,
@@ -538,7 +531,7 @@ def pack_purchase(
     unpaid: dict[int, list] = {}   # user_id -> [user, gross_amount] — eligible Core recipient, no wallet on file
     unpaid_order: list[int] = []
     for user, amount in split.uplines:
-        addr = _resolve_bep20_address(db, user)
+        addr = resolve_payout_address(db, user)
         if addr is None:
             platform_amount += amount   # no valid address → platform (missing-upline rule)
             if user.id in unpaid:

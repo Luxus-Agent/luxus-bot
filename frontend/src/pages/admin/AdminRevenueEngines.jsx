@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AdminLayout as Layout } from '../../components/Layout'
 import api from '../../api/client'
 import toast from 'react-hot-toast'
-import { CoreExplainerDiagram, CorePreviewTable } from '../../components/CoreRoutingViz'
+import { CorePreviewTable, DownlineColumn } from '../../components/CoreRoutingViz'
 import { tierDisplayName } from '../../utils/agentTiers'
 
 const LEVEL_LABELS = { 1: 'Level 1 (3)', 2: 'Level 2 (9)', 3: 'Level 3 (27)' }
@@ -71,37 +71,8 @@ function CoreSimulator() {
 }
 
 // ── Core tab: direct downline split into odd/even (left/right) columns ───────
-
-function DownlineColumn({ title, color, members }) {
-  return (
-    <div className="rounded-lg p-3" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
-      <p className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color }}>{title}</p>
-      {members.length === 0 ? (
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>None</p>
-      ) : (
-        <div className="space-y-1.5">
-          {members.map(m => (
-            <div
-              key={m.username}
-              className="flex items-center justify-between px-3 py-2 rounded-lg text-xs"
-              style={{ background: `color-mix(in srgb, ${color} 8%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 25%, transparent)` }}
-            >
-              <span className="text-white font-medium">#{m.position} · @{m.username}</span>
-              <div className="flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-                <span>{m.highest_active_tier > 0 ? tierDisplayName(m.highest_active_tier) : 'No agent'}</span>
-                {!m.is_active && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(255,77,106,0.12)', color: '#FF4D6A' }}>
-                    FROZEN
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
+// DownlineColumn moved to CoreRoutingViz.jsx so the user-facing Revenue Engine
+// page can share the same rendering.
 
 function CoreDownlineTable() {
   const [username, setUsername] = useState('')
@@ -471,7 +442,6 @@ export default function AdminRevenueEngines() {
           <>
             {tab === 'core' && (
               <div className="space-y-4">
-                <CoreExplainerDiagram />
                 <CoreSimulator />
                 <CoreDownlineTable />
               </div>

@@ -93,6 +93,17 @@ class MatrixLevelQueue(Base):
     next_position: position_number that will be assigned to the next entry.
     A level pays out (advancing head_position) whenever
     next_position - head_position reaches the level's threshold.
+
+    real_joins_since_head: how many REAL (non-reentry) joins have arrived since
+    the CURRENT head became head — drives per-joiner incremental payouts (see
+    matrix_engine.py's module docstring). This can't be derived from
+    `next_position - head_position` alone: re-entries occupy queue slots too
+    (they count toward the completion threshold, per spec), but they must
+    NEVER themselves trigger a payout — a re-entry didn't bring in a real
+    dollar, so crediting the head for one would manufacture money from
+    nothing. Explicitly tracking only real joins avoids that: it's incremented
+    on every real join, left untouched by re-entries, and reset to 0 the
+    instant the head pops (a fresh count for whoever's head next).
     """
 
     __tablename__ = "matrix_level_queues"
@@ -107,6 +118,7 @@ class MatrixLevelQueue(Base):
     level: Mapped[int] = mapped_column(Integer, nullable=False)  # 1, 2, or 3
     head_position: Mapped[int] = mapped_column(Integer, default=1)
     next_position: Mapped[int] = mapped_column(Integer, default=1)
+    real_joins_since_head: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class MatrixQueueSlot(Base):
@@ -145,15 +157,18 @@ class MatrixQueueSlot(Base):
 class PendingKind(str, enum.Enum):
     PAYOUT = "payout"
     SPONSOR = "sponsor"
+    REENTRY = "reentry"  # Spawn a completed level's re-entries. Never credits a wallet.
 
 
 class MatrixPendingPayout(Base):
     """
     Durable backlog of matrix level-completion work not yet credited.
 
-    A level completion (payout OR sponsor share) is queued here the moment it's
-    detected — see matrix_engine._append_to_level, called from place_real_join /
-    place_level_reentry — and only removed once actually credited. This makes
+    A payout increment (credited the instant a contributing joiner arrives), a
+    level completion's sponsor share, or the re-entries a completion grants, is
+    queued here the moment it's detected — see matrix_engine._append_to_level,
+    called from place_real_join / place_level_reentry — and only removed once
+    actually processed. This makes
     the payout cascade resumable across requests instead of an in-memory list
     that vanishes if a single purchase's cascade is cut off at a step cap.
 
@@ -174,11 +189,17 @@ class MatrixPendingPayout(Base):
         Enum(PendingKind, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
     )
+    # Meaning is kind-dependent (see matrix_engine.py's PendingPayout/PendingReentry
+    # docstrings): PAYOUT rows are now an *incremental per-joiner* credit — this is
+    # the id of the MatrixQueueSlot that just JOINED and triggered this specific
+    # increment (not the head's slot), so every increment naturally gets a distinct
+    # reference at drain time. SPONSOR and REENTRY rows still use the completed
+    # HEAD's slot id, same as before.
     matrix_position_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    # PAYOUT: the position owner who gets credited. SPONSOR: the position owner
-    # whose *current* sponsor gets credited (resolved lazily at drain time, same
-    # as the old in-memory _process_sponsor_payout — sponsor status can only be
-    # checked when the row is actually processed, not when it's queued).
+    # PAYOUT/REENTRY: the position owner who gets credited / who re-enters. SPONSOR:
+    # the position owner whose *current* sponsor gets credited (resolved lazily at
+    # drain time, same as the old in-memory _process_sponsor_payout — sponsor status
+    # can only be checked when the row is actually processed, not when it's queued).
     owner_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     agent_tier: Mapped[int] = mapped_column(Integer, nullable=False)
     system_type: Mapped[SystemType] = mapped_column(
@@ -186,9 +207,10 @@ class MatrixPendingPayout(Base):
         nullable=False,
     )
     level: Mapped[int] = mapped_column(Integer, nullable=False)
-    # PAYOUT: wallet_amount. SPONSOR: the sponsor-share amount.
+    # PAYOUT: this joiner's incremental wallet credit. SPONSOR: the sponsor-share
+    # amount. REENTRY: unused (0) — no wallet is ever touched for this kind.
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
-    # Only populated for kind=PAYOUT (drives the re-entries it grants).
+    # Only populated for kind=REENTRY (drives the re-entries it grants).
     reentry_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
     reentry_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

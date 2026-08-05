@@ -29,7 +29,7 @@ frontend/src/
   utils/agentTiers.js    # tier -> display name (Trial/Start/Build/Growth) — display only, backend pack_name unchanged
   components/EarningsBreakdown.jsx # shared Completed/Pending/Fee breakdown rows — user Dashboard "Total Earnings"
                           # card + Transactions "Total In" tile (both click-to-expand); always foots to the total
-  pages/RevenueEngine.jsx # user: self-scoped Core routing preview (no Stream/Boost — platform-wide)
+  pages/RevenueEngine.jsx # user: self-scoped Core preview + downline odd/even table (no Stream/Boost — platform-wide)
   pages/ + pages/admin/   # user + admin dashboards (admin: AdminRevenueEngines.jsx — Core/Stream/Boost viz)
                           # NOTE: no standalone Wallet page — balances/history live in Dashboard + Transactions
   pages/Profile.jsx      # Change Password card reuses the forgot-password/reset-password OTP endpoints
@@ -38,20 +38,19 @@ frontend/src/
                           # assets/login-bg.png + dark gradient overlay behind a `bg-panel` card, Logo inside
                           # the card (not above it) — match this exactly if you touch/add an auth page
 backend/app/
-  api/auth.py            # register (sponsor_username), verify-email, login (username), reset — usernames case-insensitive
-                          # forgot-password 404s an unregistered email (deliberate disclosure — not anti-enumeration)
+  api/auth.py            # register/verify-email/login/reset, usernames case-insensitive; forgot-password 404s an unregistered email (deliberate disclosure)
   api/wallet.py          # balances / transactions (+ tx_hash) / earnings (+ Completed/Pending split) / repurchase / BEP-20 address / core-preview
   api/agents.py          # GET /agents/purchases (read-only ownership)
   api/admin.py           # users, freeze/unfreeze, treasury transfer, platform freeze, manual credit, matrix/core viz, live on-chain wallet balances
   api/distribution.py    # wallet-map + on-chain pack rail (/pack/purchase, /pack/status)
-  core/onchain.py        # auto-repurchase on-chain settlement + read-only USDT/BNB balance lookups for admin's 3 platform wallets
+  core/onchain.py        # on-chain settlement: auto-repurchase + Stream/Boost instant matrix payouts + read-only USDT/BNB lookups
   core/pack_payout.py    # Core 60% split (compression + odd/even); also Stream/Boost/admin rates
   core/proactive.py      # Core eligibility/compression helpers
   core/core_preview.py   # read-only Core routing simulator (upline) + downline odd/even table, shared admin + user
   core/matrix_engine.py + matrix_runtime.py  # Stream + Boost 3x3 matrices (LIVE)
   core/matrix_flow.py    # read-only queue-flow reconstruction (position stack + re-entry spawn pairing) for admin viz
   core/repurchase.py     # auto-repurchase sweep (LIVE)
-  core/wallet_ops.py     # credit_wallet (70/20/10), mirror_onchain_earning_split, ledger earnings, tx_hash resolver
+  core/wallet_ops.py     # credit_wallet (70/20/10 fallback), credit_main_wallet_direct (100% fallback), mirror_onchain_earning_split, resolve_payout_address, tx_hash resolver
   core/user_lookup.py    # case-insensitive username lookup/equality — use for ALL username matching, never User.username ==
   services/email_service.py # OTP emails (verify/resend/reset/address). Every template renders through
                           # `_card()`, which embeds the Luxus logo as inline CID images (not a hosted URL —
@@ -79,33 +78,32 @@ Every pack purchase applies a **60 / 30 / 10 split** (executed inside `POST /dis
   Counter only advances on `pack/status` **success**, never at `pack/purchase` order-creation.
   No eligible upline at all / no valid BEP-20 address → folds into platform fee.
 - **Stream 30%** → per-tier 3×3 matrix. Re-entries are **dummy** (no payout). 10% sponsor share at L2/L3.
-- **Boost 10%** = **9% matrix + 1% admin income**. **Single global queue** (always tier 1). Re-entries are **real**.
-- **Wallet rule (70 / 20 / 10):** every income credit → 70% main + 20% per-tier repurchase reserve + 10% software fee.
-  Core uses `mirror_onchain_earning_split`; Stream/Boost matrix payouts use `credit_wallet`. The ledger income
-  `Transaction` row itself (`CORE_INCOME`/`STREAM_PAYOUT`/`BOOST_PAYOUT`/`SPONSOR_MILESTONE_INCOME`) always records
-  the **full gross commission**, not the 70% net — see Total Earnings convention below. Any aggregate that
-  estimates "money credited to internal wallets" (e.g. `/admin/metrics`'s `total_credited_to_wallets`) must
-  apply the 70% rate to Stream/Boost/Sponsor **only** — Core's 70% is never credited to an internal wallet at all.
-- **Auto-repurchase:** when a tier's reserve hits **threshold = price + platform fee** ($11 / $22 / $55 / $111),
-  the platform auto re-buys that same tier, unbounded — re-runs Core + matrices (compounding). The flat fee → platform profit.
-  Boost reserve accrues in tier-1. Frozen/inactive reserves are held. See `core/repurchase.py`.
+- **Boost 10%** = **9% matrix + 1% admin income**. **Single global queue** (always tier 1). Re-entries are **real**. ⚠️ **Unconfirmed with client:** no check for new-joiner == current head, so a member can pay themselves via their own next purchase (or own auto-repurchase — same gap hits Stream too) — flagged 2026-08-05, pending decision (see README's Boost Agent section).
+- **Wallet rule (70/20/10) — Stream + Core only:** every Stream matrix payout and Core commission splits 70% main / 20% repurchase reserve / 10% software fee (`credit_wallet`; Core via `mirror_onchain_earning_split`). **Boost skips the split** — Boost payouts + Boost-sourced sponsor share credit **100%** straight to MAIN (`credit_main_wallet_direct`), no reserve/fee.
+  Stream/Boost payouts are **per-joiner incremental** (credited the instant each contributing member joins, not a lump sum at level completion — see `matrix_engine.py`). Income `Transaction` rows always record the **full gross commission**.
+  Aggregates estimating "money credited to wallets" (`/admin/metrics`, `GET /wallet/earnings`) apply 70% to Stream/Core, **100% to Boost** — sponsor share follows its source system (`reference_id`-tagged, since it has no source column).
+- **Stream/Boost payouts (+ sponsor share) settle instantly on-chain** the same instant they're decided (`matrix_runtime._settle_or_credit`, mirroring how Core already works) — Stream broadcasts only its **70%** share straight to the recipient's own wallet (20%/10% still booked internally via `mirror_onchain_earning_split`); Boost broadcasts the **full 100%**. Falls back to the internal-only crediting above whenever settlement isn't possible: `PLATFORM_FEE_SIGNER_PRIVATE_KEY` unset (disabled, today's default), no wallet address on file, or the broadcast fails (best-effort, never raises — `core/onchain.py`). The settled row's `Transaction.tx_hash` is the signal Completed/Pending now keys off of for these types — see Earnings Transparency below.
+- **Auto-repurchase:** when a tier's reserve hits **threshold = price + platform fee** ($11 / $22 / $55 / $111), the platform auto re-buys that same tier, unbounded — re-runs Core + matrices (compounding). The flat fee → platform profit. Reserve is fed by Core + Stream only (Boost credits 100% to MAIN, no reserve — see Wallet rule above). Frozen/inactive reserves are held. See `core/repurchase.py`.
 
 > Payout schedules per tier/level are in @README.md (Revenue Mechanics).
 
 ## Earnings Transparency — Completed vs Pending
 
 `GET /wallet/earnings` returns `total_earned` (unchanged gross ledger sum) plus a
-breakdown: **`completed`** (Core's 70% — already paid on-chain to the recipient's own
-wallet at purchase time) + **`pending_reserve`** (live REPURCHASE wallet sum, all
-tiers — building toward the next auto-repurchase) + **`pending_payout`** (live MAIN
-wallet sum — Stream/Boost's 70% share, internal-only until an admin payout run pays
-it out). These three **always foot exactly to `total_earned`**; the frontend derives
-a 4th "platform software fee" line as the remainder so nothing is ever silently
-unaccounted for. Shared UI: `components/EarningsBreakdown.jsx`, used by the user
-Dashboard's "Total Earnings" card, the Transactions "Total In" tile, and mirrored
-(same `PENDING` type list — `repurchase_hold` + `stream_payout`/`boost_payout`/
-`sponsor_milestone_income`, NOT `core_income`) as a Completed/Pending Status column +
-filter on both `Transactions.jsx` and `AdminTransactions.jsx` — keep them in sync.
+breakdown: **`completed`** (Core's 70% on-chain share + any Stream/Boost/sponsor row
+that **settled on-chain**, `Transaction.tx_hash IS NOT NULL`) + **`pending_reserve`**
+(live REPURCHASE wallet sum, all tiers — building toward the next auto-repurchase) +
+**`pending_payout`** (live MAIN wallet sum — only *unsettled* Stream/Boost/sponsor
+share, internal-only until an admin payout run pays it out). These three **always
+foot exactly to `total_earned`**; the frontend derives a 4th "platform software fee"
+line as the remainder so nothing is ever silently unaccounted for. Shared UI:
+`components/EarningsBreakdown.jsx`, used by the user Dashboard's "Total Earnings"
+card, the Transactions "Total In" tile, and mirrored as a Completed/Pending Status
+column + filter on both `Transactions.jsx` and `AdminTransactions.jsx` —
+`repurchase_hold` is always Pending; `stream_payout`/`boost_payout`/
+`sponsor_milestone_income` are Pending **only when their own `tx_hash` is falsy**
+(per-row now, not a flat type list — `isPendingTx` in both files, keep in sync);
+`core_income` stays always Completed.
 
 ## Revenue Engine Visualization (read-only)
 
@@ -118,14 +116,14 @@ filter on both `Transactions.jsx` and `AdminTransactions.jsx` — keep them in s
   them (`GET /admin/matrix/queue-flow`, `core/matrix_flow.py`; "Flow View" toggle per level card).
   Spawn pairing is reconstructed (not stored) from `MatrixQueueSlot.is_reentry` + arrival order —
   see that module's docstring for why the reconstruction is exact, not heuristic.
-- **User** `/revenue-engine`: same Core simulator, **self-scoped only** (`GET /wallet/core-preview`,
-  no username param) — no Stream/Boost tab (those queues are platform-wide, not per-user).
+- **User** `/revenue-engine`: same Core simulator + downline odd/even table, both **self-scoped only**
+  (`GET /wallet/core-preview` / `GET /wallet/core-downline`, no username param) — no Stream/Boost tab (those
+  queues are platform-wide, not per-user). No static explainer diagram on either page — `CoreExplainerDiagram` was removed as dead code once nothing rendered it.
 - Core simulator/downline endpoints only **peek** at the per-tier `core_route_count_tierN` (never persist) — safe to
   run repeatedly. If the target already **owns** the previewed tier, returns the **actual recorded result** from
-  that settled purchase instead (a peek would otherwise diverge further from history every time anyone else's
-  purchase advances the same recipients' counters). Shared logic: `core/core_preview.py`; shared UI:
-  `frontend/src/components/CoreRoutingViz.jsx` (`CorePreviewTable` — a single "Purchase | Recipients (both
-  halves)" table row for both the hypothetical and settled case).
+  that settled purchase instead (diverges further from history otherwise). Shared logic: `core/core_preview.py`;
+  shared UI: `frontend/src/components/CoreRoutingViz.jsx` (`CorePreviewTable` for the simulator, `DownlineColumn`
+  for the odd/even table — both used by admin's any-username version and the user's self-scoped version).
 - The actual-result path also surfaces recipients whose Core half was decided by routing but never actually
   paid because they had no wallet address on file (folded into `platform_fee` at settlement — see
   `core_unpaid` below) — named by username instead of silently vanishing into "platform profit" with no
@@ -157,19 +155,21 @@ filter on both `Transactions.jsx` and `AdminTransactions.jsx` — keep them in s
 
 - `POST /distribution/pack/purchase` (JWT, `require_platform_active`) → returns recipient split (sums to price). Roles: `buyer`, `upline` (70% + `gross_amount`), `repurchase_reserve`, `software_fee`, `admin`, `platform_fee` (the latter also carries the Stream 30% + Boost-pool 9% shares — tracked internally, no separate on-chain wallet), `core_unpaid` (reporting-only — a Core half whose decided recipient had no wallet address; `amount: 0`, `has_wallet_address: false`, so it's inert on every on-chain/ledger path; the real dollars are already inside `platform_fee`. Exists purely so `core-preview`'s actual-result view can name the intended recipient instead of showing nothing).
 - `POST /distribution/pack/status` → records success(tx_hash)/failed; on success runs ownership + ledger + matrices + repurchase (idempotent, PENDING-guarded).
-  Both Transactions pages (user + admin) show a **Tx Hash** column (resolved via `wallet_ops.resolve_tx_hashes`,
-  joining `Transaction.reference_id` → `PackPurchase.order_id` / `PayoutBatch.batch_id`) linking to BscScan —
-  only rows tied to a settled on-chain event have one; pure ledger-only types (e.g. `stream_payout`) show `—`.
+  Both Transactions pages (user + admin) show a **Tx Hash** column — prefers the row's own `Transaction.tx_hash`
+  (set when a Stream/Boost/sponsor payout settled instantly on-chain, see below) and falls back to
+  `wallet_ops.resolve_tx_hashes` (joining `Transaction.reference_id` → `PackPurchase.order_id` / `PayoutBatch.batch_id`)
+  for Core / member-payout rows; anything still fully internal-only shows `—`.
 - `GET /distribution/wallet-map` → read-only user+downline wallet/profit map for MultiSender. Distribute against `profit.withdrawable`.
-- Wallet config (`.env`): `PLATFORM_FEE_WALLET`, `ADMIN_INCOME_WALLET` / `REPURCHASE_RESERVE_WALLET` (each falls back to `PLATFORM_FEE_WALLET`). **Set distinct addresses before go-live**, and fund `REPURCHASE_RESERVE_WALLET` with BNB directly — it pays its own gas for its automated send (no separate gas wallet). `PLATFORM_FEE_WALLET` is receive-only (no signer key) — it's only ever a recipient address, never sends on-chain itself.
-- `POST /distribution/payout/create` + `/payout/status` (admin-only) — runs the same MultiSender contract in reverse (platform wallet -> every member with a positive withdrawable balance) to actually pay out accumulated internal earnings. Mirrors `pack/purchase`/`pack/status`'s PENDING-guarded lifecycle; on success debits each recipient via `debit_withdrawable` so the money isn't offered again. This is the only member-payout rail — no automatic/unattended sweep.
-- Auto-repurchase's on-chain settlement (`app/core/onchain.py`) is unattended by design (no admin approval step) — set `REPURCHASE_SIGNER_PRIVATE_KEY` (**live private key, treat like `SECRET_KEY`, never commit**) + `BSC_RPC_URL` to enable; empty key keeps it internal-ledger-only, today's default. Best-effort: any broadcast failure is logged and swallowed, never blocks a purchase.
+- Wallet config (`.env`): `PLATFORM_FEE_WALLET`, `ADMIN_INCOME_WALLET` / `REPURCHASE_RESERVE_WALLET` (each falls back to `PLATFORM_FEE_WALLET`). **Set distinct addresses before go-live**, and fund `REPURCHASE_RESERVE_WALLET` with BNB directly — it pays its own gas for its automated send (no separate gas wallet). `PLATFORM_FEE_WALLET` receives every purchase's Stream/Boost share on-chain, and — once `PLATFORM_FEE_SIGNER_PRIVATE_KEY` is set — also **sends** from it (instant Stream/Boost payout settlement below); fund it with its own BNB for gas too in that case.
+- `POST /distribution/payout/create` + `/payout/status` (admin-only) — runs the same MultiSender contract in reverse (platform wallet -> every member with a positive withdrawable balance) to actually pay out accumulated internal earnings. Mirrors `pack/purchase`/`pack/status`'s PENDING-guarded lifecycle; on success debits each recipient via `debit_withdrawable` so the money isn't offered again. This is the only member-payout rail — no automatic/unattended sweep. Now drains a smaller pool than before: only Stream/Boost payouts that stayed internal (settlement disabled/failed/no address) ever land here.
+- Both on-chain settlements are unattended by design (no admin approval step), best-effort (any broadcast failure logged/swallowed, never blocks a purchase), and use `BSC_RPC_URL`: auto-repurchase (`app/core/onchain.py`) via `REPURCHASE_SIGNER_PRIVATE_KEY`, and Stream/Boost matrix payouts + sponsor share (`matrix_runtime._settle_or_credit`) via `PLATFORM_FEE_SIGNER_PRIVATE_KEY`. **Live private keys, treat like `SECRET_KEY`, never commit** — empty key keeps either feature internal-ledger-only, today's default.
 - `GET /admin/treasury/onchain-wallets` (admin-only, read-only) — live USDT + native BNB balance for all
   three platform wallets (`core/onchain.get_wallet_onchain_balances`, a plain `balanceOf` + `eth_getBalance`
   read, no signing). Surfaced on Admin Overview's "Platform Wallets" section, polling every 20s while the
-  tab is visible (paused via `document.visibilityState` otherwise). Watch the Repurchase Reserve wallet's
-  BNB specifically — it's the only one of the three that ever broadcasts its own tx (the auto-repurchase
-  settlement above) and thus the only one that needs gas; the other two are receive-only.
+  tab is visible (paused via `document.visibilityState` otherwise). Watch **Repurchase Reserve** and
+  **Platform Fee** wallets' BNB — both can broadcast their own tx (auto-repurchase / instant Stream-Boost
+  settlement, each behind its own signer key above) and need gas; Admin Income stays receive-only. Frontend
+  low-gas warning (`AdminDashboard.jsx`'s `NEEDS_GAS_KEYS`) covers both — keep in sync if a third gets a signer.
 
 ## Removed (do not reintroduce without asking)
 
@@ -189,7 +189,7 @@ conda activate luxus && cd backend && uvicorn app.main:app --reload   # :8000, /
 # Frontend
 cd frontend && npm run dev                                            # :3000
 # Fresh DB: python create_tables.py && python seed_admin.py
-# Existing DB migrations: migrate_v14/v15/v17/v18/v19/v20/v21/v22/v23.py; backfill_repurchase_reserve.py
+# Existing DB migrations: migrate_v14/v15/v17/v18/v19/v20/v21/v22/v23/v24/v25.py; backfill_repurchase_reserve.py
 ```
 
 - **Touch only what you must** — this is a financial system; keep changes scoped.

@@ -46,6 +46,15 @@ class Transaction(Base):
     amount: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
     reference_id: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    # On-chain settlement tx hash, populated ONLY for rows this row's own crediting
+    # function actually broadcast on-chain (Stream/Boost matrix payouts + their
+    # sponsor-share bonus — see matrix_runtime._settle_or_credit). Core/payout-batch
+    # rows are NOT written here; their tx hash is resolved separately via
+    # wallet_ops.resolve_tx_hashes (reference_id -> PackPurchase/PayoutBatch), since
+    # those settle as part of a shared multisender transaction, not a per-row one.
+    # NULL means "still internal-only" — the signal the Completed/Pending status
+    # (frontend) and GET /wallet/earnings' `completed` figure key off of.
+    tx_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="transactions")

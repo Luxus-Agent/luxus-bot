@@ -53,10 +53,46 @@ are DUMMY (fill a slot to keep the queue moving, earn nothing, and — per spec 
 spawn no further re-entries themselves: "All Re-entries instances should be
 placed as dummy ones. It will not receive any income.").
 
+Per-joiner incremental payouts (client-confirmed correction — NOT a lump sum at
+threshold): a level's `wallet_amount` is not credited in one shot when the head
+is paid. It's delivered as `payout_join_count` separate credits — one the
+INSTANT each contributing brand-new joiner arrives — where `payout_join_count
+= wallet_amount / reentry_amount` (a fixed integer per level: 2/5/13 for
+Stream L1/L2/L3, 2/5/12 for Boost L1/L2/L3). E.g. Stream L1 (threshold 3,
+payout_join_count 2): the 1st new joiner's arrival credits $1 to the head
+immediately, the 2nd joiner's arrival credits another $1 immediately, and the
+3rd (threshold-completing) joiner's arrival pays nothing itself — it pops the
+head and creates its 1 re-entry instead. The head's succession is still purely
+FIFO: whoever was next in queue position becomes the new head, not whichever
+joiner happened to arrive last. Level completion — the head pop, re-entry
+creation, sponsor share, and platform residual — still triggers at exactly the
+same brand-new-join count as before (`required_total`); only the *wallet_amount
+portion* moved from "one credit at completion" to "N credits, one per
+contributing joiner, before completion." Re-entry creation itself stays a
+single batch at completion (not incremental) — spreading it out was not part
+of the client's ask, and batching preserves the self-bounding argument above.
+
+`payout_join_count` only counts REAL joins — a re-entry filling a queue slot
+NEVER itself triggers a payout (it didn't bring in a real dollar; crediting the
+head for one would manufacture money from nothing) and is invisible to the
+counter entirely, tracked via `MatrixLevelQueue.real_joins_since_head` (see
+that column's docstring). This matters starting from a queue's SECOND head
+onward: that head's first queued slot is always its predecessor's re-entry
+(created immediately on completion, before any other purchase can reach this
+level's locked queue row), so counting raw queue positions instead of real
+joins would under-pay every subsequent head by `reentry_count` real joins.
+
+Boost payouts (and Boost's L2/L3 sponsor-share bonus) skip the 70/20/10 wallet
+split entirely (client-confirmed correction) — the full amount goes straight
+to the recipient's MAIN wallet, no software fee, no repurchase reserve. Only
+Stream keeps the 70/20/10 split. This module doesn't apply either split itself
+(see the module-level note below); it only decides the amounts.
+
 This module is pure/synchronous — it mutates rows and RETURNS the pending
-payouts; it does NOT credit wallets (the runtime layer does that, via the
-durable backlog — see matrix_runtime.py). Must run inside an active
-transaction, does NOT commit.
+payouts/sponsor-shares/re-entries; it does NOT credit wallets (the runtime
+layer does that, via the durable backlog — see matrix_runtime.py, which is
+also where the Stream-vs-Boost 70/20/10-vs-100% split is actually applied).
+Must run inside an active transaction, does NOT commit.
 """
 from dataclasses import dataclass
 from decimal import Decimal
@@ -74,6 +110,12 @@ class LevelConfig:
     wallet_amount: Decimal
     reentry_amount: Decimal
     reentry_count: int          # Fixed across tiers (Stream + Boost both)
+    # Number of brand-new joiners whose individual arrival each pays out
+    # reentry_amount immediately — wallet_amount / reentry_amount, always an
+    # exact integer. Always < threshold (the remaining joiners between this
+    # and threshold fund the re-entries + sponsor share + platform residual,
+    # none of which pay the joiner themselves).
+    payout_join_count: int
     # Extra 10% paid to the owner's sponsor on level completion (base amount —
     # scaled by tier_multiplier at runtime; Boost is always ×1).
     sponsor_on_completion: Decimal = Decimal("0")
@@ -82,22 +124,28 @@ class LevelConfig:
 PAYOUT_CONFIG: dict[SystemType, dict[int, LevelConfig]] = {
     SystemType.STREAM: {
         1: LevelConfig(threshold=3, wallet_amount=Decimal("2.00"),
-                       reentry_amount=Decimal("1.00"), reentry_count=1),
+                       reentry_amount=Decimal("1.00"), reentry_count=1,
+                       payout_join_count=2),
         2: LevelConfig(threshold=9, wallet_amount=Decimal("5.00"),
                        reentry_amount=Decimal("1.00"), reentry_count=3,
+                       payout_join_count=5,
                        sponsor_on_completion=Decimal("0.90")),
         3: LevelConfig(threshold=27, wallet_amount=Decimal("13.00"),
                        reentry_amount=Decimal("1.00"), reentry_count=9,
+                       payout_join_count=13,
                        sponsor_on_completion=Decimal("2.70")),
     },
     SystemType.BOOST: {
         1: LevelConfig(threshold=3, wallet_amount=Decimal("0.60"),
-                       reentry_amount=Decimal("0.30"), reentry_count=1),
+                       reentry_amount=Decimal("0.30"), reentry_count=1,
+                       payout_join_count=2),
         2: LevelConfig(threshold=9, wallet_amount=Decimal("1.50"),
                        reentry_amount=Decimal("0.30"), reentry_count=3,
+                       payout_join_count=5,
                        sponsor_on_completion=Decimal("0.27")),
         3: LevelConfig(threshold=27, wallet_amount=Decimal("3.60"),
                        reentry_amount=Decimal("0.30"), reentry_count=9,
+                       payout_join_count=12,
                        sponsor_on_completion=Decimal("0.81")),
     },
 }
@@ -109,15 +157,19 @@ def tier_multiplier(agent_tier: int) -> Decimal:
 
 @dataclass
 class PendingPayout:
-    """Triggered when a level's queue head is paid (its threshold reached)."""
-    matrix_position_id: int   # MatrixQueueSlot.id of the paid slot (reference only)
-    user_id: int
+    """
+    One INCREMENTAL payout: triggered the instant a single contributing joiner
+    arrives (not at level completion — see module docstring). `matrix_position_id`
+    is that JOINER's own MatrixQueueSlot.id (not the head's), so every increment
+    gets a distinct reference at credit time; `user_id` is the current HEAD who
+    actually receives the credit.
+    """
+    matrix_position_id: int   # the joining slot that triggered this increment
+    user_id: int              # the current head — who gets credited
     agent_tier: int
     system_type: SystemType
     level: int
-    wallet_amount: Decimal
-    reentry_amount: Decimal
-    reentry_count: int
+    wallet_amount: Decimal    # this increment's amount (reentry_amount * multiplier)
 
 
 @dataclass
@@ -129,6 +181,21 @@ class PendingSponsorPayout:
     system_type: SystemType
     level: int
     amount: Decimal      # Amount to credit to owner's sponsor
+
+
+@dataclass
+class PendingReentry:
+    """
+    Triggered when a level completes: spawn its `reentry_count` re-entries for
+    the just-paid head. Never credits a wallet — purely a queue-placement event.
+    """
+    matrix_position_id: int   # the completed head's slot id (reference only)
+    owner_user_id: int        # who re-enters (the just-paid head)
+    agent_tier: int
+    system_type: SystemType
+    level: int
+    reentry_amount: Decimal
+    reentry_count: int
 
 
 def _get_or_create_queue(
@@ -153,38 +220,80 @@ def _get_or_create_queue(
 def _append_to_level(
     db: Session, user_id: int, agent_tier: int, system_type: SystemType,
     level: int, is_dummy: bool, is_reentry: bool = False,
-) -> tuple[list[PendingPayout], list[PendingSponsorPayout]]:
+) -> tuple[list[PendingPayout], list[PendingSponsorPayout], list[PendingReentry]]:
     """
-    Append one slot to (agent_tier, system_type, level)'s own queue, then drain
-    any completions this triggers (normally 0 or 1; looped for correctness in
-    case of any bulk/edge-case gap). Returns (payouts, sponsor_payouts).
+    Append one slot to (agent_tier, system_type, level)'s own queue. Returns
+    (payouts, sponsor_payouts, reentries).
 
-    Completion check: per the spec's own worked example ("1st member gets
-    payment from 2nd,3rd,4th... popped... 2nd member: 5th,6th,7th will pay"),
-    each successive head needs `threshold` BRAND NEW joins counted from when it
-    became head — NOT merely "however many people happen to already be sitting
-    in the queue". Position 3/4 already existed by the time position 1 was
-    paid; they do NOT also count toward position 2's threshold. So completion
-    #k (0-indexed by head_position - 1) requires the cumulative join count to
-    reach `1 + threshold * (k + 1)` — this is what
-    `total_joined >= 1 + threshold * completions_so_far` checks below. A naive
-    `next_position - head_position >= threshold` check double-counts already-
-    queued members across consecutive completions and runs away.
+    Two independent things can happen for a single appended slot — never both,
+    since payout_join_count < threshold always (see LevelConfig):
+
+    1. INCREMENTAL PAYOUT — if this slot is one of the head's first
+       `payout_join_count` brand-new joins, its arrival immediately pays
+       `reentry_amount` to the CURRENT head (module docstring: per-joiner
+       incremental crediting, not a lump sum at completion).
+    2. LEVEL COMPLETION — if this slot is the `threshold`-th brand-new join,
+       the head is popped, its re-entries are queued, its sponsor share (if
+       any) is queued, and any leftover pool residual is booked as platform
+       profit. Per the spec's own worked example ("1st member gets payment
+       from 2nd,3rd,4th... popped... 2nd member: 5th,6th,7th will pay"), each
+       successive head needs `threshold` BRAND NEW joins counted from when it
+       became head — NOT merely "however many people happen to already be
+       sitting in the queue". So completion #k (0-indexed by head_position - 1)
+       requires the cumulative join count to reach `1 + threshold * (k + 1)`
+       — this is what `total_joined >= 1 + threshold * completions_so_far`
+       checks below. A naive `next_position - head_position >= threshold`
+       check double-counts already-queued members across consecutive
+       completions and runs away. Looped (not `if`) purely for defensive
+       correctness in case of any bulk/edge-case gap — in practice at most one
+       completion is possible per single appended slot.
     """
     q = _get_or_create_queue(db, agent_tier, system_type, level)
     pos_num = q.next_position
     q.next_position += 1
-    db.add(MatrixQueueSlot(
+    new_slot = MatrixQueueSlot(
         agent_tier=agent_tier, system_type=system_type, level=level,
         position_number=pos_num, user_id=user_id, is_dummy=is_dummy,
         is_reentry=is_reentry,
-    ))
+    )
+    db.add(new_slot)
     db.flush()
 
     cfg = PAYOUT_CONFIG[system_type][level]
     multiplier = tier_multiplier(agent_tier)
     payouts: list[PendingPayout] = []
     sponsors: list[PendingSponsorPayout] = []
+    reentries: list[PendingReentry] = []
+
+    # Only REAL joins can trigger an incremental payout — re-entries must never
+    # manufacture a credit for themselves (they didn't bring in a real dollar;
+    # see MatrixLevelQueue.real_joins_since_head's docstring for why this
+    # can't be derived from pos_num/head_position alone). And a join can never
+    # pay ITSELF: pos_num == q.head_position only when this slot is the very
+    # first ever created for this queue (head_position defaults to 1 on a
+    # fresh queue, matching position 1) — there's no existing head yet to pay,
+    # this new slot IS about to become the head. Every later join always has
+    # pos_num > head_position (the head is always something already sitting
+    # in the queue, never the slot currently being appended).
+    if not is_reentry and pos_num != q.head_position:
+        q.real_joins_since_head += 1
+        if q.real_joins_since_head <= cfg.payout_join_count:
+            head_slot = (
+                db.query(MatrixQueueSlot)
+                .filter_by(agent_tier=agent_tier, system_type=system_type, level=level,
+                           position_number=q.head_position)
+                .with_for_update()
+                .first()
+            )
+            if head_slot is not None and not head_slot.is_dummy:
+                payouts.append(PendingPayout(
+                    matrix_position_id=new_slot.id,
+                    user_id=head_slot.user_id,
+                    agent_tier=agent_tier,
+                    system_type=system_type,
+                    level=level,
+                    wallet_amount=cfg.reentry_amount * multiplier,
+                ))
 
     while True:
         total_joined = q.next_position - 1
@@ -200,6 +309,9 @@ def _append_to_level(
             .first()
         )
         q.head_position += 1
+        # Fresh count for whoever's head next — see real_joins_since_head's
+        # docstring. Reset unconditionally, even if the old head was dummy.
+        q.real_joins_since_head = 0
         db.flush()
         if head_slot is None:
             continue  # defensive: should never happen, positions are contiguous
@@ -209,16 +321,8 @@ def _append_to_level(
         if head_slot.is_dummy:
             continue
 
-        payouts.append(PendingPayout(
-            matrix_position_id=head_slot.id,
-            user_id=head_slot.user_id,
-            agent_tier=agent_tier,
-            system_type=system_type,
-            level=level,
-            wallet_amount=cfg.wallet_amount * multiplier,
-            reentry_amount=cfg.reentry_amount * multiplier,
-            reentry_count=cfg.reentry_count,
-        ))
+        # wallet_amount was already delivered incrementally above, one credit
+        # per contributing joiner — nothing further to pay the head here.
 
         # Realized platform profit = the level's leftover pool after the
         # wallet payout, re-entries, and sponsor share. reentry_amount is
@@ -252,30 +356,43 @@ def _append_to_level(
                 amount=cfg.sponsor_on_completion * multiplier,
             ))
 
-    return payouts, sponsors
+        if cfg.reentry_count > 0:
+            reentries.append(PendingReentry(
+                matrix_position_id=head_slot.id,
+                owner_user_id=head_slot.user_id,
+                agent_tier=agent_tier,
+                system_type=system_type,
+                level=level,
+                reentry_amount=cfg.reentry_amount * multiplier,
+                reentry_count=cfg.reentry_count,
+            ))
+
+    return payouts, sponsors, reentries
 
 
 def place_real_join(
     db: Session, user_id: int, agent_tier: int, system_type: SystemType,
-) -> tuple[list[PendingPayout], list[PendingSponsorPayout]]:
+) -> tuple[list[PendingPayout], list[PendingSponsorPayout], list[PendingReentry]]:
     """
     A real purchase's placement: adds one entry to ALL THREE level-queues
     (L1/L2/L3) for this tier+system at once — a member's downline growth
-    counts toward every level simultaneously. Returns (payouts, sponsors).
+    counts toward every level simultaneously. Returns (payouts, sponsors, reentries).
     """
     payouts: list[PendingPayout] = []
     sponsors: list[PendingSponsorPayout] = []
+    reentries: list[PendingReentry] = []
     for level in (1, 2, 3):
-        p, s = _append_to_level(db, user_id, agent_tier, system_type, level, is_dummy=False)
+        p, s, r = _append_to_level(db, user_id, agent_tier, system_type, level, is_dummy=False)
         payouts.extend(p)
         sponsors.extend(s)
-    return payouts, sponsors
+        reentries.extend(r)
+    return payouts, sponsors, reentries
 
 
 def place_level_reentry(
     db: Session, user_id: int, agent_tier: int, system_type: SystemType,
     level: int, is_dummy: bool,
-) -> tuple[list[PendingPayout], list[PendingSponsorPayout]]:
+) -> tuple[list[PendingPayout], list[PendingSponsorPayout], list[PendingReentry]]:
     """
     A re-entry granted by a level completion: feeds back into ONLY that same
     level's own queue — the key difference from a real join, and what keeps

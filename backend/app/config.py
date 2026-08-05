@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     # (today's behavior), no transaction is ever attempted. THIS IS A LIVE
     # PRIVATE KEY — never commit a real one; treat this exactly like SECRET_KEY.
     REPURCHASE_SIGNER_PRIVATE_KEY: str = ""
+    # Private key that signs Stream/Boost matrix payout settlements (and their
+    # sponsor-share bonus) — this must be PLATFORM_FEE_WALLET's own key, since
+    # that's already where Stream's 30% + Boost's 9% shares land on-chain at
+    # purchase time, and the ERC20 transfer is sent FROM whichever address this
+    # key controls. That wallet needs its own BNB for gas (no automated top-up,
+    # same requirement as REPURCHASE_SIGNER_PRIVATE_KEY above). Left empty by
+    # default: Stream/Boost payouts stay internal-ledger-only (today's
+    # behavior, credited via credit_wallet/credit_main_wallet_direct), no
+    # transaction is ever attempted. THIS IS A LIVE PRIVATE KEY — never commit
+    # a real one; treat this exactly like SECRET_KEY.
+    PLATFORM_FEE_SIGNER_PRIVATE_KEY: str = ""
 
     @property
     def admin_income_wallet(self) -> str:

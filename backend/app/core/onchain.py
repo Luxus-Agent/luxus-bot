@@ -1,24 +1,33 @@
 """
-On-chain settlement for auto-repurchase (per the client "fully automatic" spec —
-see app/core/repurchase.py).
+On-chain settlement for (1) auto-repurchase (per the client "fully automatic"
+spec — see app/core/repurchase.py) and (2) Stream/Boost matrix payouts + their
+sponsor-share bonus (see app/core/matrix_runtime.py).
 
-Every other piece of the repurchase cascade (Core routing, Stream/Boost matrix
-credits) is already handled purely internally: uplines and matrix winners get
-credited to their own internal wallet balance (app/core/wallet_ops.credit_wallet),
-to be paid out for real later via the admin-triggered member-payout rail
-(POST /distribution/payout/create + /payout/status). Because of that, the ONLY
-on-chain action a repurchase needs is simpler than replaying a full multi-
-recipient split: move the settled amount (price + platform fee) from the
-REPURCHASE_RESERVE_WALLET to PLATFORM_FEE_WALLET — a single ERC20 `transfer`,
-consolidating it into the wallet that eventually funds that payout rail.
+(1) Repurchase: the ONLY on-chain action needed is simpler than replaying a
+full multi-recipient split — move the settled amount (price + platform fee)
+from the REPURCHASE_RESERVE_WALLET to PLATFORM_FEE_WALLET, a single ERC20
+`transfer` consolidating it into the wallet that eventually funds the member-
+payout rail. Disabled by default: with settings.REPURCHASE_SIGNER_PRIVATE_KEY
+unset, `send_repurchase_settlement` never attempts a transaction, and auto-
+repurchase stays exactly the internal-ledger-only operation it was before this
+module existed.
 
-Disabled by default: with settings.REPURCHASE_SIGNER_PRIVATE_KEY unset, this
-module never attempts a transaction, and auto-repurchase stays exactly the
-internal-ledger-only operation it was before this module existed. Every
-function here is best-effort — on ANY failure (bad RPC, insufficient BNB for
-gas, insufficient USDT balance, network error) it logs and returns None rather
-than raising, so a broadcast failure never breaks the surrounding purchase
-request or rolls back the internal accounting that already happened.
+(2) Matrix payouts: unlike Core (paid directly by the buyer's own on-chain
+transaction at purchase time, since the recipient is known upfront), a Stream/
+Boost recipient is only decided later, by the matrix engine — so
+`send_matrix_payout_settlement` broadcasts a SEPARATE transfer straight to
+that recipient's own wallet the instant their payout is credited, from the
+PLATFORM_FEE_WALLET signer (that's already where Stream/Boost's on-chain share
+of every purchase lands). Disabled the same way: with
+settings.PLATFORM_FEE_SIGNER_PRIVATE_KEY unset, matrix payouts stay exactly
+the internal-ledger-only operation they were before this function existed
+(credited via wallet_ops.credit_wallet / credit_main_wallet_direct).
+
+Every function here is best-effort — on ANY failure (bad RPC, insufficient BNB
+for gas, insufficient USDT balance, network error) it logs and returns None
+rather than raising, so a broadcast failure never breaks the surrounding
+purchase request or rolls back the internal accounting that already happened
+(repurchase) or blocks falling back to internal crediting (matrix payouts).
 """
 import logging
 from decimal import Decimal
@@ -64,6 +73,20 @@ def _signer_account():
         return Account.from_key(key)
     except Exception:
         logger.exception("onchain: REPURCHASE_SIGNER_PRIVATE_KEY is set but invalid.")
+        return None
+
+
+def _platform_fee_signer_account():
+    """Return the eth_account Account for PLATFORM_FEE_SIGNER_PRIVATE_KEY, or
+    None if unset/invalid. Never raises."""
+    key = (settings.PLATFORM_FEE_SIGNER_PRIVATE_KEY or "").strip()
+    if not key:
+        return None
+    try:
+        from eth_account import Account
+        return Account.from_key(key)
+    except Exception:
+        logger.exception("onchain: PLATFORM_FEE_SIGNER_PRIVATE_KEY is set but invalid.")
         return None
 
 
@@ -125,6 +148,77 @@ def send_repurchase_settlement(amount: Decimal, tier: int, reference: str) -> st
             "onchain: repurchase settlement FAILED tier=%s amount=%s ref=%s — "
             "internal accounting already applied, on-chain transfer did not happen.",
             tier, amount, reference,
+        )
+        return None
+
+
+def send_matrix_payout_settlement(amount: Decimal, dest_address: str, reference: str) -> str | None:
+    """
+    Broadcast the on-chain settlement for one Stream/Boost matrix payout (or its
+    sponsor-share bonus): transfer `amount` USDT from the PLATFORM_FEE_WALLET
+    signer wallet directly to the recipient's own wallet — the same instant-
+    settlement treatment Core commissions already get, just via a separate
+    broadcast here since (unlike Core) the recipient isn't known until the
+    matrix engine decides the payout, well after the buyer's own on-chain
+    purchase transaction already happened.
+
+    `amount` is the caller's responsibility: Stream sends only the 70% share
+    (20%/10% stay internal, mirrored via wallet_ops.mirror_onchain_earning_split);
+    Boost sends the full 100% (it has no internal split at all). This function
+    just moves whatever amount it's given.
+
+    Returns the tx hash (0x...) on success, or None if disabled/failed —
+    callers must treat None as "not broadcast" and fall back to crediting the
+    recipient's internal wallet exactly as before this feature existed.
+    """
+    account = _platform_fee_signer_account()
+    if account is None:
+        return None  # feature disabled — internal-ledger-only, as before.
+
+    import re
+    if not re.match(_BEP20_ADDR_RE_SOURCE, (dest_address or "").strip()):
+        logger.error(
+            "onchain: matrix payout settlement skipped for %s — invalid destination address %r.",
+            reference, dest_address,
+        )
+        return None
+
+    try:
+        from web3 import Web3
+
+        w3 = Web3(Web3.HTTPProvider(settings.BSC_RPC_URL))
+        if not w3.is_connected():
+            logger.error("onchain: cannot reach BSC_RPC_URL=%s — skipping matrix payout settlement for %s.",
+                         settings.BSC_RPC_URL, reference)
+            return None
+
+        token = w3.eth.contract(
+            address=Web3.to_checksum_address(settings.USDT_CONTRACT),
+            abi=_ERC20_TRANSFER_ABI,
+        )
+        value = int((amount * (10 ** settings.USDT_DECIMALS)).to_integral_value())
+
+        nonce = w3.eth.get_transaction_count(account.address, "pending")
+        tx = token.functions.transfer(Web3.to_checksum_address(dest_address), value).build_transaction({
+            "from": account.address,
+            "nonce": nonce,
+            "gas": 100_000,
+            "gasPrice": w3.eth.gas_price,
+            "chainId": w3.eth.chain_id,
+        })
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+        tx_hash_hex = tx_hash.hex()
+        logger.info(
+            "onchain: matrix payout settlement sent amount=%s from=%s to=%s tx=%s ref=%s",
+            amount, account.address, dest_address, tx_hash_hex, reference,
+        )
+        return tx_hash_hex
+    except Exception:
+        logger.exception(
+            "onchain: matrix payout settlement FAILED amount=%s dest=%s ref=%s — "
+            "falling back to internal wallet crediting, on-chain transfer did not happen.",
+            amount, dest_address, reference,
         )
         return None
 

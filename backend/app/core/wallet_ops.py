@@ -1,15 +1,44 @@
+import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.user import User
 from app.models.wallet import Wallet, WalletType
+from app.models.wallet_address import WalletAddress
 from app.models.transaction import Transaction, TransactionType
 
 REPURCHASE_RATE = Decimal("0.20")     # 20% of gross → repurchase reserve
 SOFTWARE_FEE_RATE = Decimal("0.10")   # 10% of gross → platform profit
 ACCOUNT_TIER = 0  # Sentinel agent_tier for the platform account balance wallet
+
+_BEP20_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+
+def resolve_payout_address(db: Session, user: User) -> str | None:
+    """
+    A user's payout address: their registration address (User.wallet_address),
+    else their most recently registered *verified* withdrawal address, else
+    None. Only returns it if it's a syntactically valid BEP-20 address.
+
+    Shared by Core's on-chain purchase flow (app/api/distribution.py) and
+    Stream/Boost's on-chain payout settlement (app/core/matrix_runtime.py) —
+    both need the exact same "where do we actually send this user's money"
+    lookup, so it lives here rather than being duplicated or reached into as
+    another module's private helper.
+    """
+    addr = user.wallet_address
+    if not addr:
+        row = (
+            db.query(WalletAddress.address)
+            .filter(WalletAddress.user_id == user.id, WalletAddress.is_verified.is_(True))
+            .order_by(WalletAddress.created_at.desc())
+            .first()
+        )
+        addr = row[0] if row else None
+    return addr if addr and _BEP20_RE.match(addr) else None
 
 # Income the user has *received* (Core/Stream/Boost commissions). On the on-chain
 # rail these are recorded as CORE_INCOME transactions paid to the user's own wallet
@@ -213,8 +242,11 @@ def credit_main_wallet_direct(
     notes: str | None = None,
 ) -> None:
     """
-    Credit amount directly to MAIN wallet with no repurchase split.
-    Used for refunds where the 20% repurchase was already taken at earn time.
+    Credit amount directly to MAIN wallet with no repurchase/software-fee
+    split — used for Boost matrix payouts and Boost-sourced sponsor share
+    (client spec: Boost pays 100%, only Stream gets the 70/20/10 split; see
+    matrix_runtime.py), and for refunds where the 20% repurchase was already
+    taken at earn time.
     """
     four_places = Decimal("0.0001")
     amount = amount.quantize(four_places, rounding=ROUND_HALF_UP)

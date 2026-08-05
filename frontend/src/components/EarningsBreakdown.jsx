@@ -5,6 +5,12 @@
  * pendingPayout + platformFee === totalEarned (platformFee is the derived
  * remainder, not summed from transaction rows, so nothing is ever double-counted
  * or silently dropped).
+ *
+ * `completed` isn't Core-only anymore — Stream/Boost payouts (and their sponsor
+ * share) that settled instantly on-chain (backend/app/core/matrix_runtime.py's
+ * _settle_or_credit) count as Completed too, same as Core always has. Only
+ * whatever stayed internal (feature disabled, no wallet address on file, or a
+ * failed broadcast) still lands in `pendingPayout` awaiting an admin payout run.
  */
 export default function EarningsBreakdown({ totalEarned, completed, pendingReserve, pendingPayout }) {
   const platformFee = Math.max(totalEarned - completed - pendingReserve - pendingPayout, 0)

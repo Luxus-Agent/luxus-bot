@@ -5,13 +5,16 @@ import toast from 'react-hot-toast'
 import { Users, TrendingUp, DollarSign, Zap, Activity, RefreshCw, Flame, PiggyBank, Layers, Wallet, ExternalLink, AlertTriangle } from 'lucide-react'
 import { addressExplorerUrl, shortenTxHash } from '../../utils/explorer'
 
-// Only the Repurchase Reserve wallet ever broadcasts its own transaction (the
-// auto-repurchase settlement, signed by REPURCHASE_SIGNER_PRIVATE_KEY per
-// core/onchain.py) — so it's the only one that needs BNB for gas. Platform Fee
-// and Admin Income are receive-only addresses (no signer key), so a $0 BNB
+// Two wallets can broadcast their own transactions and so need BNB for gas:
+// Repurchase Reserve (auto-repurchase settlement, REPURCHASE_SIGNER_PRIVATE_KEY)
+// and Platform Fee (instant Stream/Boost matrix-payout settlement,
+// PLATFORM_FEE_SIGNER_PRIVATE_KEY) — both in core/onchain.py. Either signer key
+// being unset keeps that wallet receive-only in practice, but the UI can't see
+// which keys are configured, so it always shows the gas balance for both.
+// Admin Income is always receive-only (no signer key exists for it) — a $0 BNB
 // balance there is normal, not a problem.
 const GAS_WARN_BELOW = 0.01
-const NEEDS_GAS_KEY = 'repurchase_reserve'
+const NEEDS_GAS_KEYS = new Set(['repurchase_reserve', 'platform_fee'])
 // How often to re-poll live on-chain balances while this page stays open.
 const WALLET_POLL_MS = 20_000
 
@@ -109,7 +112,7 @@ export default function AdminDashboard() {
           <h2 className="font-semibold text-white mb-4">Platform Wallets — Live On-Chain Balances</h2>
           <div className="grid sm:grid-cols-3 gap-4">
             {onchainWallets.map(w => {
-              const lowGas = w.key === NEEDS_GAS_KEY && w.bnb_balance !== null && w.bnb_balance < GAS_WARN_BELOW
+              const lowGas = NEEDS_GAS_KEYS.has(w.key) && w.bnb_balance !== null && w.bnb_balance < GAS_WARN_BELOW
               return (
                 <div key={w.key} className="rounded-xl p-5" style={{ background: 'var(--bg-panel)', border: `1px solid ${lowGas ? '#FF4D6A' : 'var(--border)'}` }}>
                   <div className="flex items-start justify-between mb-3">
@@ -145,7 +148,7 @@ export default function AdminDashboard() {
                       </div>
                     </>
                   )}
-                  {w.key !== NEEDS_GAS_KEY && (
+                  {!NEEDS_GAS_KEYS.has(w.key) && (
                     <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>Receive-only — no gas needed</p>
                   )}
                 </div>

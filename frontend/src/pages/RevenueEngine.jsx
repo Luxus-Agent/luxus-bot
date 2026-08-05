@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { UserLayout as Layout } from '../components/Layout'
 import api from '../api/client'
-import { CorePreviewTable } from '../components/CoreRoutingViz'
+import { CorePreviewTable, DownlineColumn } from '../components/CoreRoutingViz'
 import { tierDisplayName } from '../utils/agentTiers'
 
 // Same simulation as the admin "Revenue Engines" page's Core tab, scoped to
@@ -57,6 +57,46 @@ function UserCoreSimulator() {
   )
 }
 
+// Same downline odd/even split as the admin "Revenue Engines" page's table,
+// scoped to the logged-in user's own direct downline — no username field,
+// loads once on mount.
+function UserDownlineTable() {
+  const [result, setResult] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api.get('/wallet/core-downline')
+      .then(r => setResult(r.data))
+      .catch(err => setError(err.response?.data?.detail || 'Lookup failed'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  return (
+    <div className="rounded-xl p-6" style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+      <h3 className="font-semibold text-white mb-1">Downline Odd/Even Table</h3>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>
+        Your direct downline, split by join order into a left/odd and right/even column
+        (1st, 3rd, 5th referral on the left; 2nd, 4th on the right).
+      </p>
+
+      {loading && <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Loading…</p>}
+      {error && <p className="text-xs" style={{ color: '#FF4D6A' }}>{error}</p>}
+
+      {result && (
+        result.total === 0 ? (
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>You have no direct downline yet.</p>
+        ) : (
+          <div className="grid md:grid-cols-2 gap-4">
+            <DownlineColumn title="Left / Odd" color="var(--accent)" members={result.left_odd} />
+            <DownlineColumn title="Right / Even" color="#3498DB" members={result.right_even} />
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
 export default function RevenueEngine() {
   return (
     <Layout>
@@ -69,6 +109,7 @@ export default function RevenueEngine() {
         </div>
 
         <UserCoreSimulator />
+        <UserDownlineTable />
       </div>
     </Layout>
   )

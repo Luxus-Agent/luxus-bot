@@ -459,9 +459,20 @@ def platform_metrics(
           subtracted — per client spec, these ledger figures always show the full
           amount, matching per-user "Total Earnings")
         - total_gross_commissions: sum of the four above
-        - total_credited_to_wallets: the actual 70% net that landed in user MAIN
-          wallets (the other 30% is the 20% repurchase reserve + 10% software fee)
-        - software_fees: 10% platform fee collected across every payout
+        - total_credited_to_wallets: the exact $ currently sitting across every
+          user's internal MAIN wallet (read directly from Wallet balances —
+          ground truth, not an estimate). Stream/Boost/sponsor income that
+          settled instantly on-chain (see total_settled_onchain below) never
+          touches this figure at all; only whatever stayed internal does
+          (feature disabled, no wallet address on file, or a broadcast failure
+          — matrix_runtime._settle_or_credit's fallback path)
+        - total_settled_onchain: total Stream/Boost/sponsor gross that settled
+          instantly on-chain straight to the recipient's own wallet
+          (Transaction.tx_hash IS NOT NULL — matrix_runtime._settle_or_credit,
+          disabled unless PLATFORM_FEE_SIGNER_PRIVATE_KEY is set), at each
+          row's own on-chain share (70% Stream, 100% Boost)
+        - software_fees: 10% platform fee collected across every Stream payout
+          (Boost contributes none — it has no software-fee deduction)
       repurchase:
         - count / volume: number and $ of auto-repurchases executed (repurchase_buy)
         - platform_fee: flat platform fee collected on those repurchases
@@ -483,13 +494,50 @@ def platform_metrics(
     boost = _sum_all(TransactionType.BOOST_PAYOUT)
     sponsor = _sum_all(TransactionType.SPONSOR_MILESTONE_INCOME)
     total_gross_commissions = round(core + stream + boost + sponsor, 4)
-    # MAIN wallet gets 70% of gross — but ONLY for Stream/Boost/Sponsor (credited via
-    # wallet_ops.credit_wallet). Core's 70% share is paid directly on-chain, buyer →
-    # upline, at purchase time (wallet_ops.mirror_onchain_earning_split) and is NEVER
-    # credited to an internal wallet — including it here would overstate how much is
-    # actually sitting in internal MAIN wallets.
-    main_wallet_rate = 1 - float(REPURCHASE_RATE) - float(SOFTWARE_FEE_RATE)
-    matrix_gross_commissions = round(stream + boost + sponsor, 4)
+
+    def _sum_sponsor_like(pattern: str, settled: bool | None = None) -> float:
+        q = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+            Transaction.transaction_type == TransactionType.SPONSOR_MILESTONE_INCOME,
+            Transaction.reference_id.like(pattern),
+        )
+        if settled is not None:
+            q = q.filter(Transaction.tx_hash.isnot(None) if settled else Transaction.tx_hash.is_(None))
+        return float(q.scalar() or 0)
+
+    def _sum_settled(tx_type: TransactionType) -> float:
+        total = (
+            db.query(func.coalesce(func.sum(Transaction.amount), 0))
+            .filter(Transaction.transaction_type == tx_type, Transaction.tx_hash.isnot(None))
+            .scalar()
+        )
+        return float(total or 0)
+
+    # total_credited_to_wallets: exact, live — read directly off Wallet.MAIN
+    # balances rather than estimated from gross×rate. Correct regardless of
+    # settlement path: rows that settled instantly on-chain (tx_hash IS NOT
+    # NULL) never touch MAIN at all; only rows that stayed internal do.
+    total_credited_to_wallets = round(float(
+        db.query(func.coalesce(func.sum(Wallet.balance), 0))
+        .filter(Wallet.wallet_type == WalletType.MAIN)
+        .scalar() or 0
+    ), 4)
+
+    # total_settled_onchain: Stream sends 70% on-chain (mirrors Core exactly),
+    # Boost sends the full 100% — same per-engine rate matrix_runtime.
+    # _settle_or_credit itself broadcasts. Sponsor share follows its SOURCE
+    # system the same way; SPONSOR_MILESTONE_INCOME has no source column, so
+    # rows are told apart by the reference_id prefix
+    # matrix_runtime._credit_row_sponsor tags them with.
+    stream_rate = 1 - float(REPURCHASE_RATE) - float(SOFTWARE_FEE_RATE)
+    sponsor_boost_settled = _sum_sponsor_like("sponsor_share_boost_%", settled=True)
+    sponsor_stream_settled = _sum_sponsor_like("sponsor_share_stream_%", settled=True)
+    total_settled_onchain = round(
+        _sum_settled(TransactionType.STREAM_PAYOUT) * stream_rate
+        + _sum_settled(TransactionType.BOOST_PAYOUT)
+        + sponsor_stream_settled * stream_rate
+        + sponsor_boost_settled,
+        4,
+    )
 
     repurchase_count = (
         db.query(func.count(Transaction.id))
@@ -510,7 +558,8 @@ def platform_metrics(
             "boost_payout": boost,
             "sponsor_share": sponsor,
             "total_gross_commissions": total_gross_commissions,
-            "total_credited_to_wallets": round(matrix_gross_commissions * main_wallet_rate, 4),
+            "total_credited_to_wallets": total_credited_to_wallets,
+            "total_settled_onchain": total_settled_onchain,
             "software_fees": _sum_all(TransactionType.SOFTWARE_FEE),
         },
         "repurchase": {
@@ -628,7 +677,11 @@ def all_transactions(
             "amount": float(t.amount),
             "notes": t.notes,
             "created_at": t.created_at.isoformat() if t.created_at else None,
-            "tx_hash": tx_hashes.get(t.reference_id),
+            # Prefer the row's own tx_hash (Stream/Boost/sponsor settled
+            # instantly on-chain via matrix_runtime._settle_or_credit) — fall
+            # back to the PackPurchase/PayoutBatch resolver for Core / member-
+            # payout rows, which settle as part of a shared multisender tx.
+            "tx_hash": t.tx_hash or tx_hashes.get(t.reference_id),
         }
         for t in txns
     ]

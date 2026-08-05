@@ -38,12 +38,20 @@ const TX_GROUPS = {
   System: SYSTEM,
 }
 
-// Still moving through the platform, not yet delivered to the user's real wallet:
-// repurchase_hold is reserve building toward the next auto-repurchase; stream/boost
-// payouts are internal-only until an admin payout run pays them out (Core income is
-// NOT here — its 70% is paid directly on-chain the moment the row is written, see
-// backend/app/core/wallet_ops.py's mirror_onchain_earning_split docstring).
-const PENDING = ['repurchase_hold', 'stream_payout', 'boost_payout', 'sponsor_milestone_income']
+// Still moving through the platform, not yet delivered to the user's real wallet.
+// repurchase_hold is ALWAYS pending — it's a reserve, never itself settles
+// on-chain. stream_payout / boost_payout / sponsor_milestone_income are
+// pending only until they settle instantly on-chain (backend/app/core/
+// matrix_runtime.py's _settle_or_credit) — per-row now, not per-type, so check
+// the transaction's own tx_hash rather than a flat type list. core_income is
+// NOT here — its 70% is paid directly on-chain the moment the row is written.
+const ALWAYS_PENDING = ['repurchase_hold']
+const SETTLES_ON_CHAIN = ['stream_payout', 'boost_payout', 'sponsor_milestone_income']
+function isPendingTx(t) {
+  if (ALWAYS_PENDING.includes(t.transaction_type)) return true
+  if (SETTLES_ON_CHAIN.includes(t.transaction_type)) return !t.tx_hash
+  return false
+}
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState([])
@@ -89,7 +97,7 @@ export default function Transactions() {
       if (!groupTypes.includes(t.transaction_type)) return false
     }
     if (filterStatus !== 'all') {
-      const isPending = PENDING.includes(t.transaction_type)
+      const isPending = isPendingTx(t)
       if (filterStatus === 'Pending' && !isPending) return false
       if (filterStatus === 'Completed' && isPending) return false
     }
@@ -229,7 +237,7 @@ export default function Transactions() {
                 const sign = isNeg ? '−' : isIncome ? '+' : ''
                 const amountColor = isNeg ? '#FF4D6A' : isIncome ? 'var(--accent)' : 'var(--text-secondary)'
                 const color = TX_COLOR[tx.transaction_type] || 'var(--text-secondary)'
-                const isPending = PENDING.includes(tx.transaction_type)
+                const isPending = isPendingTx(tx)
                 return (
                   <div key={tx.id} className="flex sm:grid sm:grid-cols-7 items-center gap-3 px-4 py-3">
                     <div className="col-span-2 flex items-center gap-2 min-w-0">

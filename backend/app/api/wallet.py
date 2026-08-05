@@ -10,7 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.core.core_preview import simulate_core_split
+from app.core.core_preview import get_downline_odd_even, simulate_core_split
 from app.core.wallet_ops import resolve_tx_hashes
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
@@ -60,7 +60,11 @@ def get_transactions(
     results = []
     for t in txns:
         out = TransactionOut.model_validate(t)
-        out.tx_hash = tx_hashes.get(t.reference_id)
+        # Prefer the row's own tx_hash (Stream/Boost payouts settled instantly
+        # on-chain via matrix_runtime._settle_or_credit) — fall back to the
+        # PackPurchase/PayoutBatch resolver for Core / member-payout rows,
+        # which settle as part of a shared multisender transaction instead.
+        out.tx_hash = t.tx_hash or tx_hashes.get(t.reference_id)
         results.append(out)
     return results
 
@@ -76,15 +80,12 @@ from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE
 
 # Core commission's on-chain "main" share (70%) is paid directly, buyer → upline,
 # at purchase time (see mirror_onchain_earning_split) — so it is Completed the
-# instant the CORE_INCOME row is written. Stream/Boost's main share is credited
-# to an internal MAIN wallet instead (see credit_wallet) and only becomes
-# Completed once an admin payout run actually debits it.
-STREAM_BOOST_TYPES = (
-    TransactionType.STREAM_PAYOUT,
-    TransactionType.BOOST_PAYOUT,
-    TransactionType.SPONSOR_MILESTONE_INCOME,
-)
-MAIN_SHARE_RATE = Decimal("1") - REPURCHASE_RATE - SOFTWARE_FEE_RATE  # 70%
+# instant the CORE_INCOME row is written. Stream's main share is credited to an
+# internal MAIN wallet instead (see credit_wallet, 70/20/10) and only becomes
+# Completed once an admin payout run actually debits it. Boost skips that split
+# entirely — its full amount lands in MAIN immediately (credit_main_wallet_direct,
+# client spec) — so its "MAIN-eligible" share is 100%, not 70%.
+MAIN_SHARE_RATE = Decimal("1") - REPURCHASE_RATE - SOFTWARE_FEE_RATE  # 70%, Stream-only
 
 # Money that has left the user (real outflows). agent_purchase covers the on-chain
 # pack buys; the rest are legacy deposit-first flows kept for historical rows.
@@ -111,12 +112,15 @@ def earnings_summary(
     always read $0 even after real income.
 
     Also splits that same total into `completed` (money that has actually left
-    the platform for the user — Core's 70% on-chain share, plus any Stream/Boost
-    share an admin payout has since debited) vs `pending` (money still moving
-    through the platform: the repurchase reserve building toward the next
-    auto-repurchase, and any Stream/Boost main-wallet share not yet paid out).
-    completed + pending always equals total_earned minus the platform's software
-    fee share (never the user's money either way).
+    the platform for the user — Core's 70% on-chain share; any Stream/Boost/
+    sponsor share that settled instantly on-chain via matrix_runtime's
+    _settle_or_credit (tx_hash IS NOT NULL); plus any UNSETTLED Stream/Boost/
+    sponsor share an admin payout has since debited from the MAIN wallet) vs
+    `pending` (money still moving through the platform: the repurchase reserve
+    building toward the next auto-repurchase, and any unsettled Stream/Boost
+    main-wallet share not yet paid out). completed + pending always equals
+    total_earned minus the platform's software fee share (never the user's
+    money either way).
     """
     income_rows = (
         db.query(Transaction.transaction_type, func.coalesce(func.sum(Transaction.amount), 0))
@@ -141,9 +145,32 @@ def earnings_summary(
     total_spent = float(round(Decimal(str(expense_rows or 0)), 4))
 
     gross_core = Decimal(str(by_type.get(TransactionType.CORE_INCOME.value, 0)))
-    gross_stream_boost = sum(
-        (Decimal(str(by_type.get(t.value, 0))) for t in STREAM_BOOST_TYPES), Decimal("0")
+
+    def _sum(tx_type: TransactionType, ref_like: str | None, settled: bool) -> Decimal:
+        q = db.query(func.coalesce(func.sum(Transaction.amount), 0)).filter(
+            Transaction.user_id == current_user.id,
+            Transaction.transaction_type == tx_type,
+            Transaction.tx_hash.isnot(None) if settled else Transaction.tx_hash.is_(None),
+        )
+        if ref_like:
+            q = q.filter(Transaction.reference_id.like(ref_like))
+        return Decimal(str(q.scalar() or 0))
+
+    # Sponsor share has no source-system column of its own — rows are told
+    # apart by the reference_id prefix matrix_runtime._credit_row_sponsor tags
+    # them with. Untagged legacy rows predate the Boost no-split change and
+    # were genuinely credited at 70% at the time, so they fall into the
+    # Stream-rate bucket too (same reasoning as GET /admin/metrics).
+    STREAM, BOOST, SPONSOR = (
+        TransactionType.STREAM_PAYOUT, TransactionType.BOOST_PAYOUT,
+        TransactionType.SPONSOR_MILESTONE_INCOME,
     )
+    stream_settled, stream_unsettled = _sum(STREAM, None, True), _sum(STREAM, None, False)
+    boost_settled, boost_unsettled = _sum(BOOST, None, True), _sum(BOOST, None, False)
+    sponsor_boost_settled = _sum(SPONSOR, "sponsor_share_boost_%", True)
+    sponsor_boost_unsettled = _sum(SPONSOR, "sponsor_share_boost_%", False)
+    sponsor_stream_settled = _sum(SPONSOR, None, True) - sponsor_boost_settled
+    sponsor_stream_unsettled = _sum(SPONSOR, None, False) - sponsor_boost_unsettled
 
     reserve_total = (
         db.query(func.coalesce(func.sum(Wallet.balance), 0))
@@ -159,10 +186,23 @@ def earnings_summary(
     pending_payout = Decimal(str(main_total or 0))
 
     completed_core = gross_core * MAIN_SHARE_RATE
-    # Stream/Boost's 70% share was credited to the MAIN wallet at earn time; any of
-    # it no longer sitting there has since been paid out by an admin payout run.
-    paid_out_stream_boost = max(gross_stream_boost * MAIN_SHARE_RATE - pending_payout, Decimal("0"))
-    completed = completed_core + paid_out_stream_boost
+    # Settled rows already went straight to the recipient's own wallet — the
+    # exact share send_matrix_payout_settlement broadcast (70% Stream, 100%
+    # Boost, same rate as its source for sponsor share). No inference needed.
+    settled_stream_boost = (
+        stream_settled * MAIN_SHARE_RATE + boost_settled
+        + sponsor_stream_settled * MAIN_SHARE_RATE + sponsor_boost_settled
+    )
+    # Unsettled rows were credited to MAIN internally, exactly as before this
+    # feature existed; any of that no longer sitting in MAIN has since been
+    # paid out by an admin payout run — same inference as before, just scoped
+    # to only the unsettled subset (settled rows never touched MAIN at all).
+    main_eligible_unsettled = (
+        stream_unsettled * MAIN_SHARE_RATE + boost_unsettled
+        + sponsor_stream_unsettled * MAIN_SHARE_RATE + sponsor_boost_unsettled
+    )
+    paid_out_unsettled = max(main_eligible_unsettled - pending_payout, Decimal("0"))
+    completed = completed_core + settled_stream_boost + paid_out_unsettled
 
     return {
         "total_earned": total_earned,   # lifetime Core/Stream/Boost income (gross)
@@ -457,4 +497,17 @@ def core_preview(
     if tier not in (1, 2, 3, 4):
         raise HTTPException(status_code=400, detail="tier must be 1-4.")
     return simulate_core_split(db, current_user, tier)
-    return {"message": "Address removed."}
+
+
+@router.get("/core-downline")
+def core_downline(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Read-only: the CURRENT user's own direct downline split into a left/odd and
+    right/even column by join order — same view as the admin "Revenue Engines"
+    page's Downline Odd/Even Table, scoped to the logged-in user (no username
+    lookup, no admin privilege needed).
+    """
+    return get_downline_odd_even(db, current_user)
