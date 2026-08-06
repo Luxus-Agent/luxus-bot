@@ -166,7 +166,7 @@ function QueueList({ slots, color }) {
                 )}
                 {s.is_head && (
                   <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>
-                    NEXT TO PAY
+                    HEAD
                   </span>
                 )}
               </div>
@@ -255,6 +255,15 @@ function MatrixFlowDiagram({ systemType, tier, level, color }) {
                     RE-ENTRY
                   </span>
                 )}
+                {s.is_passed_through && (
+                  <span
+                    className="px-1.5 py-0.5 rounded-full text-[10px] font-bold"
+                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                    title="A dummy re-entry position — per spec it earns nothing and spawns no further re-entry itself, so it pops silently."
+                  >
+                    PASSED THROUGH
+                  </span>
+                )}
                 {s.is_paid && (
                   <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
                     PAID
@@ -262,7 +271,7 @@ function MatrixFlowDiagram({ systemType, tier, level, color }) {
                 )}
                 {s.is_head && (
                   <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>
-                    NEXT TO PAY
+                    HEAD
                   </span>
                 )}
               </div>

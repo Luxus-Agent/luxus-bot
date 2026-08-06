@@ -4,22 +4,33 @@ Synchronous driver for the Stream / Boost matrix engine.
 This replaces the removed Celery task chain (workers/tasks.py) with an in-request,
 fully synchronous run. On a confirmed purchase it:
 
-  1. places the buyer as a real join in the Stream queues (their tier) and the
-     Boost queues (global, tier 1) — one entry into each of L1/L2/L3 at once,
-     per matrix_engine.place_real_join,
-  2. queues every incremental payout, level-completion sponsor-share, and
-     re-entry-spawn this triggers into the durable MatrixPendingPayout backlog,
-     then drains up to _MAX_STEPS_PER_CALL items from that backlog (oldest
-     first, across ALL users/tiers — not just this buyer's own): payouts and
-     sponsor shares settle INSTANTLY ON-CHAIN when possible (_settle_or_credit
-     — Stream sends 70% straight to the recipient's wallet via
-     onchain.send_matrix_payout_settlement, 20%/10% still booked internally
-     via wallet_ops.mirror_onchain_earning_split; Boost sends the full 100%),
-     falling back to internal-only crediting (credit_wallet / credit_main_wallet_direct,
-     today's original behavior) whenever settlement isn't possible — feature
-     disabled, no wallet address on file, or the broadcast failed. Re-entry
-     rows place that level's re-entries back into its own queue (matrix_engine.
-     place_level_reentry — Stream re-entries are dummy, Boost's are real), and
+  1. places the buyer as a real join in ONLY L1 of the Stream queue (their
+     tier) and the Boost queue (global, tier 1 — but sized by the buyer's OWN
+     purchased tier via `contribution_tier`, so a Growth-tier joiner funds a
+     bigger Boost credit than a Trial-tier joiner in that same shared queue),
+     per matrix_engine.place_real_join — a member no longer starts in L2/L3
+     simultaneously (client-confirmed correction, 2026-08-06); they GRADUATE
+     there only when their own L1/L2 position completes (see step 2),
+  2. queues every incremental payout and level-completion sponsor-share this
+     triggers into the durable MatrixPendingPayout backlog, then drains up to
+     _MAX_STEPS_PER_CALL items from that backlog (oldest first, across ALL
+     users/tiers — not just this buyer's own): payouts and sponsor shares
+     settle INSTANTLY ON-CHAIN when possible (_settle_or_credit — Stream sends
+     70% straight to the recipient's wallet via onchain.
+     send_matrix_payout_settlement, 20%/10% still booked internally via
+     wallet_ops.mirror_onchain_earning_split; Boost sends 90% for a position
+     holder's own payout — the 10% software fee stays internal, via
+     wallet_ops.mirror_onchain_boost_split — or the full 100% for its
+     sponsor-share bonus, which is never fee-reduced), falling back to
+     internal-only crediting (credit_wallet / credit_boost_wallet /
+     credit_main_wallet_direct) whenever settlement isn't possible — feature
+     disabled, no wallet address on file, or the broadcast failed. GRADUATE
+     rows place that same completing head as one brand-new real join in the
+     level above (matrix_engine.place_graduation — L3 has no level above, so
+     its completions only spawn re-entries). A level's re-entries are NOT
+     enqueued here — they drip out inline, one per 3 subsequent real joins,
+     straight from matrix_engine._append_to_level itself (client-confirmed
+     correction, 2026-08-06 — see that module's docstring), and
   3. leaves anything past the step cap safely queued for the next purchase to
      continue — see MatrixPendingPayout's docstring for why this must be durable.
 
@@ -51,16 +62,19 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.matrix_engine import (
+    PendingGraduation,
     PendingPayout,
     PendingReentry,
     PendingSponsorPayout,
-    place_level_reentry,
+    place_graduation,
     place_real_join,
 )
 from app.core.onchain import send_matrix_payout_settlement
 from app.core.wallet_ops import (
+    credit_boost_wallet,
     credit_main_wallet_direct,
     credit_wallet,
+    mirror_onchain_boost_split,
     mirror_onchain_earning_split,
     resolve_payout_address,
 )
@@ -109,17 +123,16 @@ def _enqueue_sponsor(db: Session, sp: PendingSponsorPayout) -> None:
     ))
 
 
-def _enqueue_reentry(db: Session, r: PendingReentry) -> None:
+def _enqueue_graduation(db: Session, g: PendingGraduation) -> None:
     db.add(MatrixPendingPayout(
-        kind=PendingKind.REENTRY,
-        matrix_position_id=r.matrix_position_id,
-        owner_user_id=r.owner_user_id,
-        agent_tier=r.agent_tier,
-        system_type=r.system_type,
-        level=r.level,
+        kind=PendingKind.GRADUATE,
+        matrix_position_id=g.matrix_position_id,
+        owner_user_id=g.owner_user_id,
+        agent_tier=g.agent_tier,
+        system_type=g.system_type,
+        level=g.level,
         amount=Decimal("0"),
-        reentry_amount=r.reentry_amount,
-        reentry_count=r.reentry_count,
+        contribution_tier=g.contribution_tier,
     ))
 
 
@@ -128,13 +141,17 @@ def _enqueue_all(
     payouts: list[PendingPayout],
     sponsors: list[PendingSponsorPayout],
     reentries: list[PendingReentry],
+    graduations: list[PendingGraduation],
 ) -> None:
+    # `reentries` is informational-only now (see PendingReentry's docstring —
+    # a level's re-entries drip out inline from matrix_engine._append_to_level
+    # itself, they're never queued here).
     for p in payouts:
         _enqueue_payout(db, p)
     for sp in sponsors:
         _enqueue_sponsor(db, sp)
-    for r in reentries:
-        _enqueue_reentry(db, r)
+    for g in graduations:
+        _enqueue_graduation(db, g)
 
 
 def _settle_or_credit(
@@ -146,38 +163,48 @@ def _settle_or_credit(
     tx_type: TransactionType,
     reference_id: str,
     notes: str,
+    boost_fee: bool = False,
 ) -> None:
     """
     Instant on-chain settlement, falling back to internal-only crediting
     exactly as before this feature existed. Shared by both a matrix payout's
     own head credit and its sponsor-share bonus — same rule either way, only
-    who `owner` is differs.
+    who `owner` is (and, for Boost, `boost_fee`) differs.
 
     Attempts to broadcast straight to `owner`'s own wallet: Stream sends only
     its 70% share (20%/10% stay internal, booked via mirror_onchain_earning_split
     — the exact function Core already uses for the same "70% already paid
-    on-chain, don't double-credit MAIN" bookkeeping); Boost sends the full
-    100% (it has no internal split at all, per the client spec). On success
-    the headline ledger row records the FULL gross amount (per the existing
-    "Total Earnings shows gross" convention) with its own `tx_hash`.
+    on-chain, don't double-credit MAIN" bookkeeping); Boost sends 90% when
+    `boost_fee` is set (a position holder's own payout — the 10% software fee
+    stays internal, booked via mirror_onchain_boost_split) or the full 100%
+    when it isn't (a sponsor-share bonus — paid in addition, never
+    fee-reduced). On success the headline ledger row records the FULL gross
+    amount (per the existing "Total Earnings shows gross" convention) with
+    its own `tx_hash`.
 
     Falls back to today's fully-internal crediting (credit_wallet /
-    credit_main_wallet_direct, no tx_hash) whenever settlement isn't
-    possible: PLATFORM_FEE_SIGNER_PRIVATE_KEY unset (feature disabled), the
-    owner has no wallet address on file, or the broadcast itself fails —
-    send_matrix_payout_settlement is best-effort and never raises, so this
-    fallback is unconditional on tx_hash being falsy, not a caught exception.
+    credit_boost_wallet / credit_main_wallet_direct, no tx_hash) whenever
+    settlement isn't possible: PLATFORM_FEE_SIGNER_PRIVATE_KEY unset (feature
+    disabled), the owner has no wallet address on file, or the broadcast
+    itself fails — send_matrix_payout_settlement is best-effort and never
+    raises, so this fallback is unconditional on tx_hash being falsy, not a
+    caught exception.
     """
     address = resolve_payout_address(db, owner)
     tx_hash = None
     if address:
-        onchain_share = gross_amount if system_type == SystemType.BOOST else gross_amount * Decimal("0.70")
+        if system_type == SystemType.BOOST:
+            onchain_share = gross_amount * Decimal("0.90") if boost_fee else gross_amount
+        else:
+            onchain_share = gross_amount * Decimal("0.70")
         tx_hash = send_matrix_payout_settlement(onchain_share, address, reference_id)
 
     if tx_hash:
         if system_type == SystemType.STREAM:
             mirror_onchain_earning_split(db, owner.id, agent_tier, gross_amount)
-        # Boost: nothing further to book internally — 100% just went on-chain.
+        elif boost_fee:
+            mirror_onchain_boost_split(db, owner.id, agent_tier, gross_amount)
+        # Boost sponsor share: nothing further to book internally — 100% just went on-chain.
         db.add(Transaction(
             user_id=owner.id,
             agent_tier=agent_tier,
@@ -188,10 +215,16 @@ def _settle_or_credit(
             tx_hash=tx_hash,
         ))
     elif system_type == SystemType.BOOST:
-        credit_main_wallet_direct(
-            db=db, user_id=owner.id, agent_tier=agent_tier, amount=gross_amount,
-            tx_type=tx_type, reference_id=reference_id, notes=notes,
-        )
+        if boost_fee:
+            credit_boost_wallet(
+                db=db, user_id=owner.id, agent_tier=agent_tier, gross_amount=gross_amount,
+                tx_type=tx_type, reference_id=reference_id, notes=notes,
+            )
+        else:
+            credit_main_wallet_direct(
+                db=db, user_id=owner.id, agent_tier=agent_tier, amount=gross_amount,
+                tx_type=tx_type, reference_id=reference_id, notes=notes,
+            )
     else:
         credit_wallet(
             db=db, user_id=owner.id, agent_tier=agent_tier, gross_amount=gross_amount,
@@ -227,6 +260,7 @@ def _credit_row_payout(db: Session, row: MatrixPendingPayout) -> None:
     _settle_or_credit(
         db, owner, row.agent_tier, row.system_type, Decimal(str(row.amount)),
         tx_type, reference_id, f"{row.system_type.value} L{row.level} payout",
+        boost_fee=row.system_type == SystemType.BOOST,
     )
 
 
@@ -269,26 +303,18 @@ def _credit_row_sponsor(db: Session, row: MatrixPendingPayout) -> None:
         ))
 
 
-def _spawn_reentries(db: Session, row: MatrixPendingPayout) -> None:
+def _spawn_graduation(db: Session, row: MatrixPendingPayout) -> None:
     """
-    Place a completed level's re-entries back into its own queue — Stream's
-    are dummy, Boost's are real (per spec). Never touches a wallet. Whatever
-    further payouts/sponsors/reentries this itself triggers are re-enqueued,
-    not processed inline, so drain_matrix_backlog stays a flat loop.
+    Place the completing head as one brand-new real join in the NEXT level up
+    (`row.level` is already the destination level — see PendingGraduation).
+    Never touches a wallet. Whatever further payouts/sponsors/reentries/
+    graduations this itself triggers are re-enqueued, not processed inline.
     """
-    is_stream = row.system_type == SystemType.STREAM
-    for _ in range(row.reentry_count or 0):
-        if is_stream:
-            p, s, r = place_level_reentry(
-                db, row.owner_user_id, row.agent_tier, SystemType.STREAM,
-                row.level, is_dummy=True,
-            )
-        else:
-            p, s, r = place_level_reentry(
-                db, row.owner_user_id, BOOST_TIER, SystemType.BOOST,
-                row.level, is_dummy=False,
-            )
-        _enqueue_all(db, p, s, r)
+    p, s, r, g = place_graduation(
+        db, row.owner_user_id, row.agent_tier, row.system_type, row.level,
+        contribution_tier=row.contribution_tier or row.agent_tier,
+    )
+    _enqueue_all(db, p, s, r, g)
 
 
 def _next_backlog_row(db: Session) -> MatrixPendingPayout | None:
@@ -305,10 +331,12 @@ def drain_matrix_backlog(db: Session, max_steps: int = _MAX_STEPS_PER_CALL) -> i
     """
     Process up to `max_steps` durable backlog rows (oldest first, across every
     user/tier/system): PAYOUT rows credit one incremental joiner-triggered
-    amount, SPONSOR rows credit a level-completion sponsor share, and REENTRY
-    rows place a completed level's re-entries back into that SAME level's own
-    queue (which themselves get queued, not processed inline, so this stays a
-    flat loop bounded by max_steps — not recursion).
+    amount, SPONSOR rows credit a level-completion sponsor share, and
+    GRADUATE rows place the completing head as one brand-new real join in the
+    NEXT level up (which itself gets queued, not processed inline, so this
+    stays a flat loop bounded by max_steps — not recursion). A level's
+    re-entries never appear here — they drip out inline from matrix_engine.
+    _append_to_level itself (see PendingKind.REENTRY's docstring).
 
     Returns the number of rows processed. Flushes; does NOT commit.
     """
@@ -320,8 +348,8 @@ def drain_matrix_backlog(db: Session, max_steps: int = _MAX_STEPS_PER_CALL) -> i
 
         if row.kind == PendingKind.PAYOUT:
             _credit_row_payout(db, row)
-        elif row.kind == PendingKind.REENTRY:
-            _spawn_reentries(db, row)
+        elif row.kind == PendingKind.GRADUATE:
+            _spawn_graduation(db, row)
         else:
             _credit_row_sponsor(db, row)
 
@@ -342,10 +370,13 @@ def run_purchase_matrices(db: Session, buyer_id: int, agent_tier: int) -> dict:
 
     Returns a small summary dict for logging.
     """
-    p, s, r = place_real_join(db, buyer_id, agent_tier, SystemType.STREAM)
-    _enqueue_all(db, p, s, r)
-    p, s, r = place_real_join(db, buyer_id, BOOST_TIER, SystemType.BOOST)
-    _enqueue_all(db, p, s, r)
+    p, s, r, g = place_real_join(db, buyer_id, agent_tier, SystemType.STREAM)
+    _enqueue_all(db, p, s, r, g)
+    # Boost's queue is still one shared global line (BOOST_TIER), but this
+    # buyer's own purchased tier sizes what THEIR join contributes to it —
+    # see matrix_engine._append_to_level's docstring.
+    p, s, r, g = place_real_join(db, buyer_id, BOOST_TIER, SystemType.BOOST, contribution_tier=agent_tier)
+    _enqueue_all(db, p, s, r, g)
     db.flush()
 
     processed = drain_matrix_backlog(db)

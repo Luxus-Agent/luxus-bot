@@ -33,7 +33,7 @@ A multi-tier passive income platform where users buy AI Agent tiers **on-chain**
 - 💸 **Three-engine 60 / 30 / 10 revenue split** — Core (compressed upline routing with odd/even), Stream (per-tier 3×3 matrix), Boost (single global 3×3 matrix + 1% admin).
 - 🔁 **Automatic repurchase** — a 20% per-tier reserve auto re-buys the same tier at its price+gas threshold, unbounded and compounding through uplines.
 - 🌳 **Username-based sponsor tree** — every user registers under a sponsor; live sponsor-existence + wallet-address validation on the register form. Usernames are case-insensitive (passwords stay case-sensitive).
-- 🧮 **70 / 20 / 10 wallet rule for Core + Stream** — every Core and Stream commission splits into main wallet / repurchase reserve / software fee, credited **per-joiner incrementally** for Stream (not a lump sum at level completion). **Boost pays 100% straight to MAIN**, no split. Ledger income figures ("Total Earnings") always report the full gross commission either way, before any deduction.
+- 🧮 **70 / 20 / 10 wallet rule for Core + Stream, 90 / 10 for Boost's own payout** — every Core and Stream commission splits into main wallet / repurchase reserve / software fee, credited **per-joiner incrementally** for Stream (not a lump sum at level completion). **Boost's own position-holder payout** takes only the 10% software fee (no repurchase-reserve cut) — 90% straight to MAIN. **Boost's sponsor-share bonus** is unaffected and still pays 100%, in addition, unreduced. Ledger income figures ("Total Earnings") always report the full gross commission either way, before any deduction.
 - ⚡ **Instant on-chain settlement for Stream/Boost** — the same instant, direct-to-wallet crediting Core already gets, once `PLATFORM_FEE_SIGNER_PRIVATE_KEY` is configured; falls back to internal-ledger-only (today's default) when it isn't. See [Instant On-Chain Settlement](#instant-on-chain-settlement).
 - 🛡️ **Admin controls** — per-user freeze/delete, treasury transfer, and a global platform-freeze kill switch that blocks all money movement (purchases, settlement, matrix/repurchase payouts, admin payouts and treasury) with HTTP 423 while frozen.
 - 📊 **Real-time earnings & distribution map** — ledger-sourced totals plus a read-only `wallet-map` endpoint that feeds the MultiSender payout. Transaction history (user + admin) links on-chain rows to a BscScan tx hash.
@@ -82,16 +82,16 @@ Every confirmed agent purchase triggers a **60 / 30 / 10 split** across three pa
 
 ### Agent Tiers & Max Payouts
 
-| Tier    | Display name | Base | Platform fee | Total cost | Core Agent | Stream Agent | Boost Agent |
+| Tier    | Display name | Base | Platform fee | Total cost | Core Agent | Stream Agent | Boost Agent (per joiner) |
 |---------|-------|------|--------------|-----------|-----------|-------------|------------|
 | Agent 1 | Trial  | $10  | $1   | **$11**  | $6.00     | $20.00      | $5.70      |
-| Agent 2 | Start  | $20  | $2   | **$22**  | $12.00    | $40.00      | $5.70      |
-| Agent 3 | Build  | $50  | $5   | **$55**  | $30.00    | $100.00     | $5.70      |
-| Agent 4 | Growth | $100 | $11  | **$111** | $60.00    | $200.00     | $5.70      |
+| Agent 2 | Start  | $20  | $2   | **$22**  | $12.00    | $40.00      | $11.40     |
+| Agent 3 | Build  | $50  | $5   | **$55**  | $30.00    | $100.00     | $28.50     |
+| Agent 4 | Growth | $100 | $11  | **$111** | $60.00    | $200.00     | $57.00     |
 
 > The buyer pays **Total cost = Base + Platform fee**; the flat platform fee goes straight to the platform profit wallet and is **not** part of the 60/30/10 split (which runs off the **Base**). Applies to repurchase too.
 >
-> Boost runs a **single global queue** (always tier 1), so its payout does not scale with the purchased tier — the full Boost cycle is $0.60 + $1.50 + $3.60 = **$5.70** wallet for every tier.
+> Boost runs a **single global queue** (`agent_tier` pinned to 1 for queue selection — every tier's purchases land in the same shared FIFO line), but each real join's OWN contribution is sized by **that joiner's own purchased tier**, not the queue's — a Growth-tier ($100 base) join funds a 10× bigger credit than a Trial-tier ($10 base) join even though both feed the same queue. So a queue's contributions are a mix of tiers, and the "Boost Agent" column above is the full $0.60+$1.50+$3.60=$5.70 L1+L2+L3 cycle scaled by **that one joiner's own tier multiplier** — not a fixed per-tier total the way Stream's column is (Stream runs a genuinely separate queue per tier, so its column is a queue property; Boost's is a per-joiner property of one shared queue). Like every other column here, this is the **gross** figure — Boost's own position-holder payout takes a 10% software fee (90% actually lands in MAIN), same as Core/Stream's columns are gross-before-their-own-wallet-split (see [Wallet Credit Split](#wallet-credit-split)).
 >
 > **"Agent 1"–"Agent 4"** is the internal identifier — the backend `pack_name`/tier number, unchanged in the
 > API and database. **Trial/Start/Build/Growth** are display-only names shown to users everywhere a tier
@@ -171,11 +171,12 @@ Implemented in `pack_payout.py` via `_walk_core_half` (compression via `proactiv
 
 ### 30% — Stream Agent (3×3 Forced Matrix)
 
-- **Separate queue per tier** — Agent 1, 2, 3, and 4 each have their own BFS queue.
-- Positions fill breadth-first in a ternary tree (3 children per node).
+- **Separate queue per tier** — Agent 1, 2, 3, and 4 each have their own set of L1/L2/L3 queues.
+- **A purchase only places the buyer in L1** — not L2/L3 simultaneously (client-confirmed correction, 2026-08-06). A member **graduates** into L2 only once their own L1 position has granted ALL of L1's re-entry milestones, and into L3 only once their own L2 position has granted all of L2's — see [Matrix System](#matrix-system) for the full mechanic. L2/L3 are populated entirely by graduations (plus that level's own re-entries), never by a fresh purchase directly.
 - Payouts trigger when L1 (3 members), L2 (9 members), and L3 (27 members) fill.
 - Re-entries generated by Stream are **dummy** and cycle back into the **same tier's Stream queue** — they fill slots to advance the queue but receive no payouts and spawn no further re-entries (per the client matrix diagram `A·B·C·D·A1·E·F·B1·…`). Stream does **not** feed Boost.
 - **Re-entry COUNT is fixed at 1 / 3 / 9** (L1/L2/L3) across all tiers — "every Nth income spawns a re-entry" (total 13 per full cycle). Only the wallet payout and the per-re-entry **$ amount** scale by the tier multiplier (Agent 1=1×, 2=2×, 3=5×, 4=10×).
+- **Re-entries are progressive, granted one at a time DURING the same head's cycle — not a lump sum at completion** (client-confirmed correction, 2026-08-06: "d1,d2,d3 then dhanush does a re-entry, then d4,d5 then another, then d6,d7 then another — 3 total for L2 — dhanush comes to L3 only after completing 3 re-entry in L2"). A head's `reentry_count` re-entries release one per `threshold/reentry_count` (always exactly 3) total slot-fills (real joins AND re-entries both count) since it became head — a released re-entry itself counts toward the NEXT milestone, so only the first needs 3 fresh real joins; every later one in the same cycle needs only 2 more. Because `threshold` is always exactly `reentry_count` such milestones, the FINAL release always lands on the exact same slot-fill as the head's own completion — its re-entry quota finishes at the same instant it pops and graduates, never before and never after. See `matrix_engine.py`'s "re-entry milestone" section for the exact mechanics.
 - **Wallet Payout is paid per-joiner, incrementally — not a lump sum at level completion.** E.g. L1's $2.00 (Agent 1) isn't credited in one shot once 3 new members have joined — it's delivered as 2 separate $1.00 credits, one the instant each of the first two new joiners arrives; the 3rd (threshold-completing) joiner's arrival pays nothing itself — it pops the head and creates its re-entry instead. The head's succession is still purely FIFO (whoever was next in queue position). See the worked example in [Wallet Credit Split](#wallet-credit-split).
 
 **Payout schedule (Agent 1 / $10 base) — totals per level completion, delivered incrementally as above:**
@@ -194,20 +195,21 @@ Higher tiers multiply wallet payouts, per-re-entry $ amounts, and sponsor share 
 
 ### 10% — Boost Agent (3×3 Forced Matrix)
 
-- **Single global queue** — all positions use Agent 1 (tier 1).
-- **All positions are real** — including Boost's own re-entries, which cycle back into this same queue (no dummy entries).
+- **Single global queue for QUEUE PLACEMENT** — every purchase, regardless of tier, lands in the same shared L1 FIFO line (`agent_tier` pinned to 1 for queue selection, `matrix_runtime.BOOST_TIER`). **But each real join's own dollar CONTRIBUTION is sized by that joiner's own purchased tier**, not the queue's — a Growth-tier ($100 base) join funds a 10× bigger credit than a Trial-tier ($10 base) join even though they land in the same queue (`contribution_tier` in `matrix_engine._append_to_level`, distinct from the queue's fixed `agent_tier=1`). Same as Stream, a purchase only reaches L1 directly — a member **graduates** into Boost's L2 only when their own L1 position completes, and into L3 only when their own L2 position completes (see [Matrix System](#matrix-system)), carrying their own `contribution_tier` forward the whole way.
+- **All positions are real** — including Boost's own re-entries and graduations, which stay in this same global queue set (no dummy entries anywhere in Boost).
+- Same progressive re-entry milestones as Stream — a head's re-entries release one at a time DURING its own cycle, the last one coinciding with its completion, not all at once afterward (see the Stream Agent section above). Because Boost's re-entries are real (not dummy), a released re-entry can itself later become head and earn — the milestone timing only affects when it enters the queue, not what it earns once there.
 - Same 3×3 BFS structure as Stream, and the same **per-joiner incremental** crediting described above for Stream.
-- **Boost pays 100% straight to the recipient's MAIN wallet — it does NOT go through the 70/20/10 wallet split.** No software fee, no repurchase reserve is taken from a Boost payout or Boost-sourced sponsor share (see [Wallet Credit Split](#wallet-credit-split)). This also means Boost no longer feeds the tier-1 repurchase reserve — see [Auto-Repurchase](#auto-repurchase).
+- **Boost's own position-holder payout takes only a 10% software fee — no repurchase-reserve cut.** 90% lands in the recipient's MAIN wallet, 10% goes to platform profit (`credit_boost_wallet` internally, or `mirror_onchain_boost_split` books the same 10% when the 90% settles straight to the recipient on-chain). This is a smaller deduction than Core/Stream's 70/20/10 (no 20% reserve), and it means Boost's own payout still doesn't feed the tier-1 repurchase reserve — see [Auto-Repurchase](#auto-repurchase). **Boost's sponsor-share bonus is unaffected** — it's paid 100%, in addition, never fee-reduced (see [Wallet Credit Split](#wallet-credit-split)).
 
-**Payout schedule (amount each recipient actually receives — 100%, no deduction):**
+**Payout schedule (Agent 1 / $10-base, GROSS rates — a joiner on a higher tier scales every number below by their own `tier_multiplier`, e.g. an Agent 4 joiner's L1 credit is $0.60 × 10 = $6.00 gross, not a flat $0.60; the position holder's own Wallet Payout nets 90% of the figure shown after the 10% software fee, e.g. L1's $0.60 nets $0.54 — Re-entries and Sponsor share are unaffected):**
 
-| Level | Members | Wallet Payout | Re-entries | Sponsor share (on completion) |
+| Level | Members | Wallet Payout (gross / net after 10% fee) | Re-entries | Sponsor share (on completion, unreduced) |
 |-------|---------|--------------|-----------|-------------------------------|
-| L1    | 3       | $0.60        | 1         | —                             |
-| L2    | 9       | $1.50        | 3         | $0.27 (10% of $2.70 gross)    |
-| L3    | 27      | $3.60        | 9         | $0.81 (10% of $8.10 gross)    |
+| L1    | 3       | $0.60 / $0.54 | 1         | —                             |
+| L2    | 9       | $1.50 / $1.35 | 3         | $0.27 (10% of $2.70 gross)    |
+| L3    | 27      | $3.60 / $3.24 | 9         | $0.81 (10% of $8.10 gross)    |
 
-**Sponsor share:** Identical model to Stream — at L2/L3 an extra 10% of the level's gross is credited to the owner's sponsor on level completion, paid from the platform pool (not deducted from the owner's wallet). Boost is always tier 1, so no multiplier. *(The older per-position milestone model — 5th/4th/20th member → $0.30 — was retired.)*
+**Sponsor share:** Identical model to Stream — at L2/L3 an extra 10% of the level's ACTUAL gross collected that cycle is credited to the owner's sponsor on level completion, paid from the platform pool (not deducted from the owner's wallet). Since a Boost cycle's real joins can now be a mix of tiers, "the level's gross" is a running total (`MatrixLevelQueue.cycle_gross_accumulated`) rather than a fixed `threshold × reentry_amount × multiplier` — the underlying reentry-cost (1/3 of gross) and sponsor-share (10% of gross) RATIOS are unchanged and tier-independent, only what they're applied to is now dynamic. *(The older per-position milestone model — 5th/4th/20th member → $0.30 — was retired.)*
 
 > ⚠️ **Open question, unconfirmed with client — can Boost pay the same person who just bought?**
 > Because Boost is one shared, tier-agnostic queue, nothing checks whether the new joiner filling a
@@ -236,7 +238,10 @@ Higher tiers multiply wallet payouts, per-re-entry $ amounts, and sponsor share 
 > repurchase, not just Boost's 100%-to-self case above. Whatever the client decides for Boost should
 > apply to this Stream/repurchase path too, since it's the same underlying gap.
 >
-> Flagged 2026-08-05. No code change made yet — this section documents current, live behavior.
+> Flagged 2026-08-05. No code change made yet for this self-payment gap — this section documents
+> current, live behavior. (The dollar amounts in the table above predate the 2026-08-06 fix that
+> makes Boost scale by the joiner's own tier — event 3's $0.30-per-level figures reflect the old
+> flat rate; the self-payment issue itself is independent and still unresolved either way.)
 
 ---
 
@@ -250,21 +255,26 @@ the gross**:
 
 Effective split: **70% main wallet** (withdrawable) + **20% repurchase reserve** + **10% platform fee**.
 
-**Boost matrix payouts skip this split entirely** (`credit_main_wallet_direct`) — the full amount is
-credited straight to the recipient's MAIN wallet, 100%, no software fee, no repurchase reserve. The L2/L3
-sponsor-share bonus follows whichever system earned it: Stream-sourced sponsor share gets the 70/20/10
-split, Boost-sourced sponsor share gets the 100% no-split credit — same rule as each system's own payout.
+**Boost's own position-holder payout takes a smaller, 90/10 split** (`credit_boost_wallet`, fixed
+2026-08-06 — previously credited 100% with no split at all) — 90% straight to the recipient's MAIN wallet,
+10% software fee, **no repurchase reserve** (unlike Core/Stream's 20%). **Boost's L2/L3 sponsor-share bonus
+is a separate, unreduced credit** (`credit_main_wallet_direct`) — paid 100%, in addition, same as before;
+only a Boost payout's own `wallet_amount` takes the fee, never the sponsor share.
 
 When the repurchase reserve for a tier reaches its **threshold (price + gas)**, the platform automatically
-re-buys that same tier from the reserve — see [Auto-Repurchase](#auto-repurchase). Since Boost no longer
-contributes to any reserve, that threshold is now reached only through Core commissions and Stream payouts.
+re-buys that same tier from the reserve — see [Auto-Repurchase](#auto-repurchase). Boost still contributes
+nothing to any reserve (fee only, no reserve cut), so that threshold is reached only through Core
+commissions and Stream payouts.
 
 > **Ledger vs wallet amount:** the headline income `Transaction` row (`core_income` / `stream_payout` /
-> `boost_payout` / `sponsor_milestone_income`) always records the **full gross commission**. For Core and
-> unsettled Stream, the accompanying `software_fee` / `repurchase_hold` rows (same `reference_id`) document
-> where the other 30% went; **Boost payouts have no such sibling rows** — the full amount landed in MAIN
-> directly (or on-chain — see Instant On-Chain Settlement below). This is deliberate: "Total Earnings" and
-> the admin revenue-engine totals must show the amount **before** any platform fee is subtracted, per client spec.
+> `boost_payout` / `sponsor_milestone_income`) always records the **full gross commission**. For Core,
+> unsettled Stream, and Boost's own payout, an accompanying `software_fee` row (same `reference_id` for
+> Core/Stream; Boost's carries no `reference_id`, matching Core's on-chain fee-booking convention) documents
+> where the fee went — Stream/Core also get a sibling `repurchase_hold` row for their 20% reserve cut, which
+> Boost's own payout never has. **Boost's sponsor-share credit has no sibling rows at all** — the full amount
+> landed in MAIN directly (or on-chain — see Instant On-Chain Settlement below), unreduced. This is
+> deliberate: "Total Earnings" and the admin revenue-engine totals must show the amount **before** any
+> platform fee is subtracted, per client spec.
 
 ### Instant On-Chain Settlement
 
@@ -272,7 +282,9 @@ Stream/Boost payouts (and their sponsor-share bonus) don't have to stay internal
 on-chain crediting Core commissions already get. The moment a payout is decided, `matrix_runtime.
 _settle_or_credit` tries to broadcast it straight to the recipient's own wallet: Stream sends only its **70%**
 share (the 20% reserve + 10% fee still get booked internally, via the exact same `mirror_onchain_earning_split`
-function Core uses — no double-crediting); Boost sends the **full 100%** (it has no internal split at all).
+function Core uses — no double-crediting); Boost sends **90%** of its own payout (the 10% fee still gets
+booked internally, via the analogous `mirror_onchain_boost_split` — no reserve either way) or the **full
+100%** of a sponsor-share bonus (never fee-reduced, on-chain or internal).
 On success the headline `Transaction` row gets its own `tx_hash`, and the wallet-crediting steps above are
 skipped entirely for that portion (it's already in the recipient's wallet, not the platform's).
 
@@ -318,11 +330,11 @@ Implemented in `app/core/repurchase.py`. Every income credit holds back 20% into
 | Agent 4 | $100  | $11  | **$111** |
 
 - A repurchase **acts like a normal purchase**: it re-runs the Core 60% compressed/odd-even split to eligible uplines (credited via `credit_wallet`, so uplines build their **own** reserve → intended **compounding**) plus the Stream/Boost matrix placement + payout cascade.
-- The buy is recorded as a `REPURCHASE_BUY` ledger row, the platform fee as a `REPURCHASE_GAS` row (→ platform profit; the same flat fee charged on a manual purchase). Reserve is fed by Core commissions and **Stream** payouts only — Boost payouts credit 100% to MAIN with no repurchase-reserve cut at all (see [Wallet Credit Split](#wallet-credit-split)), so Boost no longer drives any tier's auto-repurchase.
+- The buy is recorded as a `REPURCHASE_BUY` ledger row, the platform fee as a `REPURCHASE_GAS` row (→ platform profit; the same flat fee charged on a manual purchase). Reserve is fed by Core commissions and **Stream** payouts only — Boost's own payout takes a 10% software fee but still no repurchase-reserve cut at all (see [Wallet Credit Split](#wallet-credit-split)), so Boost no longer drives any tier's auto-repurchase.
 - Driven by `sweep_auto_repurchases(db)`, run inside the `/distribution/pack/status` success transaction (after the matrices). It re-scans every reserve each round so the upline compounding cascade is fully drained, with a step cap as a loop guard. Reserves of frozen/inactive users are **held**, not consumed.
 - **Frontend support:** `GET /wallet/repurchase` (per-tier reserve, threshold, `progress_percent`, `ready` — for the progress bar) and `GET /wallet/repurchase/history` (executed repurchases).
 - **On-chain settlement** (`app/core/onchain.py`): once `REPURCHASE_SIGNER_PRIVATE_KEY` is set, each repurchase also broadcasts a real ERC20 `transfer` moving the consumed reserve (price + fee) from the reserve wallet to `PLATFORM_FEE_WALLET`, over `BSC_RPC_URL` — best-effort (any failure is logged and swallowed; the internal accounting above always applies regardless, so a broadcast failure never blocks a purchase). Leave the key unset to keep auto-repurchase internal-ledger-only, unchanged from before. This settles the reserve on-chain but does **not** replay the Core/Stream/Boost recipient split — those stay internal, paid out later via the member-payout rail below.
-- **Migration:** existing DBs run `cd backend && python migrate_v17.py` once (adds `repurchase_buy` / `repurchase_gas` / `admin_credit` + the matrix pool types to the Postgres `transactiontype` enum); `create_tables.py` covers fresh installs. `migrate_v24.py` covers the per-joiner incremental payout redesign: adds the `reentry` `PendingKind` value (re-entry spawning is now its own backlog kind, separate from crediting a payout) and `matrix_level_queues.real_joins_since_head` (tracks real joins since the current head became head, so re-entries filling a slot never trigger a payout of their own — see `MatrixLevelQueue`'s docstring), backfilling the new column for every existing queue from its current position. `migrate_v25.py` adds `transactions.tx_hash`, needed by [Instant On-Chain Settlement](#instant-on-chain-settlement).
+- **Migration:** existing DBs run `cd backend && python migrate_v17.py` once (adds `repurchase_buy` / `repurchase_gas` / `admin_credit` + the matrix pool types to the Postgres `transactiontype` enum); `create_tables.py` covers fresh installs. `migrate_v24.py` covers the per-joiner incremental payout redesign: adds the `reentry` `PendingKind` value (re-entry spawning is now its own backlog kind, separate from crediting a payout) and `matrix_level_queues.real_joins_since_head` (tracks real joins since the current head became head, so re-entries filling a slot never trigger a payout of their own — see `MatrixLevelQueue`'s docstring), backfilling the new column for every existing queue from its current position. `migrate_v25.py` adds `transactions.tx_hash`, needed by [Instant On-Chain Settlement](#instant-on-chain-settlement). `migrate_v26.py` adds `matrix_level_queues.cycle_gross_accumulated` / `cycle_wallet_paid`, needed by Boost's per-joiner-tier scaling (see the Boost Agent section above) — backfilled from each queue's in-progress cycle using the rate those joins were actually credited at historically, so only NEW joins pick up the corrected scaling. `migrate_v27.py` covers the sequential-graduation redesign (see [Matrix System](#matrix-system)): adds the `graduate` `PendingKind` value, `matrix_queue_slots.contribution_tier` / `is_graduate`, and `matrix_pending_payouts.contribution_tier` — backfills `contribution_tier` from each slot's own `agent_tier` (true for every pre-migration slot, Stream and Boost alike); `is_graduate` needs no backfill since the mechanic didn't exist before this migration. `migrate_v28.py` added `matrix_queue_slots.spawned_from_position` (backfilled for existing re-entries using the same contiguous-chunk heuristic `matrix_flow.py` used to reconstruct spawn pairing on every read, exact for that pre-migration data since it really was created in contiguous batches) plus a first attempt at staggered release that `migrate_v29.py` immediately superseded, shipped moments later in the same conversation and never actually released. `migrate_v29.py` covers the CURRENT re-entry mechanic (see the Stream Agent section above / `matrix_engine.py`'s "re-entry milestone" section): drops migrate_v28's now-unused `pending_reentries_json` / `real_joins_since_reentry_release` columns and adds `matrix_level_queues.reentries_released_this_cycle` (0 is correct for every existing queue — under either the old or the superseded design, nothing was ever left mid-release for an ongoing cycle).
 
 ---
 
@@ -340,7 +352,7 @@ just an unexplained gap. The fix is a breakdown, not a different total:
 |---|---|---|
 | `completed` | Core's 70% share, **plus** any Stream/Boost/sponsor row that settled instantly on-chain (`Transaction.tx_hash IS NOT NULL` — see [Instant On-Chain Settlement](#instant-on-chain-settlement)) | Already paid **directly on-chain** to the recipient's own wallet — Core at purchase time (`mirror_onchain_earning_split`), Stream/Boost/sponsor the instant their payout was decided (`_settle_or_credit`). It's real money in the recipient's own wallet either way. |
 | `pending_reserve` | Live sum of all `REPURCHASE` wallet balances | Building toward the next auto-repurchase threshold — reinvested into another tier automatically, never paid out as cash. |
-| `pending_payout` | Live sum of all `MAIN` wallet balances | Only *unsettled* Stream's 70% share (`credit_wallet`) and Boost's 100% share (`credit_main_wallet_direct` — no split), plus Sponsor share at whichever rate its source system used — credited internally (settlement disabled, no wallet address on file, or a failed broadcast), staying internal-ledger-only until an admin runs a [member payout](#member-payout-admin-distribution) batch. |
+| `pending_payout` | Live sum of all `MAIN` wallet balances | Only *unsettled* Stream's 70% share (`credit_wallet`), Boost's own payout at its 90% share (`credit_boost_wallet`), and Boost's sponsor-share bonus at 100% (`credit_main_wallet_direct` — no split, unreduced) — credited internally (settlement disabled, no wallet address on file, or a failed broadcast), staying internal-ledger-only until an admin runs a [member payout](#member-payout-admin-distribution) batch. |
 
 These three **always foot exactly to `total_earned`** — the UI derives a fourth, muted "platform software fee"
 line as the remainder (`total_earned − completed − pending_reserve − pending_payout`), so nothing is ever
@@ -456,7 +468,26 @@ L3 queue (threshold 27): same pattern, 27 fresh joiners per payout
 
 "Paid" here describes when the head **pops** (threshold reached), not when the money moves — each contributing joiner's share is actually credited the instant *they* join, not held until the pop; see the per-joiner incremental crediting described under [Stream Agent](#30--stream-agent-3x3-forced-matrix) / [Boost Agent](#10--boost-agent-3x3-forced-matrix).
 
-A real purchase adds **one entry to all three of its tier's level-queues at once** (a member's downline growth counts toward L1, L2, and L3 simultaneously — the "3 x 3" of the spec). The re-entries a level-completion grants feed back **only into that same level's own queue** — never into the other two. That separation is what keeps the system bounded: each level's own re-entries are a contracting 1-in-3 series (Stream/Boost's `L1/L2/L3 ReBirth` counts are exactly 1/3/9 against thresholds 3/9/27) when they can't cross-feed into the other levels. `app/core/matrix_engine.py` implements this (`MatrixLevelQueue` + `MatrixQueueSlot`); `app/core/matrix_runtime.py` drives it per purchase, via a durable `MatrixPendingPayout` backlog so a busy queue never makes a single purchase request hang — any backlog left over after a bounded per-call budget is picked up by the next purchase automatically.
+A real purchase adds **one entry to ONLY L1** of its tier's level-queues (client-confirmed correction, 2026-08-06 — previously a purchase filled all three levels at once; see git history if that "3 x 3 simultaneous" version needs revisiting). A member does not start in L2/L3 — they **GRADUATE** there only once their own position has granted ALL of that level's re-entry milestones (client-confirmed correction, 2026-08-06 — see [Stream Agent](#30--stream-agent-3x3-forced-matrix)'s progressive-release description). For L1 (`reentry_count` 1) that's a single milestone, so it always coincides with the pop — a re-entry and a graduation happen together, immediately, exactly as before. For L2/L3 (`reentry_count` 3 / 9), the milestones happen one at a time DURING the cycle, and only the final one — which always lands on the same slot-fill as the pop — is what triggers graduation. L2 → L3 works identically to L1 → L2, just with 3 milestones instead of 1; L3 has no level above it, so its final milestone is the end of the line for that member. A dummy head (Stream's re-entries are always dummy) never gets a milestone or graduates, same as it never earns anything itself.
+
+```
+L1 queue (threshold 3, reentry_count 1 — 1 milestone, so it's always the pop): [you, A, B, C, D, E, F, G, ...]
+  you paid once A,B join, C's join pops you → 1 dummy re-entry ("you-copy") back into L1,
+                                                AND you graduate into L2 as its first member
+  A paid once D,E join, F's join pops A     → same: 1 re-entry into L1, A graduates into L2
+  ...
+L2 queue (threshold 9, reentry_count 3 — 3 milestones, spaced 3 slot-fills apart): populated ONLY by
+  L1 graduates (+ L2's own re-entries) — never a fresh purchase directly
+  you paid per the same incremental rule as new L1-graduates arrive behind you in L2:
+    3 arrive (B,C,D)  → your 1st re-entry into L2 (a slot-fill itself, counts toward the next milestone)
+    2 MORE arrive (E,F) → your 2nd re-entry (only 2 needed — your 1st re-entry already filled one slot)
+    2 MORE arrive (G,H) → your 3rd re-entry AND, on this same slot-fill, you graduate into L3
+L3 queue (threshold 27, reentry_count 9 — 9 milestones, same 3-apart spacing): populated ONLY by
+  L2 graduates (+ L3's own re-entries); identical pattern, just 9 milestones instead of 3 — the 9th
+  coincides with the pop, and since L3 has nothing above it, nothing graduates further from there
+```
+
+Because L2/L3 are now populated entirely by graduations (never a fresh purchase directly), each of the two things a completion spawns carries a DIFFERENT tier forward — deliberately opposite rules: a **graduation** carries the graduating member's own ORIGINAL purchase tier (`MatrixQueueSlot.contribution_tier`, unchanged all the way up — an Agent 3 buyer's L2/L3 positions stay valued at Agent 3, never reset to baseline), while a **re-entry** instead carries whichever join's arrival just triggered the completion (that join's own money being recycled back into the same level, not the original head's). The re-entries a level-completion grants still feed back **only into that same level's own queue** — never into another level, and never cross-feeding with graduation. That separation is what keeps the system bounded: each level's own re-entries are a contracting 1-in-3 series (Stream/Boost's `L1/L2/L3 ReBirth` counts are exactly 1/3/9 against thresholds 3/9/27), and graduation adds only one single placement per completion (not a multiplying count), so it can't run away either. `app/core/matrix_engine.py` implements this (`MatrixLevelQueue` + `MatrixQueueSlot`, `place_real_join` / `place_level_reentry` / `place_graduation`); `app/core/matrix_runtime.py` drives it per purchase, via a durable `MatrixPendingPayout` backlog so a busy queue never makes a single purchase request hang — any backlog left over after a bounded per-call budget is picked up by the next purchase automatically.
 
 Concurrency is protected via PostgreSQL `SELECT FOR UPDATE` on `MatrixLevelQueue` and `MatrixQueueSlot` rows, preventing race conditions under parallel activations.
 
@@ -535,16 +566,24 @@ and right/even column by join order — admin-only, at `/admin/revenue-engines`'
 
 The **queue-flow diagram** (`core/matrix_flow.py`, admin-only "Flow View" per level card) renders
 Stream/Boost's `MatrixQueueSlot` rows as one connected stack instead of the summary level cards —
-every position from #1 onward, real joins and re-entries in true arrival order. The spawn pairing
-(which re-entry a given position generated) isn't stored directly; it's reconstructed from
-`MatrixQueueSlot.is_reentry` + `matrix_runtime.drain_matrix_backlog`'s strict oldest-first
-processing order, which guarantees the *k*-th paid position's re-entries are always exactly the
-*k*-th contiguous block of `reentry_count` re-entry slots in position order — see that module's
-docstring for the full argument. `MatrixQueueSlot.is_reentry` (migration `migrate_v22.py`) exists
-because Stream re-entries are already distinguishable via `is_dummy`, but Boost re-entries are
-**real** (`is_dummy` stays `False` per spec), so there was previously no signal telling a Boost
-re-entry apart from a brand-new member — pre-migration Boost rows can't be backfilled retroactively
-and simply won't show the re-entry badge/link in the diagram.
+every position from #1 onward, real joins and re-entries in true arrival order, with a muted
+"PASSED THROUGH" tag on a dummy (Stream) re-entry position that has already popped without earning
+or spawning anything of its own — otherwise a stretch of real joins with no visible re-entry in
+between reads as an unexplained gap, when it's actually a second, silent completion. The spawn
+pairing (which head's cycle a given re-entry belongs to) is recorded directly on
+`MatrixQueueSlot.spawned_from_position` at the moment each re-entry is released (migration
+`migrate_v28.py`, column definition superseded by `migrate_v29.py`'s progressive-milestone redesign
+but still populated the same way), since a cycle's re-entries now [release progressively, one at a
+time](#30--stream-agent-3x3-forced-matrix) rather than in one contiguous block at completion — the
+older "*k*-th paid position → *k*-th contiguous block of re-entries" reconstruction no longer holds.
+Pre-migration rows (created before that change) fall back to that same contiguous-chunk heuristic,
+which is still exact for them since they genuinely were created in a contiguous batch under the old
+mechanism.
+`MatrixQueueSlot.is_reentry` (migration `migrate_v22.py`) exists because Stream re-entries are
+already distinguishable via `is_dummy`, but Boost re-entries are **real** (`is_dummy` stays `False`
+per spec), so there was previously no signal telling a Boost re-entry apart from a brand-new member
+— pre-migration Boost rows can't be backfilled retroactively and simply won't show the re-entry
+badge/link in the diagram.
 
 ---
 
@@ -959,10 +998,10 @@ Admin logs in at `http://localhost:3000` and is automatically routed to `/admin`
 - **Per-user freeze** (`User.is_active=False`) is checked at `/auth/login` (clear 403 "account frozen" message, not a token followed by a confusing failure) and by `get_current_user` for every other endpoint. A frozen user's Core, sponsor-share, and Stream/Boost matrix payouts are retained as platform profit rather than credited to them (`app/core/proactive.py`, `app/core/matrix_runtime.py`), and their auto-repurchase reserve is held, not consumed.
 - **All timestamps are displayed in IST (`Asia/Kolkata`).** The backend stores naive UTC; the frontend converts via `frontend/src/utils/datetime.js` (`formatDateTimeIST` / `formatDateIST` / `formatTimeIST`). Storage stays UTC — only the display is localized to Indian time.
 - **Transaction types are lowercase enum values** (`agent_purchase`, `deposit`, `core_sent`, …). Transaction views (`Transactions.jsx`, `admin/AdminTransactions.jsx`) classify them into Income / Expense / System groups using **lowercase** keys; `core_sent` is an audit record of the Core split sent upline at purchase and is **not** counted as income. `withdrawal_refund` (a failed-payout reversal) is also classified as System, not income. Both pages also carry a separate Completed/Pending **Status** classification (`core_income` is always Completed; `repurchase_hold`/`stream_payout`/`boost_payout`/`sponsor_milestone_income` are Pending) — see [Earnings Transparency](#earnings-transparency--completed-vs-pending).
-- **On-chain "Wallet Balance"** shown on the Dashboard and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance — it silently repolls every 20s while a wallet is connected (paused when the tab is backgrounded), not just once on load. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases **do** populate internal wallets, though [Instant On-Chain Settlement](#instant-on-chain-settlement) now settles some of this straight to the recipient instead: on `pack/status` success each Core commission is credited 70/20/10 (`mirror_onchain_earning_split`); Stream/Boost matrix payouts either settle instantly on-chain (`_settle_or_credit`, when `PLATFORM_FEE_SIGNER_PRIVATE_KEY` is set and a wallet address is on file) or fall back to internal crediting — Stream 70/20/10 via `credit_wallet`, Boost 100% via `credit_main_wallet_direct` — so main / repurchase-reserve balances fill for whatever stayed internal, and on-chain activity shows in transaction history and the income chart either way.
+- **On-chain "Wallet Balance"** shown on the Dashboard and Buy Agents pages is the connected wallet's **live on-chain USDT** (`frontend/src/hooks/useUsdtBalance.js`), not an internal balance — it silently repolls every 20s while a wallet is connected (paused when the tab is backgrounded), not just once on load. Set `VITE_USDT_ADDRESS` to match the backend `USDT_CONTRACT`, connect a wallet, and restart the Vite dev server. On-chain purchases **do** populate internal wallets, though [Instant On-Chain Settlement](#instant-on-chain-settlement) now settles some of this straight to the recipient instead: on `pack/status` success each Core commission is credited 70/20/10 (`mirror_onchain_earning_split`); Stream/Boost matrix payouts either settle instantly on-chain (`_settle_or_credit`, when `PLATFORM_FEE_SIGNER_PRIVATE_KEY` is set and a wallet address is on file) or fall back to internal crediting — Stream 70/20/10 via `credit_wallet`, Boost's own payout 90/10 (no reserve) via `credit_boost_wallet`, Boost's sponsor-share bonus 100% via `credit_main_wallet_direct` — so main / repurchase-reserve balances fill for whatever stayed internal, and on-chain activity shows in transaction history and the income chart either way.
 - **There is no standalone user Wallet page.** Its balances/reserve cards and transaction history were redundant with the Dashboard and Transactions pages, so it was removed (`/wallet` route, nav entry, and `pages/Wallet.jsx` all deleted) — don't reintroduce it without asking. Balances live on the Dashboard; full transaction history is on `/transactions`.
 - **User Dashboard's "Quick Actions" card and Admin Overview's "Recent Transactions" / "Transaction Breakdown" sections were removed** — low-value once the Completed/Pending breakdown and dedicated Transactions pages covered the same ground. Don't reintroduce without asking.
-- **`GET /admin/metrics`'s `total_credited_to_wallets` is the exact, live sum of every user's internal MAIN wallet balance** — not an estimate. Correct regardless of settlement path: rows that settled instantly on-chain ([Instant On-Chain Settlement](#instant-on-chain-settlement), `tx_hash IS NOT NULL`) never touch MAIN at all; only rows that stayed internal do. A separate `total_settled_onchain` figure sums what *did* settle on-chain (Stream/Boost/sponsor gross at each row's own on-chain share — 70% Stream, 100% Boost). `GET /wallet/earnings`'s per-user `completed`/`pending_payout` split follows the same tx_hash-driven logic.
+- **`GET /admin/metrics`'s `total_credited_to_wallets` is the exact, live sum of every user's internal MAIN wallet balance** — not an estimate. Correct regardless of settlement path: rows that settled instantly on-chain ([Instant On-Chain Settlement](#instant-on-chain-settlement), `tx_hash IS NOT NULL`) never touch MAIN at all; only rows that stayed internal do. A separate `total_settled_onchain` figure sums what *did* settle on-chain (Stream/Boost/sponsor gross at each row's own on-chain share — 70% Stream, 90% Boost's own payout, 100% any sponsor-share bonus). `GET /wallet/earnings`'s per-user `completed`/`pending_payout` split follows the same tx_hash-driven logic.
 - **Admin's per-user drill-down (`GET /admin/users/{id}/summary`) shows `wallet_address`, not `account_balance`** — the account wallet is always $0 on the on-chain rail (no deposit path funds it), so it wasn't useful to show. `ADMIN_INCOME` transactions (the 1% Boost cut) are tracked as their own `admin_income` figure in `/admin/treasury/summary`, separate from `platform_profit` (`SOFTWARE_FEE` + `PLATFORM_PROFIT`).
 - **Direct Referrals** on the Dashboard is a click-to-expand dropdown (not just a count) listing every direct referral with username + active/frozen status, sourced from the existing `GET /auth/referrals` (`referrals: [...]`) response.
 - **Wallet-connect widget** in the topbar (`<appkit-button>`) is hidden for admin accounts — it's only relevant to the on-chain purchase flow, which admins don't use; every admin action is pure backend/JWT logic against backend-configured wallet addresses.

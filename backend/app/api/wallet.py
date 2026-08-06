@@ -82,10 +82,15 @@ from app.core.wallet_ops import REPURCHASE_RATE, SOFTWARE_FEE_RATE
 # at purchase time (see mirror_onchain_earning_split) — so it is Completed the
 # instant the CORE_INCOME row is written. Stream's main share is credited to an
 # internal MAIN wallet instead (see credit_wallet, 70/20/10) and only becomes
-# Completed once an admin payout run actually debits it. Boost skips that split
-# entirely — its full amount lands in MAIN immediately (credit_main_wallet_direct,
-# client spec) — so its "MAIN-eligible" share is 100%, not 70%.
+# Completed once an admin payout run actually debits it.
 MAIN_SHARE_RATE = Decimal("1") - REPURCHASE_RATE - SOFTWARE_FEE_RATE  # 70%, Stream-only
+
+# Boost skips the repurchase-reserve cut but DOES take the 10% software fee
+# on a position holder's own payout (credit_boost_wallet / mirror_onchain_
+# boost_split) — so its "MAIN-eligible" share is 90%, not the full 100%.
+# Boost's sponsor-share bonus is unaffected (paid in addition, unreduced —
+# see BOOST/SPONSOR handling below, which never multiplies by this rate).
+BOOST_MAIN_SHARE_RATE = Decimal("1") - SOFTWARE_FEE_RATE  # 90%, Boost's own payout only
 
 # Money that has left the user (real outflows). agent_purchase covers the on-chain
 # pack buys; the rest are legacy deposit-first flows kept for historical rows.
@@ -187,10 +192,10 @@ def earnings_summary(
 
     completed_core = gross_core * MAIN_SHARE_RATE
     # Settled rows already went straight to the recipient's own wallet — the
-    # exact share send_matrix_payout_settlement broadcast (70% Stream, 100%
-    # Boost, same rate as its source for sponsor share). No inference needed.
+    # exact share send_matrix_payout_settlement broadcast (70% Stream, 90%
+    # Boost's own payout, 100% any sponsor-share bonus). No inference needed.
     settled_stream_boost = (
-        stream_settled * MAIN_SHARE_RATE + boost_settled
+        stream_settled * MAIN_SHARE_RATE + boost_settled * BOOST_MAIN_SHARE_RATE
         + sponsor_stream_settled * MAIN_SHARE_RATE + sponsor_boost_settled
     )
     # Unsettled rows were credited to MAIN internally, exactly as before this
@@ -198,7 +203,7 @@ def earnings_summary(
     # paid out by an admin payout run — same inference as before, just scoped
     # to only the unsettled subset (settled rows never touched MAIN at all).
     main_eligible_unsettled = (
-        stream_unsettled * MAIN_SHARE_RATE + boost_unsettled
+        stream_unsettled * MAIN_SHARE_RATE + boost_unsettled * BOOST_MAIN_SHARE_RATE
         + sponsor_stream_unsettled * MAIN_SHARE_RATE + sponsor_boost_unsettled
     )
     paid_out_unsettled = max(main_eligible_unsettled - pending_payout, Decimal("0"))

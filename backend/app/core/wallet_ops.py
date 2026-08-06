@@ -145,6 +145,43 @@ def mirror_onchain_earning_split(
     return main_credit, repurchase, software_fee
 
 
+def mirror_onchain_boost_split(
+    db: Session,
+    user_id: int,
+    agent_tier: int,
+    gross_amount: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """
+    Boost's on-chain equivalent of mirror_onchain_earning_split: the 90% net
+    share (gross minus the 10% software fee) was already sent directly
+    on-chain to the recipient's own wallet at settlement time
+    (matrix_runtime._settle_or_credit), so this only books the 10% software
+    fee internally — no repurchase reserve (Boost doesn't feed it, unlike
+    Core/Stream) and no main-wallet credit (the 90% already landed on-chain).
+
+    Only applies to a Boost payout's OWN wallet_amount, never its
+    sponsor-share bonus — the sponsor share is paid in addition, unreduced
+    (see credit_main_wallet_direct's docstring).
+
+    Returns (main_credit, software_fee) for symmetry with the Stream/Core
+    version; only software_fee is actually booked here.
+    """
+    four_places = Decimal("0.0001")
+    gross = Decimal(str(gross_amount)).quantize(four_places, rounding=ROUND_HALF_UP)
+    software_fee = (gross * SOFTWARE_FEE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
+    main_credit = gross - software_fee
+
+    db.add(Transaction(
+        user_id=user_id,
+        agent_tier=agent_tier,
+        transaction_type=TransactionType.SOFTWARE_FEE,
+        amount=software_fee,
+        notes="10% software fee (Boost payout)",
+    ))
+
+    return main_credit, software_fee
+
+
 def get_or_create_wallet(db: Session, user_id: int, agent_tier: int, wallet_type: WalletType) -> Wallet:
     wallet = (
         db.query(Wallet)
@@ -232,6 +269,50 @@ def credit_wallet(
     ))
 
 
+def credit_boost_wallet(
+    db: Session,
+    user_id: int,
+    agent_tier: int,
+    gross_amount: Decimal,
+    tx_type: TransactionType,
+    reference_id: str | None = None,
+    notes: str | None = None,
+) -> None:
+    """
+    Credit a Boost matrix payout (the position holder's own wallet_amount,
+    NOT its sponsor-share bonus) to MAIN with a 10% software-fee deduction —
+    no repurchase-reserve cut (client spec: unlike Core/Stream, Boost never
+    feeds the repurchase reserve). Distinct from credit_wallet's 70/20/10
+    split (Core/Stream) and from credit_main_wallet_direct's 100%-no-split
+    (Boost's sponsor-share bonus, paid in addition and never fee-reduced).
+    """
+    four_places = Decimal("0.0001")
+    software_fee = (gross_amount * SOFTWARE_FEE_RATE).quantize(four_places, rounding=ROUND_HALF_UP)
+    main_credit = gross_amount - software_fee
+
+    main_wallet = get_or_create_wallet(db, user_id, agent_tier, WalletType.MAIN)
+    main_wallet.balance = Decimal(str(main_wallet.balance)) + main_credit
+
+    db.add(Transaction(
+        user_id=user_id,
+        agent_tier=agent_tier,
+        transaction_type=TransactionType.SOFTWARE_FEE,
+        amount=software_fee,
+        reference_id=reference_id,
+        notes="10% platform software fee (Boost payout)",
+    ))
+    # Headline row shows the FULL gross amount (see credit_wallet's docstring
+    # for why) — only main_credit (90%) was actually added to Wallet.MAIN.
+    db.add(Transaction(
+        user_id=user_id,
+        agent_tier=agent_tier,
+        transaction_type=tx_type,
+        amount=gross_amount,
+        reference_id=reference_id,
+        notes=notes,
+    ))
+
+
 def credit_main_wallet_direct(
     db: Session,
     user_id: int,
@@ -243,10 +324,10 @@ def credit_main_wallet_direct(
 ) -> None:
     """
     Credit amount directly to MAIN wallet with no repurchase/software-fee
-    split — used for Boost matrix payouts and Boost-sourced sponsor share
-    (client spec: Boost pays 100%, only Stream gets the 70/20/10 split; see
-    matrix_runtime.py), and for refunds where the 20% repurchase was already
-    taken at earn time.
+    split — used for Boost-sourced SPONSOR share only (paid in addition to
+    the recipient's own income, unreduced — see credit_boost_wallet for the
+    position holder's own payout, which DOES take a 10% fee), and for
+    refunds where the 20% repurchase was already taken at earn time.
     """
     four_places = Decimal("0.0001")
     amount = amount.quantize(four_places, rounding=ROUND_HALF_UP)

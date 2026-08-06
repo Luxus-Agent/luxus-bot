@@ -470,9 +470,12 @@ def platform_metrics(
           instantly on-chain straight to the recipient's own wallet
           (Transaction.tx_hash IS NOT NULL — matrix_runtime._settle_or_credit,
           disabled unless PLATFORM_FEE_SIGNER_PRIVATE_KEY is set), at each
-          row's own on-chain share (70% Stream, 100% Boost)
-        - software_fees: 10% platform fee collected across every Stream payout
-          (Boost contributes none — it has no software-fee deduction)
+          row's own on-chain share (70% Stream, 90% Boost's own payout, 100%
+          any sponsor-share bonus — sponsor share is never fee-reduced)
+        - software_fees: 10% platform fee collected across every Stream
+          payout and Core commission, plus 10% off every Boost payout's own
+          wallet_amount (Boost's sponsor-share bonus contributes none — it's
+          paid in addition, unreduced)
       repurchase:
         - count / volume: number and $ of auto-repurchases executed (repurchase_buy)
         - platform_fee: flat platform fee collected on those repurchases
@@ -523,17 +526,20 @@ def platform_metrics(
     ), 4)
 
     # total_settled_onchain: Stream sends 70% on-chain (mirrors Core exactly),
-    # Boost sends the full 100% — same per-engine rate matrix_runtime.
-    # _settle_or_credit itself broadcasts. Sponsor share follows its SOURCE
-    # system the same way; SPONSOR_MILESTONE_INCOME has no source column, so
-    # rows are told apart by the reference_id prefix
+    # Boost sends 90% of its OWN payout (10% software fee stays internal —
+    # see wallet_ops.credit_boost_wallet / mirror_onchain_boost_split) but the
+    # full 100% of any sponsor-share bonus (never fee-reduced) — same rates
+    # matrix_runtime._settle_or_credit itself broadcasts. Sponsor share
+    # follows its SOURCE system the same way; SPONSOR_MILESTONE_INCOME has no
+    # source column, so rows are told apart by the reference_id prefix
     # matrix_runtime._credit_row_sponsor tags them with.
     stream_rate = 1 - float(REPURCHASE_RATE) - float(SOFTWARE_FEE_RATE)
+    boost_rate = 1 - float(SOFTWARE_FEE_RATE)
     sponsor_boost_settled = _sum_sponsor_like("sponsor_share_boost_%", settled=True)
     sponsor_stream_settled = _sum_sponsor_like("sponsor_share_stream_%", settled=True)
     total_settled_onchain = round(
         _sum_settled(TransactionType.STREAM_PAYOUT) * stream_rate
-        + _sum_settled(TransactionType.BOOST_PAYOUT)
+        + _sum_settled(TransactionType.BOOST_PAYOUT) * boost_rate
         + sponsor_stream_settled * stream_rate
         + sponsor_boost_settled,
         4,

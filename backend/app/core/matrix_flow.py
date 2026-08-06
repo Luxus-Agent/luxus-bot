@@ -4,13 +4,17 @@ client's own "How matrix queue work?" spec picture: a single vertical stack of
 every position in one level's queue (real joins + re-entries, in true arrival
 order), with each paying position linked to the re-entry slot(s) it spawned.
 
-The spawn pairing isn't stored directly on MatrixQueueSlot — it's reconstructed
-here. matrix_runtime.drain_matrix_backlog processes payouts strictly oldest-first
-(MatrixPendingPayout.id ASC) and places every re-entry a payout grants in one
-uninterrupted block before moving to the next backlog row (see that module's
-docstring), so within one level's queue the k-th paid position's re-entries are
-always exactly the k-th contiguous block of `reentry_count` is_reentry=True
-slots, in position_number order. This function is pure/read-only.
+Spawn pairing (`MatrixQueueSlot.spawned_from_position`) is recorded directly
+at creation time by matrix_engine._append_to_level's staggered re-entry
+release (client-confirmed correction, 2026-08-06: re-entries drip out one at
+a time, one per 3 subsequent real joins, instead of all at once — see that
+module's docstring), so a completion's re-entries are no longer a contiguous
+block in queue order and can't be reconstructed by position adjacency alone.
+Pre-migration rows (created before that change) have `spawned_from_position`
+NULL — this function falls back to the old contiguous-chunk heuristic for
+just those, matching migrate_v28.py's one-time backfill logic exactly (kept
+here too so the diagram stays correct even if that backfill was ever skipped
+or a fresh row somehow arrives without it). This function is pure/read-only.
 """
 from sqlalchemy.orm import Session
 
@@ -40,17 +44,18 @@ def get_queue_flow(db: Session, system_type: SystemType, tier: int, level: int) 
         if user_ids else {}
     )
 
-    # Reconstruct spawn pairing (see module docstring for why chunking by
-    # reentry_count, in position_number order, is exact rather than heuristic).
-    paid_positions = [s.position_number for s in slots if s.position_number < head and not s.is_dummy]
-    reentry_positions = [s.position_number for s in slots if s.is_reentry]
-
-    spawned_by: dict[int, int] = {}
+    # Legacy fallback ONLY for rows predating spawned_from_position (see
+    # module docstring) — chunk any such re-entries by reentry_count, in
+    # position order, against paid positions that also predate the column.
     n = cfg.reentry_count or 0
+    legacy_paid = [s.position_number for s in slots if s.position_number < head and not s.is_dummy]
+    legacy_reentries = [s.position_number for s in slots if s.is_reentry and s.spawned_from_position is None]
+    legacy_spawned_by: dict[int, int] = {}
     if n > 0:
-        for i, paid_pos in enumerate(paid_positions):
-            for r_pos in reentry_positions[i * n:(i + 1) * n]:
-                spawned_by[r_pos] = paid_pos
+        for i, r_pos in enumerate(legacy_reentries):
+            chunk = i // n
+            if chunk < len(legacy_paid):
+                legacy_spawned_by[r_pos] = legacy_paid[chunk]
 
     return {
         "system_type": system_type.value,
@@ -68,7 +73,14 @@ def get_queue_flow(db: Session, system_type: SystemType, tier: int, level: int) 
                 "is_reentry": s.is_reentry,
                 "is_paid": s.position_number < head and not s.is_dummy,
                 "is_head": s.position_number == head,
-                "spawned_from": spawned_by.get(s.position_number),
+                "spawned_from": s.spawned_from_position or legacy_spawned_by.get(s.position_number),
+                # A dummy (Stream re-entry) position that has already popped —
+                # per spec it earns nothing and spawns nothing further, so it
+                # produces no visible payout/re-entry marker of its own. Flag
+                # it explicitly so the diagram doesn't read as an unexplained
+                # gap (a stretch of real joins with no re-entry in between is
+                # actually two completions, one of them silent).
+                "is_passed_through": s.is_dummy and s.position_number < head,
             }
             for s in slots
         ],
