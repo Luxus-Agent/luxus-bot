@@ -17,7 +17,7 @@ Set is_admin=true directly in the DB for the platform root/admin user.
 import logging
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -402,6 +402,8 @@ def treasury_summary(
 
 @router.get("/treasury/onchain-wallets")
 def treasury_onchain_wallets(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ):
     """
@@ -419,12 +421,23 @@ def treasury_onchain_wallets(
     PLATFORM_FEE_WALLET when unset (config.py) — when that happens they'll
     naturally report the same address/balances as Platform Fee; the frontend
     can de-duplicate on `address`.
+
+    Every call also syncs each watched wallet's low-gas alert state
+    (`core/gas_alerts.sync_gas_alert_state`) — ADMIN_EMAIL gets one email, per
+    wallet, the instant that wallet's BNB balance is first seen below
+    threshold, not once per poll while it stays low. Since this admin
+    dashboard's own polling (every 20s while open) is what drives this
+    endpoint, the alert is really "the next time anyone loads this page after
+    gas ran low" — see that module's docstring for why that's an acceptable
+    tradeoff in a fully-synchronous app with no background scheduler.
     """
     from app.config import settings
+    from app.core.gas_alerts import sync_gas_alert_state
     from app.core.onchain import get_wallet_onchain_balances
 
     def _entry(label: str, key: str, address: str) -> dict:
         result = get_wallet_onchain_balances(address)
+        sync_gas_alert_state(db, key, label, result["address"], result["bnb"], background_tasks)
         return {
             "key": key,
             "label": label,

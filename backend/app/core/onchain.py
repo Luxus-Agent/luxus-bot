@@ -30,7 +30,7 @@ purchase request or rolls back the internal accounting that already happened
 (repurchase) or blocks falling back to internal crediting (matrix payouts).
 """
 import logging
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 
 from app.config import settings
 
@@ -220,6 +220,46 @@ def send_matrix_payout_settlement(amount: Decimal, dest_address: str, reference:
             "falling back to internal wallet crediting, on-chain transfer did not happen.",
             amount, dest_address, reference,
         )
+        return None
+
+
+# Floor for the low-gas alert's recommended top-up — no point suggesting less
+# than this even when the live gas price alone computes to a smaller number
+# (BSC gas has historically been well under 1 Gwei).
+_MIN_RECOMMENDED_TOPUP_BNB = Decimal("0.05")
+# How many future settlement broadcasts (each capped at this module's fixed
+# 100_000 gas limit) the recommendation should comfortably outlast, priced at
+# today's gas price.
+_RECOMMENDED_TX_RUNWAY = 500
+
+
+def get_recommended_gas_topup_bnb() -> Decimal | None:
+    """
+    Best-effort "top up to at least this much" BNB figure for the low-gas
+    alert email (core/gas_alerts.py), computed from BSC_RPC_URL's LIVE gas
+    price — so switching BSC_RPC_URL from testnet to mainnet (or a mainnet
+    price spike) is reflected automatically, with no separate mainnet/testnet
+    branch anywhere in this codebase.
+
+    = max(_MIN_RECOMMENDED_TOPUP_BNB, current_gas_price * 100_000 gas *
+    _RECOMMENDED_TX_RUNWAY), rounded up to a clean 2-decimal figure so the
+    recommendation never understates what it computed. Returns None on any
+    RPC failure — callers should omit the recommendation rather than show a
+    stale or wrong number.
+    """
+    try:
+        from web3 import Web3
+
+        w3 = Web3(Web3.HTTPProvider(settings.BSC_RPC_URL))
+        if not w3.is_connected():
+            return None
+
+        gas_price_wei = Decimal(w3.eth.gas_price)
+        scaled = gas_price_wei * Decimal(100_000) * Decimal(_RECOMMENDED_TX_RUNWAY) / Decimal(10**18)
+        recommended = max(_MIN_RECOMMENDED_TOPUP_BNB, scaled)
+        return recommended.quantize(Decimal("0.01"), rounding=ROUND_CEILING)
+    except Exception:
+        logger.exception("onchain: failed to compute recommended gas top-up.")
         return None
 
 

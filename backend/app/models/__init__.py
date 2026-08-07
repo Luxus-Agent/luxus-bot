@@ -4,6 +4,7 @@ from app.models.agent import AgentPurchase
 from app.models.wallet import Wallet, WalletType
 from app.models.transaction import Transaction, TransactionType
 from app.models.platform_setting import PlatformSetting
+from app.models.wallet_gas_alert import WalletGasAlert
 from app.models.pack_purchase import PackPurchase, PackPurchaseStatus
 from app.models.payout_batch import PayoutBatch, PayoutBatchStatus
 from app.models.matrix import (
@@ -25,6 +26,7 @@ __all__ = [
     "TransactionType",
     "WalletAddress",
     "PlatformSetting",
+    "WalletGasAlert",
     "PackPurchase",
     "PackPurchaseStatus",
     "PayoutBatch",

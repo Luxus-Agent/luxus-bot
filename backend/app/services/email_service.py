@@ -1,7 +1,8 @@
 # backend/app/services/email_service.py
 """
-SMTP email service — OTP emails only: email verification, password reset, and
-BEP-20 address verification. (Deposit/withdrawal/transfer/agent-activation emails
+SMTP email service — OTP emails (email verification, password reset, BEP-20
+address verification) plus one operational alert: low platform-wallet gas
+(see core/gas_alerts.py). (Deposit/withdrawal/transfer/agent-activation emails
 were removed with the deposit-first + NOWPayments rails.)
 Runs blocking SMTP calls in a thread pool so the event loop is not blocked.
 
@@ -170,6 +171,51 @@ async def send_address_verification_email(
         </p>
         <p style="color: #6b7280; font-size: 13px;">
             If you did not request this, please ignore this email.
+        </p>
+    """)
+    return await send_email(email, subject, body)
+
+
+# ── Low platform-wallet gas alert ────────────────────────────────────────────
+
+async def send_low_gas_alert_email(
+    email: str,
+    wallet_label: str,
+    wallet_address: str,
+    bnb_balance,
+    recommended_topup_bnb=None,
+) -> bool:
+    """One wallet's low-gas alert — see core/gas_alerts.py for when this fires.
+
+    `recommended_topup_bnb` is computed from the live network gas price at
+    alert time (core/onchain.get_recommended_gas_topup_bnb) — omitted from the
+    email (falls back to a generic line) only if that RPC read itself failed.
+    """
+    subject = f"Low Gas Alert — {wallet_label}"
+    topup_line = (
+        f"""<p>Recommended top-up: at least
+               <strong style="color: #16a34a;">{recommended_topup_bnb} BNB</strong> —
+               enough to comfortably outlast the current network gas price.</p>"""
+        if recommended_topup_bnb is not None
+        else """<p style="color: #6b7280; font-size: 13px;">
+               (Couldn't fetch a live gas price to size a recommendation — any
+               top-up well above the balance below will do.)</p>"""
+    )
+    body = _card(f"""
+        <h2 style="color: #1a1a2e; margin-top: 0;">Low Gas — {wallet_label}</h2>
+        <p>The <strong>{wallet_label}</strong> is running low on BNB gas and may soon
+           fail to broadcast its on-chain transactions.</p>
+        <p style="font-family: monospace; background: #f9fafb; padding: 12px;
+                   border-radius: 6px; word-break: break-all; margin: 16px 0;">
+            {wallet_address}
+        </p>
+        <p>Current balance:
+           <strong style="color: #ef4444;">{bnb_balance} BNB</strong></p>
+        {topup_line}
+        <p style="color: #6b7280; font-size: 13px;">
+            Top up this wallet with BNB directly — there is no automated top-up.
+            You'll receive another alert only after this wallet's balance recovers
+            above the threshold and later drops again.
         </p>
     """)
     return await send_email(email, subject, body)
