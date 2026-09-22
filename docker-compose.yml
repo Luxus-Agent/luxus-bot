@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: luxus-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - luxus-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: luxus-bot-backend
+    container_name: luxus-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Overrides whatever DATABASE_URL is in .env, points it at the `db`
+      # service by its compose service name (works via Docker's internal DNS)
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - luxus-net
+
+networks:
+  luxus-net:
+    driver: bridge
+
+volumes:
+  pgdata:
