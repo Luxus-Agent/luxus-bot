@@ -1,0 +1,21 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "luxus-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "autoPort": true,
+      "cwd": "frontend"
+    },
+    {
+      "name": "luxus-backend",
+      "runtimeExecutable": "conda",
+      "runtimeArgs": ["run", "-n", "luxus", "--no-capture-output", "uvicorn", "app.main:app", "--port", "8000"],
+      "port": 8000,
+      "autoPort": true,
+      "cwd": "backend"
+    }
+  ]
+}
