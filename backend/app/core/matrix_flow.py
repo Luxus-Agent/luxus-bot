@@ -12,9 +12,8 @@ module's docstring), so a completion's re-entries are no longer a contiguous
 block in queue order and can't be reconstructed by position adjacency alone.
 Pre-migration rows (created before that change) have `spawned_from_position`
 NULL — this function falls back to the old contiguous-chunk heuristic for
-just those, matching migrate_v28.py's one-time backfill logic exactly (kept
-here too so the diagram stays correct even if that backfill was ever skipped
-or a fresh row somehow arrives without it). This function is pure/read-only.
+just those (kept so the diagram stays correct for any legacy row, or a fresh
+row that somehow arrives without it). This function is pure/read-only.
 """
 from sqlalchemy.orm import Session
 

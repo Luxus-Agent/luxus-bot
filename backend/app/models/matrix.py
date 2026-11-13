@@ -18,8 +18,8 @@ class MatrixPosition(Base):
     RETIRED — superseded by MatrixLevelQueue/MatrixQueueSlot below (the client's
     actual "3 separate queues per level" spec, not a shared ancestor tree — see
     matrix_engine.py's module docstring for why the tree model was replaced).
-    Kept only because migrate_v16.py and backfill_platform_profit.py still
-    import it; the table itself has always been empty in this environment.
+    Kept only because backfill_platform_profit.py still imports it; the table
+    itself has always been empty in this environment.
 
     One user slot in a 3x3 forced matrix for a (agent_tier, system_type) pair.
 
@@ -61,7 +61,7 @@ class MatrixPosition(Base):
 
 class MatrixCounter(Base):
     """
-    RETIRED — see MatrixPosition's docstring. Kept for migrate_v16.py only.
+    RETIRED — see MatrixPosition's docstring. Kept so the existing table stays in the schema.
 
     Tracks next available position_number per (agent_tier, system_type).
     Locked with SELECT FOR UPDATE to prevent concurrent position conflicts.
@@ -205,9 +205,8 @@ class MatrixQueueSlot(Base):
     # re-entry this completion also spawns does NOT read this column — it
     # instead carries forward whichever join's arrival triggered the
     # completion (see PendingReentry/PendingGraduation's docstrings).
-    # Nullable for pre-migration rows; falls back to `agent_tier` wherever
-    # read (matches how those historical joins were actually credited — see
-    # migrate_v27.py).
+    # Nullable for legacy rows; falls back to `agent_tier` wherever read
+    # (matches how those historical joins were actually credited).
     contribution_tier: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Which completed position (by position_number, THIS level's own queue)
     # this slot was released as the re-entry for — set only when is_reentry
