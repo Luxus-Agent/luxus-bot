@@ -25,13 +25,16 @@ concurrency:
 
 jobs:
   detect-changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
+
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
       - name: Detect changed files
         id: filter
@@ -47,14 +50,17 @@ jobs:
               - '.dockerignore'
 
   deploy-frontend:
+    name: Deploy Frontend to S3
     needs: detect-changes
     if: needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
@@ -64,7 +70,7 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Build frontend
+      - name: Build React application
         working-directory: frontend
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
@@ -74,36 +80,43 @@ jobs:
           VITE_USDT_DECIMALS: ${{ vars.VITE_USDT_DECIMALS || '18' }}
         run: npm run build
 
-      - name: Configure AWS
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ap-south-1
+          audience: sts.amazonaws.com
 
-      - name: Upload to S3
-        run: aws s3 sync frontend/dist/ s3://luxus-frontend-prod-2026/ --delete
+      - name: Upload frontend to S3
+        run: |
+          aws s3 sync frontend/dist/ \
+            s3://luxus-frontend-prod-2026/ \
+            --delete
 
-      - name: Invalidate CloudFront
+      - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
             --distribution-id E1IIDH0Y4TYIFT \
             --paths "/*"
 
   build-backend:
+    name: Build and Push Backend to ECR
     needs: detect-changes
     if: needs.detect-changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-      - name: Configure AWS
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ap-south-1
+          audience: sts.amazonaws.com
 
-      - name: Login to ECR
+      - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up Docker Buildx
@@ -115,6 +128,8 @@ jobs:
           context: .
           file: backend/Dockerfile
           push: true
+          provenance: false
+          platforms: linux/amd64
           tags: |
             552648357125.dkr.ecr.ap-south-1.amazonaws.com/luxus-prod-backend:${{ github.sha }}
           cache-from: type=gha
