@@ -37,9 +37,33 @@
   --text-secondary: #211E17;
   --text-muted: #4D4636;
   --text-muted-rgb: 77, 70, 54;
-  --accent: #D97757;
-  --accent-rgb: 217, 119, 87;
-  --accent-glow: #E89A7D;
+  /* Same green as the dark theme (was Claude-style coral). */
+  --accent: #00D4B4;
+  --accent-rgb: 0, 212, 180;
+  --accent-glow: #00FFD4;
+}
+
+/* ── Backgrounds ───────────────────────────────────────────────────────────
+   Background images appear ONLY on the auth pages (login/register/etc.).
+   Logged-in screens use the solid --bg-page colour in both themes.
+   Dark: assets/login-bg.png + dark overlay. Light: assets/light-bg.jpg. */
+.auth-screen {
+  background-image: url('./assets/login-bg.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.auth-overlay {
+  background: linear-gradient(135deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.55) 100%);
+}
+
+:root[data-theme="light"] .auth-screen {
+  background-image: url('./assets/light-bg.jpg');
+}
+
+:root[data-theme="light"] .auth-overlay {
+  background: linear-gradient(135deg, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.3) 100%);
 }
 
 * {

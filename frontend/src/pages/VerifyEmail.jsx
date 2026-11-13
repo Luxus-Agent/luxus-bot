@@ -4,7 +4,6 @@ import api from '../api/client'
 import Logo from '../components/Logo'
 import toast from 'react-hot-toast'
 import { MailCheck, RefreshCw } from 'lucide-react'
-import loginBg from '../assets/login-bg.png'
 import { ThemeToggle } from '../components/Layout'
 
 export default function VerifyEmail() {
@@ -43,12 +42,10 @@ export default function VerifyEmail() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center px-4 bg-cover bg-center bg-no-repeat relative"
-      style={{ backgroundImage: `url(${loginBg})` }}
+      className="min-h-screen flex items-center justify-center px-4 auth-screen relative"
     >
       <div
-        className="absolute inset-0 pointer-events-none"
-        style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.55) 100%)' }}
+        className="absolute inset-0 pointer-events-none auth-overlay"
       />
       <div className="absolute top-4 right-4 z-10"><ThemeToggle /></div>
       <div className="w-full max-w-md relative">

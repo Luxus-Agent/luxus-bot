@@ -4,7 +4,6 @@ import { useAuth } from '../context/AuthContext'
 import Logo from '../components/Logo'
 import toast from 'react-hot-toast'
 import { Eye, EyeOff, LogIn } from 'lucide-react'
-import loginBg from '../assets/login-bg.png'
 import { ThemeToggle } from '../components/Layout'
 
 export default function Login() {
@@ -35,12 +34,10 @@ export default function Login() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center px-4 bg-cover bg-center bg-no-repeat relative"
-      style={{ backgroundImage: `url(${loginBg})` }}
+      className="min-h-screen flex items-center justify-center px-4 auth-screen relative"
     >
       <div
-        className="absolute inset-0 pointer-events-none"
-        style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.55) 100%)' }}
+        className="absolute inset-0 pointer-events-none auth-overlay"
       />
       <div
         className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full pointer-events-none"

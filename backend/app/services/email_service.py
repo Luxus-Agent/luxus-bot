@@ -23,7 +23,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _BRAND = "Luxus"
-_ACCENT = "#6C63FF"       # purple accent
+_ACCENT = "#12B278"       # brand green (matches the logo mark; readable on the white card)
 _BG = "#f5f5f5"
 _CARD_BG = "#ffffff"
 

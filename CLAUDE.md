@@ -35,8 +35,11 @@ frontend/src/
   pages/Profile.jsx      # Change Password card reuses the forgot-password/reset-password OTP endpoints
                           # (own email pre-filled) rather than a current-password endpoint; logs out after reset
   pages/Login.jsx, Register.jsx, ForgotPassword.jsx, VerifyEmail.jsx # share one auth-page look: full-bleed
-                          # assets/login-bg.png + dark gradient overlay behind a `bg-panel` card, Logo inside
-                          # the card (not above it) — match this exactly if you touch/add an auth page
+                          # background + overlay behind a `bg-panel` card, Logo inside the card (not above
+                          # it) — use the `auth-screen` / `auth-overlay` classes (index.css), never an inline
+                          # image: dark = assets/login-bg.png + dark gradient, light = assets/light-bg.jpg
+                          # (auth pages ONLY — logged-in screens use solid --bg-page in both themes).
+                          # Light theme's accent is the same green as dark.
 backend/app/
   api/auth.py            # register/verify-email/login/reset, usernames case-insensitive; forgot-password 404s an unregistered email (deliberate disclosure)
   api/wallet.py          # balances / transactions (+ tx_hash) / earnings (+ Completed/Pending split) / repurchase / BEP-20 address / core-preview
