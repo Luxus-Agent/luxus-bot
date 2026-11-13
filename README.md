@@ -803,8 +803,7 @@ POST /distribution/payout/status   → Admin JWT. Body: { batch_id, status, tx_h
   under `skipped_no_address` (count + amount) in the `payout/create` response, so nothing silently
   vanishes.
 - Batch records live in `payout_batches` (`app/models/payout_batch.py`). `create_tables.py` creates the table.
-- On-chain verification (`VERIFY_ONCHAIN_TX`) is not wired for this rail (same as `pack/status`
-  today) — `payout/status` trusts the admin-supplied `tx_hash`.
+- **`payout/status` verifies the payment on-chain before debiting anyone** (`VERIFY_ONCHAIN_TX`, on by default — same check as `pack/status`): the tx must be mined, succeeded, and show a USDT `Transfer` to every recipient in the batch for at least the batch amount, and the hash must not already back another batch or purchase. If it doesn't check out the batch stays PENDING and nothing is debited (400 = payment doesn't match, 503 = chain can't be reached right now, retry).
 
 ---
 

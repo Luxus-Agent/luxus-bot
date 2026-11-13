@@ -429,17 +429,18 @@ def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
             ))
 
 
-def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> None:
+def _verify_recipients_paid(recipients_json: str | None, tx_hash: str) -> None:
     """
-    Verify the buyer's on-chain payment before a purchase is recorded as success
-    (see core/onchain.verify_pack_payment). Raises HTTPException: 400 when the
-    payment doesn't check out, 503 when it can't be checked right now (the order
-    stays PENDING, so the same call can simply be retried).
+    Verify on-chain that `tx_hash` paid every recipient in a recipients_json
+    snapshot (pack purchase OR member-payout batch) — see
+    core/onchain.verify_pack_payment. Raises HTTPException: 400 when the payment
+    doesn't check out, 503 when it can't be checked right now (the record stays
+    PENDING, so the same call can simply be retried).
     """
     from app.core.onchain import verify_pack_payment
 
     expected: dict[str, Decimal] = {}
-    for r in json.loads(record.recipients_json or "[]"):
+    for r in json.loads(recipients_json or "[]"):
         addr = r.get("wallet_address")
         amount = Decimal(str(r.get("amount") or 0))
         # Same filter the frontend applies when building the MultiSender call.
@@ -448,16 +449,36 @@ def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> None:
         key = addr.lower()
         expected[key] = expected.get(key, Decimal("0")) + amount
     if not expected:
-        raise HTTPException(status_code=400, detail="Order has no payable recipients to verify.")
+        raise HTTPException(status_code=400, detail="Nothing payable to verify on-chain.")
 
     status, reason = verify_pack_payment(tx_hash, expected)
     if status == "unavailable":
         raise HTTPException(
             status_code=503,
-            detail=f"{reason} The order is still pending — retry shortly.",
+            detail=f"{reason} It is still pending — retry shortly.",
         )
     if status != "ok":
         raise HTTPException(status_code=400, detail=f"On-chain verification failed: {reason}")
+
+
+def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> None:
+    """Verify a pack purchase's payment (see _verify_recipients_paid)."""
+    _verify_recipients_paid(record.recipients_json, tx_hash)
+
+
+def _tx_hash_reused(db: Session, tx_hash: str, *, pack_id: int | None = None, batch_id: int | None = None) -> bool:
+    """True if `tx_hash` already backs a DIFFERENT pack purchase or payout batch —
+    one on-chain payment may only ever settle one record."""
+    h = tx_hash.lower()
+    q = db.query(PackPurchase.id).filter(func.lower(PackPurchase.tx_hash) == h)
+    if pack_id is not None:
+        q = q.filter(PackPurchase.id != pack_id)
+    if q.first():
+        return True
+    q = db.query(PayoutBatch.id).filter(func.lower(PayoutBatch.tx_hash) == h)
+    if batch_id is not None:
+        q = q.filter(PayoutBatch.id != batch_id)
+    return q.first() is not None
 
 
 @router.post("/pack/purchase")
@@ -736,12 +757,7 @@ def pack_status(
             )
         tx_hash = payload.tx_hash.lower()
         # One payment can only ever fund ONE purchase — reject a replayed hash.
-        replayed = (
-            db.query(PackPurchase.id)
-            .filter(func.lower(PackPurchase.tx_hash) == tx_hash, PackPurchase.id != record.id)
-            .first()
-        )
-        if replayed:
+        if _tx_hash_reused(db, tx_hash, pack_id=record.id):
             raise HTTPException(status_code=400, detail="This tx_hash was already used for another purchase.")
         if settings.VERIFY_ONCHAIN_TX:
             _verify_tx_onchain(record, tx_hash)
@@ -977,12 +993,21 @@ def payout_status(
                 status_code=400, detail="A valid tx_hash (0x + 64 hex) is required on success."
             )
 
+        tx_hash = payload.tx_hash.lower()
+        # Never trust the admin-supplied hash: it must be unused, and the chain
+        # must show it really paid every recipient in this batch BEFORE we debit
+        # anyone's balance. Failures leave the batch PENDING (nothing debited).
+        if _tx_hash_reused(db, tx_hash, batch_id=batch.id):
+            raise HTTPException(status_code=400, detail="This tx_hash was already used for another record.")
+        if settings.VERIFY_ONCHAIN_TX:
+            _verify_recipients_paid(batch.recipients_json, tx_hash)
+
         try:
             recipients = json.loads(batch.recipients_json or "[]")
         except (ValueError, TypeError):
             recipients = []
 
-        tx_short = payload.tx_hash[:12]
+        tx_short = tx_hash[:12]
         for r in recipients:
             amount = Decimal(str(r.get("amount") or 0))
             if amount <= 0:
@@ -994,7 +1019,7 @@ def payout_status(
             )
 
         batch.status = PayoutBatchStatus.SUCCESS
-        batch.tx_hash = payload.tx_hash
+        batch.tx_hash = tx_hash
         batch.failure_reason = None
     else:
         batch.status = PayoutBatchStatus.FAILED
