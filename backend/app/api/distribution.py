@@ -429,13 +429,35 @@ def _mirror_onchain_ledger(db: Session, record: PackPurchase) -> None:
             ))
 
 
-def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> bool:
+def _verify_tx_onchain(record: PackPurchase, tx_hash: str) -> None:
     """
-    Placeholder for on-chain verification (amount / recipients / confirmations).
-    Wire up a BSC RPC check here and flip settings.VERIFY_ONCHAIN_TX to enable.
-    Returns True (accept) until implemented.
+    Verify the buyer's on-chain payment before a purchase is recorded as success
+    (see core/onchain.verify_pack_payment). Raises HTTPException: 400 when the
+    payment doesn't check out, 503 when it can't be checked right now (the order
+    stays PENDING, so the same call can simply be retried).
     """
-    return True
+    from app.core.onchain import verify_pack_payment
+
+    expected: dict[str, Decimal] = {}
+    for r in json.loads(record.recipients_json or "[]"):
+        addr = r.get("wallet_address")
+        amount = Decimal(str(r.get("amount") or 0))
+        # Same filter the frontend applies when building the MultiSender call.
+        if r.get("role") == "buyer" or amount <= 0 or not addr or not _BEP20_RE.match(addr):
+            continue
+        key = addr.lower()
+        expected[key] = expected.get(key, Decimal("0")) + amount
+    if not expected:
+        raise HTTPException(status_code=400, detail="Order has no payable recipients to verify.")
+
+    status, reason = verify_pack_payment(tx_hash, expected)
+    if status == "unavailable":
+        raise HTTPException(
+            status_code=503,
+            detail=f"{reason} The order is still pending — retry shortly.",
+        )
+    if status != "ok":
+        raise HTTPException(status_code=400, detail=f"On-chain verification failed: {reason}")
 
 
 @router.post("/pack/purchase")
@@ -685,8 +707,8 @@ def pack_status(
     """
     API 2 — record the outcome of the on-chain transfer for a pack purchase.
 
-    On success: marks the purchase active, stores the tx_hash (optionally verified
-    on-chain when settings.VERIFY_ONCHAIN_TX is on). On failure: marks it failed
+    On success: marks the purchase active, stores the tx_hash (verified on-chain
+    against the recorded recipient split unless settings.VERIFY_ONCHAIN_TX is off). On failure: marks it failed
     with the reason. No payout/ledger is written on this rail.
     """
     status_val = (payload.status or "").strip().lower()
@@ -704,6 +726,7 @@ def pack_status(
             detail=f"Purchase already recorded as '{record.status.value}'.",
         )
 
+    run_payouts_after_commit = False
     if status_val == "success":
         from app.core.pack_payout import compute_pack_split
 
@@ -711,10 +734,19 @@ def pack_status(
             raise HTTPException(
                 status_code=400, detail="A valid tx_hash (0x + 64 hex) is required on success."
             )
-        if settings.VERIFY_ONCHAIN_TX and not _verify_tx_onchain(record, payload.tx_hash):
-            raise HTTPException(status_code=400, detail="On-chain verification failed for tx_hash.")
+        tx_hash = payload.tx_hash.lower()
+        # One payment can only ever fund ONE purchase — reject a replayed hash.
+        replayed = (
+            db.query(PackPurchase.id)
+            .filter(func.lower(PackPurchase.tx_hash) == tx_hash, PackPurchase.id != record.id)
+            .first()
+        )
+        if replayed:
+            raise HTTPException(status_code=400, detail="This tx_hash was already used for another purchase.")
+        if settings.VERIFY_ONCHAIN_TX:
+            _verify_tx_onchain(record, tx_hash)
         record.status = PackPurchaseStatus.SUCCESS
-        record.tx_hash = payload.tx_hash
+        record.tx_hash = tx_hash
         record.failure_reason = None
 
         # Reflect ownership so the rest of the app (purchase page "OWNED", the
@@ -757,24 +789,43 @@ def pack_status(
         _mirror_onchain_ledger(db, record)
 
         # Stream (30%) + Boost (10%) matrix engines: place the buyer in both
-        # matrices and run the full level-payout + re-entry + sponsor-share
-        # cascade, crediting internal wallets via credit_wallet (70/20/10). Also
-        # PENDING-guarded, so it runs exactly once per order.
-        from app.core.matrix_runtime import run_purchase_matrices
-        run_purchase_matrices(db, record.buyer_id, record.agent_tier)
-
-        # Auto-repurchase: every commission above held back 20% into the earners'
-        # per-tier REPURCHASE wallets. Sweep all reserves now and re-buy any tier
-        # that has reached its threshold (price + gas), cascading through the
-        # uplines those repurchases credit. Runs in this same transaction.
-        from app.core.repurchase import sweep_auto_repurchases
-        sweep_auto_repurchases(db)
+        # matrices and queue the level-payout / re-entry / sponsor-share work
+        # into the durable backlog. Placement ONLY moves no money, so it stays
+        # inside this atomic transaction; the payouts (which can broadcast real
+        # USDT) are drained AFTER the commit below. PENDING-guarded, so the
+        # placement happens exactly once per order.
+        from app.core.matrix_runtime import place_purchase_in_matrices
+        place_purchase_in_matrices(db, record.buyer_id, record.agent_tier)
+        run_payouts_after_commit = True
     else:
         record.status = PackPurchaseStatus.FAILED
         record.failure_reason = (payload.failure_reason or "Unspecified failure")[:500]
 
     record.recorded_at = datetime.utcnow()
     db.commit()
+
+    # Stage 2 — payouts. The purchase above is now durably recorded; everything
+    # below can broadcast real USDT, so each unit (one backlog row / one
+    # repurchase) commits on its own and a failure can never roll back an
+    # already-broadcast payout (which a retry would then pay a second time — see
+    # models/onchain_settlement.py). Best-effort: anything not finished stays
+    # queued in the durable backlog / reserves and is picked up by the next
+    # purchase, exactly like the existing bounded-budget deferral.
+    if run_payouts_after_commit:
+        try:
+            from app.core.matrix_runtime import drain_matrix_backlog
+            from app.core.repurchase import sweep_auto_repurchases
+
+            drain_matrix_backlog(db, commit_each=True)
+            # Auto-repurchase: re-buy any tier whose reserve has reached its
+            # threshold, cascading through the uplines those repurchases credit.
+            sweep_auto_repurchases(db, commit_each=True)
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "PACK status: order=%s recorded, but payout processing failed — "
+                "remaining work stays queued for the next purchase.", record.order_id,
+            )
 
     logger.info(
         "PACK status: order=%s buyer_id=%s → %s tx=%s",

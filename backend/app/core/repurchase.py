@@ -36,7 +36,15 @@ The cascade as a whole is still unbounded across TIME ("to its infinity", per
 spec) — any reserve left over when the cap is hit is untouched and picked up by
 the next purchase's sweep call, so nothing is delayed forever, just spread out.
 
-Everything runs inside the caller's transaction (flush, never commit).
+Two modes. Default (commit_each=False): everything runs inside the caller's
+transaction (flush, never commit) and the settlement broadcast is made inline.
+Money-safe mode (commit_each=True, what pack/status uses): each repurchase's
+DATABASE work (reserve consumption, ledger, Core credits, matrix placement) is
+committed FIRST, and only then is the on-chain settlement broadcast — so a
+failure can never leave a broadcast whose accounting was rolled back (which a
+retry would pay again). The failure direction becomes "booked but not yet
+consolidated on-chain" (nothing lost, reconcilable), never a double payment.
+The caller must have committed its own work before calling in this mode.
 """
 import logging
 from decimal import Decimal
@@ -90,7 +98,9 @@ def _platform_user_id(db: Session) -> int | None:
     return row[0] if row else None
 
 
-def _distribute_repurchase(db: Session, buyer: User, tier: int, price: Decimal) -> None:
+def _distribute_repurchase(
+    db: Session, buyer: User, tier: int, price: Decimal, place_only: bool = False,
+) -> None:
     """
     Run the same revenue distribution a normal purchase does, but credited
     internally (the repurchase is funded from the platform-held reserve, not the
@@ -128,14 +138,24 @@ def _distribute_repurchase(db: Session, buyer: User, tier: int, price: Decimal) 
             ))
 
     # Stream + Boost matrices for the repurchasing buyer (same as a normal purchase).
-    from app.core.matrix_runtime import run_purchase_matrices
-    run_purchase_matrices(db, buyer.id, tier)
+    # place_only: queue the placement but leave draining (which can broadcast
+    # on-chain) to the caller, after this repurchase's DB work is committed.
+    from app.core.matrix_runtime import place_purchase_in_matrices, run_purchase_matrices
+    if place_only:
+        place_purchase_in_matrices(db, buyer.id, tier)
+    else:
+        run_purchase_matrices(db, buyer.id, tier)
 
 
-def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
+def _do_one_repurchase(db: Session, user: User, tier: int, deferred: list | None = None) -> bool:
     """
     Consume one tier-`tier` reserve threshold for `user` and re-buy that tier.
     Returns True if a repurchase happened, False if the reserve was insufficient.
+
+    `deferred` (money-safe mode): when a list is passed, the on-chain settlement
+    is NOT broadcast here — a (threshold, tier, ref, buy_row, gas_row) tuple is
+    appended instead, for the caller to settle after committing, and the matrix
+    placement is queued without draining.
     """
     price = Decimal(str(AGENT_TIER_PRICES[tier]))
     platform_fee = REPURCHASE_PLATFORM_FEE[tier]
@@ -160,30 +180,34 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
     # member-payout rail later. Best-effort — returns None (disabled or failed)
     # without raising; the internal accounting above and below always applies
     # regardless, matching today's behavior when this isn't configured.
-    tx_hash = send_repurchase_settlement(threshold, tier, ref)
+    tx_hash = None if deferred is not None else send_repurchase_settlement(threshold, tier, ref)
     tx_note = f" (on-chain tx {tx_hash[:12]}…)" if tx_hash else ""
 
-    db.add(Transaction(
+    buy_row = Transaction(
         user_id=user.id,
         agent_tier=tier,
         transaction_type=TransactionType.REPURCHASE_BUY,
         amount=price,
         reference_id=ref,
         notes=f"Auto-repurchase Agent {tier} (${price}){tx_note}",
-    ))
-    db.add(Transaction(
+    )
+    gas_row = Transaction(
         user_id=user.id,
         agent_tier=tier,
         transaction_type=TransactionType.REPURCHASE_GAS,
         amount=platform_fee,
         reference_id=ref,
         notes=f"Auto-repurchase platform fee (Agent {tier}){tx_note}",
-    ))
+    )
+    db.add(buy_row)
+    db.add(gas_row)
 
     # Distribute exactly like a normal purchase (uplines earn + build reserve).
-    _distribute_repurchase(db, user, tier, price)
+    _distribute_repurchase(db, user, tier, price, place_only=deferred is not None)
 
     db.flush()
+    if deferred is not None:
+        deferred.append((threshold, tier, ref, buy_row, gas_row))
     logger.info(
         "AUTO-REPURCHASE: user=%s tier=%s price=$%s platform_fee=$%s reserve_left=$%s",
         user.username, tier, price, platform_fee, reserve.balance,
@@ -191,7 +215,21 @@ def _do_one_repurchase(db: Session, user: User, tier: int) -> bool:
     return True
 
 
-def sweep_auto_repurchases(db: Session) -> int:
+def _settle_deferred(db: Session, deferred: list) -> None:
+    """Broadcast the on-chain settlement for repurchases whose DB work is already
+    committed, then annotate their ledger rows with the tx hash. Best-effort."""
+    for threshold, tier, ref, buy_row, gas_row in deferred:
+        # buy_row.id is unique per repurchase -> a safe idempotency key.
+        tx_hash = send_repurchase_settlement(threshold, tier, ref, f"repurchase_buy_{buy_row.id}")
+        if tx_hash:
+            note = f" (on-chain tx {tx_hash[:12]}…)"
+            buy_row.notes = (buy_row.notes or "") + note
+            gas_row.notes = (gas_row.notes or "") + note
+            db.commit()
+    deferred.clear()
+
+
+def sweep_auto_repurchases(db: Session, commit_each: bool = False) -> int:
     """
     Process pending auto-repurchases across all users until no per-tier reserve
     is at/over its threshold, OR until _MAX_REPURCHASE_STEPS repurchases have run
@@ -200,8 +238,11 @@ def sweep_auto_repurchases(db: Session) -> int:
     round. Any reserve still over threshold when the cap is hit is left exactly
     as-is (nothing is lost) and gets picked up by the next purchase's sweep call.
 
-    Runs inside the caller's transaction (flush only, never commit). Returns the
-    number of repurchases executed in this call.
+    Default: runs inside the caller's transaction (flush only, never commit).
+    commit_each=True: money-safe mode (see module docstring) — commits each
+    repurchase's DB work, then settles it on-chain, then drains the matrix
+    backlog row by row; a failure rolls back only the unit in flight and stops
+    the sweep. Returns the number of repurchases executed in this call.
     """
     # Every tier's threshold is >= the smallest (tier 1, $11), so a wallet below
     # that can never be over ANY tier's threshold — cheap pre-filter that keeps
@@ -232,7 +273,25 @@ def sweep_auto_repurchases(db: Session) -> int:
             # Reserve of a frozen/inactive user is held (client spec) — skip it.
             if user is None or not user.is_active:
                 continue
-            if _do_one_repurchase(db, user, tier):
+            deferred: list | None = [] if commit_each else None
+            try:
+                did = _do_one_repurchase(db, user, tier, deferred)
+                if commit_each:
+                    db.commit()
+            except Exception:
+                if not commit_each:
+                    raise
+                db.rollback()
+                logger.exception(
+                    "sweep_auto_repurchases: repurchase user=%s tier=%s failed — rolled back, stopping sweep.",
+                    w.user_id, tier,
+                )
+                return total
+            if did:
+                if commit_each:
+                    from app.core.matrix_runtime import drain_matrix_backlog
+                    _settle_deferred(db, deferred)
+                    drain_matrix_backlog(db, commit_each=True)
                 total += 1
                 progressed = True
                 steps += 1

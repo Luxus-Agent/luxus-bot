@@ -6,7 +6,7 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'luxus') THEN
-    CREATE USER luxus WITH PASSWORD 'dhanush';
+    CREATE USER luxus WITH PASSWORD 'CHANGE_ME';  -- set a strong password, then put it in DATABASE_URL
   END IF;
 END
 $$;

@@ -13,7 +13,7 @@ drives three parallel revenue engines. Prices/fees live in `models/agent.py`
 
 - **Frontend:** Vite + React + Tailwind (port 3000, `/api` proxy → `:8000`)
 - **Backend:** FastAPI, **fully synchronous** — NO Celery/Redis (removed)
-- **DB:** PostgreSQL 18 — `postgresql://luxus:dhanush@localhost/luxus`
+- **DB:** PostgreSQL 18 — `postgresql://luxus:<password>@localhost/luxus` (password lives only in the gitignored `.env`)
 - **Auth:** JWT (python-jose + passlib). **bcrypt pinned to 4.0.1** — 5.x breaks passlib, DO NOT upgrade
 - **Payments:** On-chain USDT (BEP-20) via TokenPocket / MultiSender DApp. NO internal deposit/withdrawal/transfer money rail
 

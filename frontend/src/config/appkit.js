@@ -8,7 +8,7 @@
 // free at https://cloud.reown.com — wallet connect stays inert until it's set.
 import { createAppKit } from '@reown/appkit/react'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
-import { bscTestnet } from '@reown/appkit/networks'
+import { activeChain } from './chain'
 
 export const projectId = import.meta.env.VITE_REOWN_PROJECT_ID || ''
 
@@ -18,9 +18,9 @@ if (!projectId) {
   )
 }
 
-// BNB Smart Chain testnet for now (matches the platform's BEP-20 setup).
-// Add `bsc` here later to go to mainnet.
-export const networks = [bscTestnet]
+// BNB Smart Chain mainnet by default; VITE_CHAIN=testnet switches to testnet
+// (see ./chain.js).
+export const networks = [activeChain]
 
 export const wagmiAdapter = new WagmiAdapter({
   networks,

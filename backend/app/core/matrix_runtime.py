@@ -164,6 +164,7 @@ def _settle_or_credit(
     reference_id: str,
     notes: str,
     boost_fee: bool = False,
+    settlement_key: str | None = None,
 ) -> None:
     """
     Instant on-chain settlement, falling back to internal-only crediting
@@ -197,7 +198,9 @@ def _settle_or_credit(
             onchain_share = gross_amount * Decimal("0.90") if boost_fee else gross_amount
         else:
             onchain_share = gross_amount * Decimal("0.70")
-        tx_hash = send_matrix_payout_settlement(onchain_share, address, reference_id)
+        # `settlement_key` makes the broadcast idempotent: if this request is
+        # retried after a rollback, the original tx hash is reused, never re-sent.
+        tx_hash = send_matrix_payout_settlement(onchain_share, address, reference_id, settlement_key)
 
     if tx_hash:
         if system_type == SystemType.STREAM:
@@ -261,6 +264,7 @@ def _credit_row_payout(db: Session, row: MatrixPendingPayout) -> None:
         db, owner, row.agent_tier, row.system_type, Decimal(str(row.amount)),
         tx_type, reference_id, f"{row.system_type.value} L{row.level} payout",
         boost_fee=row.system_type == SystemType.BOOST,
+        settlement_key=f"matrix_row_{row.id}",
     )
 
 
@@ -291,6 +295,7 @@ def _credit_row_sponsor(db: Session, row: MatrixPendingPayout) -> None:
             db, sponsor, row.agent_tier, row.system_type, Decimal(str(row.amount)),
             TransactionType.SPONSOR_MILESTONE_INCOME, reference_id,
             f"{row.system_type.value} L{row.level} sponsor share",
+            settlement_key=f"matrix_row_{row.id}",
         )
     else:
         db.add(Transaction(
@@ -327,7 +332,7 @@ def _next_backlog_row(db: Session) -> MatrixPendingPayout | None:
     )
 
 
-def drain_matrix_backlog(db: Session, max_steps: int = _MAX_STEPS_PER_CALL) -> int:
+def drain_matrix_backlog(db: Session, max_steps: int = _MAX_STEPS_PER_CALL, commit_each: bool = False) -> int:
     """
     Process up to `max_steps` durable backlog rows (oldest first, across every
     user/tier/system): PAYOUT rows credit one incremental joiner-triggered
@@ -338,7 +343,14 @@ def drain_matrix_backlog(db: Session, max_steps: int = _MAX_STEPS_PER_CALL) -> i
     re-entries never appear here — they drip out inline from matrix_engine.
     _append_to_level itself (see PendingKind.REENTRY's docstring).
 
-    Returns the number of rows processed. Flushes; does NOT commit.
+    `commit_each=True` commits after EVERY row, so the on-chain broadcast a row
+    may make is committed together with its ledger rows and the row's deletion.
+    A later failure can then never roll back an already-broadcast payout and
+    leave its backlog row behind to be paid a second time. If one row fails it
+    is rolled back on its own (its broadcast, if any, is reused on the next
+    attempt via the settlement key) and draining stops, leaving the rest queued.
+    Returns the number of rows processed. With commit_each=False it only
+    flushes (caller owns the commit) and exceptions propagate.
     """
     processed = 0
     while processed < max_steps:
@@ -346,29 +358,39 @@ def drain_matrix_backlog(db: Session, max_steps: int = _MAX_STEPS_PER_CALL) -> i
         if row is None:
             break
 
-        if row.kind == PendingKind.PAYOUT:
-            _credit_row_payout(db, row)
-        elif row.kind == PendingKind.GRADUATE:
-            _spawn_graduation(db, row)
-        else:
-            _credit_row_sponsor(db, row)
+        try:
+            if row.kind == PendingKind.PAYOUT:
+                _credit_row_payout(db, row)
+            elif row.kind == PendingKind.GRADUATE:
+                _spawn_graduation(db, row)
+            else:
+                _credit_row_sponsor(db, row)
 
-        db.delete(row)
-        db.flush()
+            db.delete(row)
+            db.flush()
+            if commit_each:
+                db.commit()
+        except Exception:
+            if not commit_each:
+                raise
+            db.rollback()
+            logger.exception(
+                "drain_matrix_backlog: row %s failed — rolled back, left queued for the next purchase.",
+                getattr(row, "id", "?"),
+            )
+            break
         processed += 1
 
     return processed
 
 
-def run_purchase_matrices(db: Session, buyer_id: int, agent_tier: int) -> dict:
+def place_purchase_in_matrices(db: Session, buyer_id: int, agent_tier: int) -> None:
     """
-    Place the buyer as a real join in the Stream + Boost queues, queue whatever
-    level completions that immediately triggers, then drain the durable
-    backlog (this purchase's own work plus anything left over from earlier
-    purchases) up to a bounded step budget. Flushes within the caller's
-    transaction; does NOT commit.
-
-    Returns a small summary dict for logging.
+    Place the buyer as a real join in the Stream + Boost queues and queue
+    whatever level completions that immediately triggers into the durable
+    backlog. Moves NO money (no broadcast, no wallet credit) — it only writes
+    queue/backlog rows, so it is safe to run inside the purchase's own atomic
+    transaction. Flushes; does NOT commit.
     """
     p, s, r, g = place_real_join(db, buyer_id, agent_tier, SystemType.STREAM)
     _enqueue_all(db, p, s, r, g)
@@ -379,7 +401,23 @@ def run_purchase_matrices(db: Session, buyer_id: int, agent_tier: int) -> dict:
     _enqueue_all(db, p, s, r, g)
     db.flush()
 
-    processed = drain_matrix_backlog(db)
+
+def run_purchase_matrices(db: Session, buyer_id: int, agent_tier: int, commit_each: bool = False) -> dict:
+    """
+    Place the buyer (place_purchase_in_matrices), then drain the durable backlog
+    (this purchase's own work plus anything left over from earlier purchases)
+    up to a bounded step budget. With the default commit_each=False this is the
+    single-transaction path: everything flushes and the CALLER owns the commit.
+
+    Anything that can broadcast on-chain should NOT use it. The money-safe
+    production path is: place_purchase_in_matrices() inside the purchase's own
+    transaction, commit, then drain_matrix_backlog(commit_each=True) — see
+    distribution.pack_status and repurchase.sweep_auto_repurchases.
+    Returns a small summary dict for logging.
+    """
+    place_purchase_in_matrices(db, buyer_id, agent_tier)
+
+    processed = drain_matrix_backlog(db, commit_each=commit_each)
 
     backlog_remaining = db.query(func.count(MatrixPendingPayout.id)).scalar() or 0
     if backlog_remaining:

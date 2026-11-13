@@ -19,6 +19,10 @@ app = FastAPI(
     title="Agent Revenue Sharing Platform",
     description="Multi-tier AI agent revenue sharing with Core, Stream, and Boost systems",
     version="1.0.0",
+    # Don't publish the interactive API docs / schema on a live deployment.
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 #uvicorn app.main:app --reload
 app.add_middleware(

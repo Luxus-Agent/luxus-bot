@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useAppKitAccount } from '@reown/appkit/react'
 import { readContract } from '@wagmi/core'
 import { erc20Abi, formatUnits, isAddress } from 'viem'
-import { bscTestnet } from '@reown/appkit/networks'
+import { activeChain } from '../config/chain'
 import { wagmiConfig } from '../config/appkit'
 import { USDT_ADDRESS, USDT_DECIMALS } from '../config/contracts'
 
@@ -11,7 +11,7 @@ import { USDT_ADDRESS, USDT_DECIMALS } from '../config/contracts'
 // while the tab is in the background to avoid wasted RPC calls.
 const BALANCE_POLL_MS = 20_000
 
-// Reads the connected wallet's live on-chain USDT balance (BSC testnet).
+// Reads the connected wallet's live on-chain USDT balance (chain from config/chain.js — BSC mainnet by default).
 //
 // This is the user's real spendable balance — on-chain pack purchases and the
 // commissions they earn move USDT directly in/out of this wallet, never through
@@ -38,13 +38,13 @@ export function useUsdtBalance() {
           abi: erc20Abi,
           functionName: 'balanceOf',
           args: [address],
-          chainId: bscTestnet.id,
+          chainId: activeChain.id,
         }),
         readContract(wagmiConfig, {
           address: USDT_ADDRESS,
           abi: erc20Abi,
           functionName: 'decimals',
-          chainId: bscTestnet.id,
+          chainId: activeChain.id,
         }).catch(() => USDT_DECIMALS),
       ])
       setBalance(parseFloat(formatUnits(raw, Number(decimals))))

@@ -7,7 +7,7 @@ import { useAppKitAccount } from '@reown/appkit/react'
 import { useUsdtBalance } from '../hooks/useUsdtBalance'
 import { readContract, writeContract, waitForTransactionReceipt, switchChain } from '@wagmi/core'
 import { erc20Abi, parseUnits, isAddress } from 'viem'
-import { bscTestnet } from '@reown/appkit/networks'
+import { activeChain, CHAIN_LABEL } from '../config/chain'
 import { wagmiConfig } from '../config/appkit'
 import { MULTISENDER_ADDRESS, USDT_ADDRESS, USDT_DECIMALS, multisenderAbi } from '../config/contracts'
 import { tierDisplayName } from '../utils/agentTiers'
@@ -115,11 +115,11 @@ export default function AgentPurchase() {
       const values = recipients.map(r => parseUnits(String(r.amount), decimals))
       const total = values.reduce((sum, v) => sum + v, 0n)
 
-      // 2) Make sure the wallet is on BNB testnet.
+      // 2) Make sure the wallet is on the platform's BNB Smart Chain network.
       try {
-        await switchChain(wagmiConfig, { chainId: bscTestnet.id })
+        await switchChain(wagmiConfig, { chainId: activeChain.id })
       } catch {
-        throw new Error('Switch your wallet to BNB Smart Chain Testnet and try again.')
+        throw new Error(`Switch your wallet to ${CHAIN_LABEL} and try again.`)
       }
 
       // 3) Approve the MultiSender to pull `total` USDT, only if needed.

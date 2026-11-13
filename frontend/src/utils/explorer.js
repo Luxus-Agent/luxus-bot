@@ -1,7 +1,9 @@
-// BSC testnet for now — matches frontend/src/config/appkit.js (bscTestnet) and the
-// backend's default BSC_RPC_URL. Switch to 'https://bscscan.com/tx/' (and /address/) on mainnet cutover.
-const TX_EXPLORER_BASE = 'https://testnet.bscscan.com/tx/'
-const ADDRESS_EXPLORER_BASE = 'https://testnet.bscscan.com/address/'
+// Explorer base follows the active chain (config/chain.js) — bscscan.com on
+// mainnet (default), testnet.bscscan.com when VITE_CHAIN=testnet.
+import { EXPLORER_BASE } from '../config/chain'
+
+const TX_EXPLORER_BASE = `${EXPLORER_BASE}/tx/`
+const ADDRESS_EXPLORER_BASE = `${EXPLORER_BASE}/address/`
 
 export function txExplorerUrl(txHash) {
   return `${TX_EXPLORER_BASE}${txHash}`

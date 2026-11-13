@@ -1,15 +1,16 @@
 import logging
-import random
+import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user
+from app.core import rate_limit
 from app.core.security import create_access_token, hash_password, verify_password
 from app.core.user_lookup import get_user_by_username
 from app.database import get_db
@@ -34,18 +35,28 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 OTP_VERIFY_EXPIRE_HOURS = 24
 OTP_RESET_EXPIRE_HOURS  = 1
+# Wrong guesses allowed against ONE issued code before it is invalidated and a
+# new one must be requested (which is itself rate limited below).
+OTP_MAX_ATTEMPTS = 5
 
 
 def _generate_otp() -> str:
-    return str(random.randint(100000, 999999))
+    # Cryptographically secure 6-digit code (never the `random` module).
+    return str(secrets.randbelow(900000) + 100000)
+
+
+def _otp_matches(stored: str | None, supplied: str) -> bool:
+    """Constant-time comparison; a missing stored code never matches."""
+    return bool(stored) and secrets.compare_digest(stored, (supplied or "").strip())
 
 
 # ── Username availability check ───────────────────────────────────────────────
 
 @router.get("/check-username")
-def check_username(username: str, db: Session = Depends(get_db)):
+def check_username(request: Request, username: str, db: Session = Depends(get_db)):
     """Return whether a username is available. Used for live registration feedback.
     Case-insensitive — "Alice" and "alice" are the same username."""
+    rate_limit.enforce("check_username", rate_limit.client_ip(request), 120, 60)
     taken = get_user_by_username(db, username) is not None
     return {"available": not taken}
 
@@ -64,10 +75,11 @@ def _wallet_address_taken(db: Session, wallet_address: str) -> bool:
 # ── Wallet address availability check ─────────────────────────────────────────
 
 @router.get("/check-wallet-address")
-def check_wallet_address(wallet_address: str, db: Session = Depends(get_db)):
+def check_wallet_address(request: Request, wallet_address: str, db: Session = Depends(get_db)):
     """Return whether a BEP-20 wallet address is free to register with. Each
     wallet may only be attached to one account — used for live registration
     feedback, mirroring /auth/check-username."""
+    rate_limit.enforce("check_wallet", rate_limit.client_ip(request), 120, 60)
     taken = _wallet_address_taken(db, wallet_address)
     return {"available": not taken}
 
@@ -76,10 +88,12 @@ def check_wallet_address(wallet_address: str, db: Session = Depends(get_db)):
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def register(
+    request: Request,
     payload: UserRegister,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
+    rate_limit.enforce("register", rate_limit.client_ip(request), 20, 3600)
     if db.query(User).filter_by(email=payload.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
     if get_user_by_username(db, payload.username) is not None:
@@ -125,20 +139,31 @@ async def register(
 # ── Verify email ──────────────────────────────────────────────────────────────
 
 @router.post("/verify-email")
-def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
+def verify_email(request: Request, payload: VerifyEmailRequest, db: Session = Depends(get_db)):
+    rate_limit.enforce("verify_email_ip", rate_limit.client_ip(request), 30, 600)
     user = db.query(User).filter_by(email=payload.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.is_email_verified:
         return {"message": "Email already verified"}
+    otp_key = f"verify:{payload.email.lower()}"
     if (
-        user.email_verification_code != payload.otp
+        not _otp_matches(user.email_verification_code, payload.otp)
         or not user.email_verification_expires
         or datetime.utcnow() > user.email_verification_expires
     ):
         logger.warning("AUTH verify_email failed: invalid/expired OTP email=%s", payload.email)
+        if rate_limit.otp_failed(otp_key, OTP_MAX_ATTEMPTS):
+            user.email_verification_code = None
+            user.email_verification_expires = None
+            db.commit()
+            raise HTTPException(
+                status_code=429,
+                detail="Too many incorrect attempts. Please request a new verification code.",
+            )
         raise HTTPException(status_code=400, detail="Invalid or expired verification code")
 
+    rate_limit.otp_reset(otp_key)
     user.is_email_verified = True
     user.email_verification_code = None
     user.email_verification_expires = None
@@ -152,17 +177,21 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
 
 @router.post("/resend-verification")
 async def resend_verification(
+    request: Request,
     payload: ResendVerificationRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
+    rate_limit.enforce("resend_ip", rate_limit.client_ip(request), 20, 3600)
     user = db.query(User).filter_by(email=payload.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.is_email_verified:
         return {"message": "Email already verified"}
+    rate_limit.enforce("resend_email", payload.email.lower(), 5, 3600)
 
     otp = _generate_otp()
+    rate_limit.otp_reset(f"verify:{payload.email.lower()}")
     user.email_verification_code = otp
     user.email_verification_expires = datetime.utcnow() + timedelta(hours=OTP_VERIFY_EXPIRE_HOURS)
     db.commit()
@@ -226,9 +255,17 @@ def get_direct_referrals(
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: UserLogin, db: Session = Depends(get_db)):
+def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
+    ip = rate_limit.client_ip(request)
+    user_key = f"{ip}:{payload.username.strip().lower()}"
+    # Check first, count only FAILURES — a legitimate user logging in repeatedly
+    # is never throttled, a password-guesser is.
+    rate_limit.enforce("login_ip", ip, 40, 900, record_hit=False)
+    rate_limit.enforce("login_user", user_key, 8, 900, record_hit=False)
     user = get_user_by_username(db, payload.username)
     if not user or not verify_password(payload.password, user.password_hash):
+        rate_limit.record("login_ip", ip)
+        rate_limit.record("login_user", user_key)
         logger.warning("AUTH login_failed: invalid credentials username=%s", payload.username)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_email_verified:
@@ -248,16 +285,23 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
 
 @router.post("/forgot-password")
 async def forgot_password(
+    request: Request,
     payload: ForgotPasswordRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
+    ip = rate_limit.client_ip(request)
+    # Enforced BEFORE the account lookup so it also throttles email enumeration.
+    rate_limit.enforce("forgot_ip", ip, 15, 3600)
     user = db.query(User).filter_by(email=payload.email).first()
     if not user:
         logger.warning("AUTH forgot_password failed: email not registered email=%s", payload.email)
         raise HTTPException(status_code=404, detail="No account found with this email")
+    # Few codes per mailbox: each new code resets the attempt allowance below.
+    rate_limit.enforce("forgot_email", payload.email.lower(), 3, 3600)
 
     otp = _generate_otp()
+    rate_limit.otp_reset(f"reset:{payload.email.lower()}")
     user.password_reset_code = otp
     user.password_reset_expires = datetime.utcnow() + timedelta(hours=OTP_RESET_EXPIRE_HOURS)
     db.commit()
@@ -270,18 +314,29 @@ async def forgot_password(
 # ── Reset password ────────────────────────────────────────────────────────────
 
 @router.post("/reset-password")
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+def reset_password(request: Request, payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    rate_limit.enforce("reset_ip", rate_limit.client_ip(request), 30, 600)
     user = db.query(User).filter_by(email=payload.email).first()
     if not user:
         raise HTTPException(status_code=400, detail="Invalid reset code")
+    otp_key = f"reset:{payload.email.lower()}"
     if (
-        user.password_reset_code != payload.otp
+        not _otp_matches(user.password_reset_code, payload.otp)
         or not user.password_reset_expires
         or datetime.utcnow() > user.password_reset_expires
     ):
         logger.warning("AUTH reset_password failed: invalid/expired OTP email=%s", payload.email)
+        if rate_limit.otp_failed(otp_key, OTP_MAX_ATTEMPTS):
+            user.password_reset_code = None
+            user.password_reset_expires = None
+            db.commit()
+            raise HTTPException(
+                status_code=429,
+                detail="Too many incorrect attempts. Please request a new reset code.",
+            )
         raise HTTPException(status_code=400, detail="Invalid or expired reset code")
 
+    rate_limit.otp_reset(otp_key)
     user.password_hash = hash_password(payload.new_password)
     user.password_reset_code = None
     user.password_reset_expires = None

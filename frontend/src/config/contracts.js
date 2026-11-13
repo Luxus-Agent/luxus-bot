@@ -7,19 +7,21 @@
 import multisenderAbi from './multisenderAbi.json'
 
 // MultiSender contract (sendERC20DifferentValue → transferFrom buyer → each recipient).
-// Hardcoded fallback so a missing/unset VITE_MULTISENDER_ADDRESS on a server build
-// never breaks purchases — env var still overrides this when set.
-const DEFAULT_MULTISENDER_ADDRESS = '0xbe417c4936453fAC6D6c8d36b0d161a1AA4Ff624'
+// BSC MAINNET deployment (chain 56). VITE_MULTISENDER_ADDRESS overrides it — a
+// testnet build (VITE_CHAIN=testnet) MUST set that to its own testnet deployment,
+// since this default only exists on mainnet.
+const DEFAULT_MULTISENDER_ADDRESS = '0x20e0E77ed5c5c901389eAbA68dc3fC4396650C0f'
 export const MULTISENDER_ADDRESS = import.meta.env.VITE_MULTISENDER_ADDRESS || DEFAULT_MULTISENDER_ADDRESS
 
-// Mock USDT token used for testing. Preferred source is the purchase API
-// response (token_contract); falls back to VITE_USDT_ADDRESS, then this
-// hardcoded default (must match the backend's USDT_CONTRACT) so a missing
-// server env var never blanks out the wallet balance.
-const DEFAULT_USDT_ADDRESS = '0xb2681F1CA80e080827d5f275648D2d2e2684f0C8'
+// USDT token. Preferred source is the purchase API response (token_contract);
+// falls back to VITE_USDT_ADDRESS, then BSC mainnet's official BSC-USD (USDT)
+// below. Must match the backend's USDT_CONTRACT. (Testnet builds set
+// VITE_USDT_ADDRESS to their mock token.)
+const DEFAULT_USDT_ADDRESS = '0x55d398326f99059fF775485246999027B3197955'
 export const USDT_ADDRESS = import.meta.env.VITE_USDT_ADDRESS || DEFAULT_USDT_ADDRESS
 
 // Token decimals fallback when the purchase API doesn't return `decimals`.
-export const USDT_DECIMALS = Number(import.meta.env.VITE_USDT_DECIMALS || 6)
+// BSC mainnet USDT uses 18.
+export const USDT_DECIMALS = Number(import.meta.env.VITE_USDT_DECIMALS || 18)
 
 export { multisenderAbi }

@@ -1,5 +1,5 @@
 import logging
-import random
+import secrets
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core import rate_limit
 from app.core.core_preview import get_downline_odd_even, simulate_core_split
 from app.core.wallet_ops import resolve_tx_hashes
 from app.database import get_db
@@ -28,10 +29,13 @@ from app.schemas.agent import (
 router = APIRouter(prefix="/wallet", tags=["wallet"])
 
 ADDRESS_OTP_EXPIRE_MINUTES = 30
+# Wrong guesses allowed against one issued address-verification code.
+ADDRESS_OTP_MAX_ATTEMPTS = 5
 
 
 def _generate_otp() -> str:
-    return str(random.randint(100000, 999999))
+    # Cryptographically secure 6-digit code (never the `random` module).
+    return str(secrets.randbelow(900000) + 100000)
 
 
 # ── Balances & transactions ───────────────────────────────────────────────────
@@ -383,6 +387,7 @@ async def register_address(
     """
     from app.services.email_service import send_address_verification_email
 
+    rate_limit.enforce("address_otp", str(current_user.id), 5, 3600)
     wa = (
         db.query(WalletAddress)
         .filter_by(user_id=current_user.id, address=body.address)
@@ -392,6 +397,7 @@ async def register_address(
         return {"message": "Address already verified.", "address": body.address}
 
     otp = _generate_otp()
+    rate_limit.otp_reset(f"addr:{current_user.id}:{body.address.lower()}")
     if not wa:
         wa = WalletAddress(
             user_id=current_user.id,
@@ -440,12 +446,22 @@ def verify_address(
             status_code=400,
             detail="No pending verification for this address. Register it first via POST /wallet/address.",
         )
-    if wa.pending_otp != body.otp:
+    otp_key = f"addr:{current_user.id}:{body.address.lower()}"
+    if not secrets.compare_digest(wa.pending_otp, (body.otp or "").strip()):
         logger.warning(
             "WALLET address_verify failed: invalid OTP user_id=%d address=%s",
             current_user.id, body.address[:10] + "…",
         )
+        if rate_limit.otp_failed(otp_key, ADDRESS_OTP_MAX_ATTEMPTS):
+            wa.pending_otp = None
+            wa.otp_expires_at = None
+            db.commit()
+            raise HTTPException(
+                status_code=429,
+                detail="Too many incorrect attempts. Please request a new verification code.",
+            )
         raise HTTPException(status_code=400, detail="Invalid verification code.")
+    rate_limit.otp_reset(otp_key)
     if not wa.otp_expires_at or datetime.utcnow() > wa.otp_expires_at:
         logger.warning(
             "WALLET address_verify failed: expired OTP user_id=%d address=%s",

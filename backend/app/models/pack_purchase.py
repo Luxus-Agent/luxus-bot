@@ -49,7 +49,8 @@ class PackPurchase(Base):
     # recorded by API 2 always matches what the frontend was told to pay.
     recipients_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    tx_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Unique: one on-chain payment can fund at most one purchase (NULLs don't collide).
+    tx_hash: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

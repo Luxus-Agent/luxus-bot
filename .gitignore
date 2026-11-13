@@ -42,3 +42,6 @@ htmlcov/
 # Node (future frontend)
 node_modules/
 .next/
+
+# Per-developer Claude Code settings (can contain secrets such as DB passwords)
+.claude/settings.local.json
