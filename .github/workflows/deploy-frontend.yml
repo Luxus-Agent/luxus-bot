@@ -1,0 +1,66 @@
+
+name: Deploy Luxus Frontend
+
+on:
+  push:
+    branches:
+      - prod
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: luxus-frontend-production
+  cancel-in-progress: true
+
+jobs:
+  deploy-frontend:
+    name: Build and Deploy Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build React application
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_REOWN_PROJECT_ID: ${{ vars.VITE_REOWN_PROJECT_ID }}
+          VITE_MULTISENDER_ADDRESS: ${{ vars.VITE_MULTISENDER_ADDRESS }}
+          VITE_USDT_ADDRESS: ${{ vars.VITE_USDT_ADDRESS }}
+          VITE_USDT_DECIMALS: ${{ vars.VITE_USDT_DECIMALS || '18' }}
+        run: npm run build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload frontend to S3
+        run: |
+          aws s3 sync frontend/dist/ s3://${{ vars.S3_BUCKET }}/ --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
