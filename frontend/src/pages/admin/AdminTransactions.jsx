@@ -91,15 +91,15 @@ export default function AdminTransactions() {
               {transactions.length} records — ${totalVolume.toFixed(2)} total volume
             </p>
           </div>
-          <div className="flex gap-2">
-            <div className="relative">
+          <div className="flex flex-wrap gap-2">
+            <div className="relative w-full sm:w-auto">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
               <input
                 type="text"
                 placeholder="Search..."
                 value={search}
                 onChange={e => { setSearch(e.target.value); setPage(1) }}
-                className="pl-8 pr-4 py-2 rounded-xl text-sm outline-none w-48"
+                className="pl-8 pr-4 py-2 rounded-xl text-sm outline-none w-full sm:w-48"
                 style={{ background: 'var(--bg-panel)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
               />
             </div>

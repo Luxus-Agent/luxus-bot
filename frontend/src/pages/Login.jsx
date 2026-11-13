@@ -34,7 +34,7 @@ export default function Login() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center px-4 auth-screen relative"
+      className="min-h-screen flex items-center justify-center px-4 auth-screen relative overflow-hidden"
     >
       <div
         className="absolute inset-0 pointer-events-none auth-overlay"

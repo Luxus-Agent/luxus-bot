@@ -424,7 +424,12 @@ function AppShell({ nav, children, badge }) {
           >
             <Menu size={20} />
           </button>
-          <div className="lg:hidden">
+          {/* Phones: logo mark only — the wordmark + theme toggle + wallet button + avatar
+              don't fit side by side below 640px and the wordmark ended up under the toggle. */}
+          <div className="sm:hidden flex-shrink-0">
+            <Logo size={22} showText={false} />
+          </div>
+          <div className="hidden sm:block lg:hidden flex-shrink-0">
             <Logo size={22} />
           </div>
 
